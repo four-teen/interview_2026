@@ -1,96 +1,153 @@
 <?php
 /**
  * placement_results/process_chunk.php
- * Phase 4 – Chunk processing
+ * FINAL – Stable CSV chunk processor (MySQLi, PHP 7.1)
  */
 
 require_once '../../config/db.php';
-require_once '../../vendor/autoload.php';
-
-use PhpOffice\PhpSpreadsheet\IOFactory;
-
 header('Content-Type: application/json');
 
-$batch_id = $_POST['batch_id'] ?? '';
-$offset   = intval($_POST['offset'] ?? 0);
-$limit    = 250;
+$batchId = $_POST['batch_id'] ?? '';
+$offset  = (int) ($_POST['offset'] ?? 0);
+$limit   = 250;
 
-if ($batch_id === '') {
-    echo json_encode(['success' => false]);
+if ($batchId === '') {
+    echo json_encode(['success' => false, 'message' => 'Missing batch ID']);
     exit;
 }
 
-$filePath = __DIR__ . '/tmp/upload_' . $batch_id . '.xlsx';
-if (!file_exists($filePath)) {
-    echo json_encode(['success' => false, 'message' => 'File not found']);
+$csvPath = __DIR__ . "/uploads/batch_{$batchId}.csv";
+if (!file_exists($csvPath)) {
+    echo json_encode(['success' => false, 'message' => 'CSV not found']);
     exit;
 }
 
-// qualitative mapping
-$map = [
+/**
+ * Qualitative mapping (NORMALIZED)
+ */
+$qualMap = [
     'OUTSTANDING'     => 1,
     'ABOVE AVERAGE'   => 2,
     'HIGH AVERAGE'    => 3,
     'MIDDLE AVERAGE'  => 4,
     'LOW AVERAGE'     => 5,
-    'BELOW AVERAGE'   => 6,
+    'BELOW AVERAGE'   => 6
 ];
 
-// load excel
-$sheet = IOFactory::load($filePath)->getActiveSheet();
-$rows = $sheet->toArray(null, true, true, true);
+$inserted = 0;
+$duplicates = 0;
+$errors = 0;
 
-// remove header
-array_shift($rows);
-$chunk = array_slice($rows, $offset, $limit);
+/**
+ * Get total rows
+ */
+$stmt = $conn->prepare("
+    SELECT total_rows
+    FROM tbl_placement_upload_batches
+    WHERE batch_id = ?
+    LIMIT 1
+");
+$stmt->bind_param("s", $batchId);
+$stmt->execute();
+$row = $stmt->get_result()->fetch_assoc();
+$totalRows = (int) ($row['total_rows'] ?? 0);
 
-$inserted = $duplicate = $error = 0;
+$conn->begin_transaction();
 
-foreach ($chunk as $row) {
+if (($h = fopen($csvPath, 'r')) !== false) {
 
-    try {
-        $examinee = trim($row['A']);
-        $name     = strtoupper(trim($row['B']));
-        $sat      = intval($row['C']);
-        $qualText = strtoupper(trim($row['F']));
+    /**
+     * HEADER MAP (critical)
+     */
+    $header = fgetcsv($h);
 
-        if (!isset($map[$qualText])) {
-            $error++;
+// STRIP UTF-8 BOM FROM FIRST HEADER COLUMN (CRITICAL FIX)
+if (isset($header[0])) {
+    $header[0] = preg_replace('/^\xEF\xBB\xBF/', '', $header[0]);
+}
+
+    $header = array_map('trim', $header);
+    $header = array_map('strtolower', $header);
+    $map = array_flip($header);
+
+    for ($i = 0; $i < $offset; $i++) {
+        fgetcsv($h);
+    }
+
+    for ($i = 0; $i < $limit; $i++) {
+
+        $row = fgetcsv($h);
+        if (!$row) break;
+
+        $examNo = trim($row[$map['examinee_number']] ?? '');
+        $name   = strtoupper(trim($row[$map['name_of_examinee']] ?? ''));
+        $sat    = (int) ($row[$map['overall_sat']] ?? 0);
+
+        $qualRaw = strtoupper(trim($row[$map['qualitative_interpretation']] ?? ''));
+        $qualRaw = preg_replace('/\s+/', ' ', $qualRaw); // normalize spaces
+
+        if ($examNo === '' || !isset($qualMap[$qualRaw])) {
+            $errors++;
             continue;
         }
 
-        $qualCode = $map[$qualText];
+        try {
+            $stmt = $conn->prepare("
+                INSERT INTO tbl_placement_results
+                (examinee_number, full_name, sat_score, qualitative_text, qualitative_code, upload_batch_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ");
+            $stmt->bind_param(
+                "ssisis",
+                $examNo,
+                $name,
+                $sat,
+                $qualRaw,
+                $qualMap[$qualRaw],
+                $batchId
+            );
+            $stmt->execute();
+            $inserted++;
 
-        $stmt = $conn->prepare("
-            INSERT INTO tbl_placement_results
-            (examinee_number, full_name, sat_score, qualitative_text, qualitative_code, upload_batch_id)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ");
-        $stmt->bind_param("ssisis", $examinee, $name, $sat, $qualText, $qualCode, $batch_id);
-        $stmt->execute();
-
-        $inserted++;
-
-    } catch (mysqli_sql_exception $e) {
-        if ($e->getCode() == 1062) {
-            $duplicate++;
-        } else {
-            $error++;
+        } catch (mysqli_sql_exception $e) {
+            if ($e->getCode() === 1062) {
+                $duplicates++;
+            } else {
+                $errors++;
+            }
         }
     }
+
+    fclose($h);
 }
 
-// update batch counters
-$conn->query("
+$conn->commit();
+
+/**
+ * Update batch stats
+ */
+$stmt = $conn->prepare("
     UPDATE tbl_placement_upload_batches
     SET
-        inserted_rows = inserted_rows + $inserted,
-        duplicate_rows = duplicate_rows + $duplicate,
-        error_rows = error_rows + $error
-    WHERE batch_id = '$batch_id'
+        inserted_rows  = inserted_rows + ?,
+        duplicate_rows = duplicate_rows + ?,
+        error_rows     = error_rows + ?
+    WHERE batch_id = ?
 ");
+$stmt->bind_param("iiis", $inserted, $duplicates, $errors, $batchId);
+$stmt->execute();
 
-echo json_encode([
-    'success' => true,
-    'processed' => count($chunk)
-]);
+/**
+ * Mark completed
+ */
+if ($offset + $limit >= $totalRows) {
+    $stmt = $conn->prepare("
+        UPDATE tbl_placement_upload_batches
+        SET status = 'completed', completed_at = NOW()
+        WHERE batch_id = ?
+    ");
+    $stmt->bind_param("s", $batchId);
+    $stmt->execute();
+}
+
+echo json_encode(['success' => true]);

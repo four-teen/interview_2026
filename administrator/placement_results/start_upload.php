@@ -1,16 +1,11 @@
 <?php
-/**
- * placement_results/start_upload.php
- * Phase 3 – Create upload batch + reset data
- */
-
-require_once '../../config/db.php'; // adjust ONLY if your db path is different
+require_once '../../config/db.php';
 session_start();
 
 header('Content-Type: application/json');
 
-// safety check
-if (!isset($_SESSION['user_id'])) {
+// ✅ correct session key
+if (!isset($_SESSION['accountid'])) {
     echo json_encode([
         'success' => false,
         'message' => 'Unauthorized'
@@ -18,17 +13,15 @@ if (!isset($_SESSION['user_id'])) {
     exit;
 }
 
-$admin_id = (int) $_SESSION['user_id'];
+$admin_id = (int) $_SESSION['accountid'];
 $batch_id = uniqid('PLT_', true);
 
 $conn->begin_transaction();
 
 try {
 
-    // 1. Remove existing placement results
     $conn->query("DELETE FROM tbl_placement_results");
 
-    // 2. Create new upload batch
     $stmt = $conn->prepare("
         INSERT INTO tbl_placement_upload_batches
         (batch_id, total_rows, inserted_rows, duplicate_rows, error_rows, status, uploaded_by)

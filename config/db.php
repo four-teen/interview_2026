@@ -1,5 +1,6 @@
 <?php
 /**
+ * path: root/config/db.php
  * Global Database Connection (MySQLi)
  * Used across Administrator module
  */

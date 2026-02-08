@@ -57,7 +57,7 @@ placement_results/index.php
 
         <!-- Menu -->
         <?php 
-          include '../sidebar.php';
+          include 'sidebar.php';
 
         ?>
         <!-- / Menu -->
@@ -67,7 +67,7 @@ placement_results/index.php
 
           <!-- Navbar -->
             <?php 
-              include '../header.php';
+              include 'header.php';
             ?>
           <!-- / Navbar -->
 
@@ -82,7 +82,7 @@ placement_results/index.php
               </h4>
 
               <p class="text-muted">
-                Upload tertiary placement test results from Excel (.xlsx). All examinee names will be converted to
+                Upload tertiary placement test results from CSV (.csv). All examinee names will be converted to
                 <strong>UPPERCASE</strong>. Existing records will be removed before saving the new dataset.
               </p>
 
@@ -101,10 +101,11 @@ placement_results/index.php
                     <div class="card-body">
 
                       <div class="mb-3">
-                        <label class="form-label">Excel File (.xlsx)</label>
-                        <input type="file" class="form-control" id="excelFile" accept=".xlsx">
+                        <label class="form-label">CSV File (.csv)</label>
+                        <input type="file" class="form-control" id="csvFile" accept=".csv">
                         <div class="form-text">
-                          Required columns: Examinee Number, Name of Examinee, Overall SAT, Qualitative Interpretation
+                          Required columns (CSV, UTF-8):
+                          Examinee Number, Name of Examinee, Overall SAT, Qualitative Interpretation
                         </div>
                       </div>
 
@@ -153,13 +154,10 @@ placement_results/index.php
             <!-- / MAIN CONTENT -->
 
             <!-- Footer -->
-            <footer class="content-footer footer bg-footer-theme">
-              <div class="container-xxl d-flex flex-wrap justify-content-between py-2">
-                <div class="mb-2 mb-md-0">
-                  © 2026, made with ❤️ by ThemeSelection
-                </div>
-              </div>
-            </footer>
+              <?php 
+                include '../../footer.php';
+
+              ?>
             <!-- / Footer -->
 
             <div class="content-backdrop fade"></div>
@@ -191,19 +189,19 @@ placement_results/index.php
 
     <!-- UI ONLY SCRIPT -->
     <script>
-      const excelFile = document.getElementById('excelFile');
+      const csvFile = document.getElementById('csvFile');
       const btnStart = document.getElementById('btnStartUpload');
       const btnClear = document.getElementById('btnClear');
       const progressWrap = document.getElementById('uploadProgressWrap');
 
-      excelFile.addEventListener('change', () => {
-        const hasFile = excelFile.files.length > 0;
+      csvFile.addEventListener('change', () => {
+        const hasFile = csvFile.files.length > 0;
         btnStart.disabled = !hasFile;
         btnClear.disabled = !hasFile;
       });
 
       btnClear.addEventListener('click', () => {
-        excelFile.value = '';
+        csvFile.value = '';
         btnStart.disabled = true;
         btnClear.disabled = true;
         progressWrap.classList.add('d-none');
@@ -215,7 +213,7 @@ placement_results/index.php
 
       $('#btnStartUpload').on('click', function () {
 
-        const fileInput = document.getElementById('excelFile');
+        const fileInput = document.getElementById('csvFile');
         if (!fileInput.files.length) return;
 
         $('#uploadProgressWrap').removeClass('d-none');
@@ -224,15 +222,19 @@ placement_results/index.php
         // 1. create batch
         $.post('start_upload.php', function (res) {
 
+          if (!res.success) {
+            alert('Upload failed: ' + res.message);
+            return;
+          }
+
           batchId = res.batch_id;
 
-          // 2. upload excel
           let formData = new FormData();
-          formData.append('excel_file', fileInput.files[0]);
+          formData.append('csv_file', fileInput.files[0]);
           formData.append('batch_id', batchId);
 
           $.ajax({
-            url: 'upload_excel.php',
+            url: 'upload_csv.php',
             type: 'POST',
             data: formData,
             processData: false,

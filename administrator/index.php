@@ -1,3 +1,92 @@
+<?php 
+  require_once '../config/db.php';
+  session_start();
+
+  // header('Content-Type: application/json');
+
+/**
+ * ============================================================================
+ * PHASE 1 – DASHBOARD GRAPH DATA
+ * Qualitative Distribution of Placement Results
+ * ============================================================================
+ */
+
+// STEP 1: Get latest upload batch (most recent exam)
+$batchSql = "
+    SELECT upload_batch_id
+    FROM tbl_placement_results
+    ORDER BY created_at DESC
+    LIMIT 1
+";
+$batchResult = $conn->query($batchSql);
+$activeBatchId = null;
+
+/**
+ * ============================================================================
+ * PHASE 1.5 – CAMPUS LIST (RIGHT SIDE CARDS)
+ * ============================================================================
+ */
+
+$campuses = [];
+
+$campusSql = "
+    SELECT campus_id, campus_code, campus_name
+    FROM tbl_campus
+    WHERE status = 'active'
+    ORDER BY campus_name ASC
+";
+
+$campusResult = $conn->query($campusSql);
+
+if ($campusResult && $campusResult->num_rows > 0) {
+    while ($row = $campusResult->fetch_assoc()) {
+        $campuses[] = $row;
+    }
+}
+
+
+
+if ($batchResult && $batchResult->num_rows > 0) {
+    $activeBatchId = $batchResult->fetch_assoc()['upload_batch_id'];
+}
+
+// STEP 2: Initialize qualitative buckets (ENSURE ORDER 1–6)
+$qualitativeLabels = [
+    1 => 'Outstanding',
+    2 => 'Above Average',
+    3 => 'High Average',
+    4 => 'Middle Average',
+    5 => 'Low Average',
+    6 => 'Below Average'
+];
+
+$qualitativeCounts = array_fill(1, 6, 0);
+
+// STEP 3: Aggregate data
+if ($activeBatchId) {
+    $sql = "
+        SELECT qualitative_code, COUNT(*) AS total
+        FROM tbl_placement_results
+        WHERE upload_batch_id = ?
+        GROUP BY qualitative_code
+        ORDER BY qualitative_code ASC
+    ";
+
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param("s", $activeBatchId);
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    while ($row = $result->fetch_assoc()) {
+        $code = (int) $row['qualitative_code'];
+        if (isset($qualitativeCounts[$code])) {
+            $qualitativeCounts[$code] = (int) $row['total'];
+        }
+    }
+}
+
+ ?>
+
 <!DOCTYPE html>
 
 <!-- =========================================================
@@ -192,9 +281,9 @@
                 <div class="col-12 col-lg-8 order-2 order-md-3 order-lg-2 mb-4">
                   <div class="card">
                     <div class="row row-bordered g-0">
-                      <div class="col-md-12">
-                        <h5 class="card-header m-0 me-2 pb-3">Total Revenue</h5>
-                        <div id="totalRevenueChart" class="px-2"></div>
+                      <div class="col-md-12" style="padding:15px;">
+                        <h5 class="card-title mb-3">Placement Test Performance Overview</h5>
+                        <div id="placementQualitativeChart" class="px-2"></div>
                       </div>
                     </div>
                   </div>
@@ -271,36 +360,10 @@
             <!-- / Content -->
 
             <!-- Footer -->
-            <footer class="content-footer footer bg-footer-theme">
-              <div class="container-xxl d-flex flex-wrap justify-content-between py-2 flex-md-row flex-column">
-                <div class="mb-2 mb-md-0">
-                  ©
-                  <script>
-                    document.write(new Date().getFullYear());
-                  </script>
-                  , made with ❤️ by
-                  <a href="https://themeselection.com" target="_blank" class="footer-link fw-bolder">ThemeSelection</a>
-                </div>
-                <div>
-                  <a href="https://themeselection.com/license/" class="footer-link me-4" target="_blank">License</a>
-                  <a href="https://themeselection.com/" target="_blank" class="footer-link me-4">More Themes</a>
+              <?php 
+                include '../footer.php';
 
-                  <a
-                    href="https://themeselection.com/demo/sneat-bootstrap-html-admin-template/documentation/"
-                    target="_blank"
-                    class="footer-link me-4"
-                    >Documentation</a
-                  >
-
-                  <a
-                    href="https://github.com/themeselection/sneat-html-admin-template-free/issues"
-                    target="_blank"
-                    class="footer-link me-4"
-                    >Support</a
-                  >
-                </div>
-              </div>
-            </footer>
+               ?>
             <!-- / Footer -->
 
             <div class="content-backdrop fade"></div>
@@ -334,6 +397,56 @@
     <!-- Page JS -->
     <script src="../assets/js/dashboards-analytics.js"></script>
 
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+
+  const qualitativeCategories = <?php echo json_encode(array_values($qualitativeLabels)); ?>;
+  const qualitativeData = <?php echo json_encode(array_values($qualitativeCounts)); ?>;
+
+  const options = {
+    chart: {
+      type: 'bar',
+      height: 350,
+      toolbar: { show: false }
+    },
+    series: [{
+      name: 'Number of Examinees',
+      data: qualitativeData
+    }],
+    xaxis: {
+      categories: qualitativeCategories,
+      labels: {
+        rotate: -45
+      }
+    },
+    plotOptions: {
+      bar: {
+        borderRadius: 6,
+        columnWidth: '45%'
+      }
+    },
+    colors: ['#696cff'], // Sneat primary
+    dataLabels: {
+      enabled: true
+    },
+    grid: {
+      strokeDashArray: 4
+    },
+    yaxis: {
+      title: {
+        text: 'Number of Examinees'
+      }
+    }
+  };
+
+  const chart = new ApexCharts(
+    document.querySelector("#placementQualitativeChart"),
+    options
+  );
+
+  chart.render();
+});
+</script>
 
   </body>
 </html>
