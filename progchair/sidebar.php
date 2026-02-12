@@ -77,49 +77,6 @@
               </li>
 
               <li class="menu-header small text-uppercase">
-                <span class="menu-header-text">Administration</span>
-              </li>
-
-              <li class="menu-item">
-                <a href="../administrator/accounts/index.php" class="menu-link">
-                  <i class="menu-icon tf-icons bx bx-user"></i>
-                  <div>User Accounts</div>
-                </a>
-              </li>
-
-              <li class="menu-item">
-                <a href="javascript:void(0);" class="menu-link">
-                  <i class="menu-icon tf-icons bx bx-shield-quarter"></i>
-                  <div>Roles & Access</div>
-                </a>
-              </li>
-
-              <li class="menu-header small text-uppercase">
-                <span class="menu-header-text">Institution Setup</span>
-              </li>
-
-              <li class="menu-item">
-                <a href="campuses/index.php" class="menu-link">
-                  <i class="menu-icon tf-icons bx bx-buildings"></i>
-                  <div>Campuses</div>
-                </a>
-              </li>
-
-              <li class="menu-item">
-                <a href="colleges/index.php" class="menu-link">
-                  <i class="menu-icon tf-icons bx bx-library"></i>
-                  <div>Colleges</div>
-                </a>
-              </li>
-
-              <li class="menu-item">
-                <a href="programs/index.php" class="menu-link">
-                  <i class="menu-icon tf-icons bx bx-book-content"></i>
-                  <div>Programs</div>
-                </a>
-              </li>
-
-              <li class="menu-header small text-uppercase">
                 <span class="menu-header-text">Interview Settings</span>
               </li>
 
@@ -160,13 +117,6 @@
                 <a href="javascript:void(0);" class="menu-link">
                   <i class="menu-icon tf-icons bx bx-history"></i>
                   <div>Activity Logs</div>
-                </a>
-              </li>
-
-              <li class="menu-item">
-                <a href="javascript:void(0);" class="menu-link">
-                  <i class="menu-icon tf-icons bx bx-cog"></i>
-                  <div>System Settings</div>
                 </a>
               </li>
 

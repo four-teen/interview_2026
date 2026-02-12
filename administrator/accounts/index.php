@@ -49,7 +49,7 @@ if ($result) {
 session_start();
 
 if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'administrator') {
-  header('Location: ../../index.html');
+  header('Location: ../../index.php');
   exit;
 }
 
@@ -72,30 +72,18 @@ $role     = $_SESSION['role'] ?? 'administrator';
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
 
   <title>User Accounts | Administrator</title>
-
-  <!-- Favicon -->
   <link rel="icon" type="image/x-icon" href="../../assets/img/favicon/favicon.ico" />
-
-  <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link
     href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@300;400;500;600;700&display=swap"
     rel="stylesheet"
   />
-
-  <!-- Icons -->
   <link rel="stylesheet" href="../../assets/vendor/fonts/boxicons.css" />
-
-  <!-- Core CSS -->
   <link rel="stylesheet" href="../../assets/vendor/css/core.css" />
   <link rel="stylesheet" href="../../assets/vendor/css/theme-default.css" />
   <link rel="stylesheet" href="../../assets/css/demo.css" />
-
-  <!-- Vendors CSS -->
   <link rel="stylesheet" href="../../assets/vendor/libs/perfect-scrollbar/perfect-scrollbar.css" />
-
-  <!-- Helpers -->
   <script src="../../assets/vendor/js/helpers.js"></script>
   <script src="../../assets/js/config.js"></script>
 
@@ -111,171 +99,18 @@ $role     = $_SESSION['role'] ?? 'administrator';
   <div class="layout-container">
 
     <!-- SIDEBAR -->
-    <aside id="layout-menu" class="layout-menu menu-vertical menu bg-menu-theme">
-      <div class="app-brand demo">
-        <a href="../index.php" class="app-brand-link">
-          <span class="app-brand-logo demo">
-            <i class="bx bx-buildings bx-md text-primary"></i>
-          </span>
-          <span class="app-brand-text demo menu-text fw-bolder ms-2">Interview</span>
-        </a>
-
-        <a href="javascript:void(0);" class="layout-menu-toggle menu-link text-large ms-auto d-block d-xl-none">
-          <i class="bx bx-chevron-left bx-sm align-middle"></i>
-        </a>
-      </div>
-
-      <div class="menu-inner-shadow"></div>
-
-      <!-- ADMIN-ONLY MENU -->
-      <ul class="menu-inner py-1">
-        <li class="menu-item">
-          <a href="../index.php" class="menu-link">
-            <i class="menu-icon tf-icons bx bx-home-circle"></i>
-            <div>Dashboard</div>
-          </a>
-        </li>
-
-        <li class="menu-header small text-uppercase">
-          <span class="menu-header-text">Administration</span>
-        </li>
-
-        <li class="menu-item active">
-          <a href="index.php" class="menu-link">
-            <i class="menu-icon tf-icons bx bx-user"></i>
-            <div>User Accounts</div>
-          </a>
-        </li>
-
-        <li class="menu-item">
-          <a href="javascript:void(0);" class="menu-link">
-            <i class="menu-icon tf-icons bx bx-shield-quarter"></i>
-            <div>Roles & Access</div>
-          </a>
-        </li>
-
-        <li class="menu-header small text-uppercase">
-          <span class="menu-header-text">Institution Setup</span>
-        </li>
-
-        <li class="menu-item">
-          <a href="javascript:void(0);" class="menu-link">
-            <i class="menu-icon tf-icons bx bx-buildings"></i>
-            <div>Campuses</div>
-          </a>
-        </li>
-
-        <li class="menu-item">
-          <a href="javascript:void(0);" class="menu-link">
-            <i class="menu-icon tf-icons bx bx-library"></i>
-            <div>Colleges</div>
-          </a>
-        </li>
-
-        <li class="menu-item">
-          <a href="javascript:void(0);" class="menu-link">
-            <i class="menu-icon tf-icons bx bx-book-content"></i>
-            <div>Programs</div>
-          </a>
-        </li>
-
-        <li class="menu-header small text-uppercase">
-          <span class="menu-header-text">Interview Settings</span>
-        </li>
-
-        <li class="menu-item">
-          <a href="javascript:void(0);" class="menu-link">
-            <i class="menu-icon tf-icons bx bx-list-check"></i>
-            <div>Scoring Criteria</div>
-          </a>
-        </li>
-
-        <li class="menu-item">
-          <a href="javascript:void(0);" class="menu-link">
-            <i class="menu-icon tf-icons bx bx-slideshow"></i>
-            <div>Score Weights</div>
-          </a>
-        </li>
-
-        <li class="menu-item">
-          <a href="javascript:void(0);" class="menu-link">
-            <i class="menu-icon tf-icons bx bx-check-shield"></i>
-            <div>Passing Rules</div>
-          </a>
-        </li>
-
-        <li class="menu-header small text-uppercase">
-          <span class="menu-header-text">System</span>
-        </li>
-
-        <li class="menu-item">
-          <a href="javascript:void(0);" class="menu-link">
-            <i class="menu-icon tf-icons bx bx-history"></i>
-            <div>Activity Logs</div>
-          </a>
-        </li>
-
-        <li class="menu-item">
-          <a href="javascript:void(0);" class="menu-link">
-            <i class="menu-icon tf-icons bx bx-cog"></i>
-            <div>System Settings</div>
-          </a>
-        </li>
-      </ul>
-    </aside>
+      <?php 
+        include '../sidebar.php';
+      ?>
     <!-- /SIDEBAR -->
 
     <!-- MAIN PAGE -->
     <div class="layout-page">
 
       <!-- NAVBAR -->
-      <nav class="layout-navbar container-xxl navbar navbar-expand-xl navbar-detached align-items-center bg-navbar-theme">
-        <div class="navbar-nav-right d-flex align-items-center w-100">
-
-          <div class="navbar-nav align-items-center">
-            <h5 class="mb-0 fw-semibold">User Accounts</h5>
-          </div>
-
-          <ul class="navbar-nav flex-row align-items-center ms-auto">
-            <li class="nav-item navbar-dropdown dropdown-user dropdown">
-              <a class="nav-link dropdown-toggle hide-arrow" href="#" data-bs-toggle="dropdown">
-                <div class="avatar avatar-online">
-                  <img src="../../assets/img/avatars/1.png" class="w-px-40 h-auto rounded-circle" alt="">
-                </div>
-              </a>
-              <ul class="dropdown-menu dropdown-menu-end">
-                <li>
-                  <a class="dropdown-item" href="javascript:void(0);">
-                    <div class="d-flex">
-                      <div class="flex-shrink-0 me-3">
-                        <div class="avatar avatar-online">
-                          <img src="../../assets/img/avatars/1.png" class="w-px-40 h-auto rounded-circle" alt="">
-                        </div>
-                      </div>
-                      <div class="flex-grow-1">
-                        <span class="fw-semibold d-block"><?php echo htmlspecialchars($fullname); ?></span>
-                        <small class="text-muted"><?php echo htmlspecialchars($email); ?></small>
-                        <div class="mt-1">
-                          <span class="badge bg-label-primary"><?php echo htmlspecialchars($role); ?></span>
-                        </div>
-                      </div>
-                    </div>
-                  </a>
-                </li>
-                <li><div class="dropdown-divider"></div></li>
-                <li>
-                  <!-- UI only: wire logout later -->
-                  <a class="dropdown-item" href="javascript:void(0);">
-                    <i class="bx bx-power-off me-2"></i>
-                    <span>Log Out</span>
-                  </a>
-                </li>
-              </ul>
-            </li>
-          </ul>
-
-        </div>
-      </nav>
+        <?php 
+          include '../header.php';
+        ?>
       <!-- /NAVBAR -->
 
       <!-- CONTENT -->

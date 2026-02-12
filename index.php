@@ -67,6 +67,15 @@
   <body>
     <!-- Content -->
 
+    <?php
+      $statusMsg = '';
+
+      if (isset($_GET['status']) && $_GET['status'] === 'pending_validation') {
+          $statusMsg = 'Your email is verified, but your account is pending validation by the system administrator.';
+      }
+    ?>
+
+
     <div class="container-xxl">
       <div class="authentication-wrapper authentication-basic container-p-y">
         <div class="authentication-inner">
@@ -98,10 +107,16 @@
               </p>
 
               <!-- Notice -->
-              <div class="alert alert-info small" role="alert">
-                Only official SKSU organizational Google accounts are allowed to
-                access this system.
-              </div>
+<?php if (!empty($statusMsg)): ?>
+  <div class="alert alert-warning small" role="alert">
+    <?= htmlspecialchars($statusMsg); ?>
+  </div>
+<?php else: ?>
+  <div class="alert alert-info small" role="alert">
+    Only official SKSU organizational Google accounts are allowed to
+    access this system.
+  </div>
+<?php endif; ?>
 
               <!-- Google Login -->
               <div class="mb-3">
@@ -211,7 +226,7 @@ function handleGoogleCredential(response) {
   const msg = document.getElementById("loginMsg");
 
   msg.className = "mt-3 small text-center text-success";
-  msg.textContent = "Login successful. Validating account...";
+  msg.textContent = "Login successful. Checking account authorization...";
 
   fetch('auth/google_callback.php', {
     method: 'POST',

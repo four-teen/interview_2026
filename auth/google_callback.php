@@ -140,6 +140,9 @@ $_SESSION['accountid']  = $account['accountid'];
 $_SESSION['fullname']   = $account['acc_fullname'];
 $_SESSION['email']      = $account['email'];
 $_SESSION['role']       = $account['role'];
+// Scope bindings (critical for role-based access)
+$_SESSION['campus_id']  = $account['campus_id'];
+$_SESSION['program_id'] = $account['program_id'];
 
 log_auth('Session created', $_SESSION);
 

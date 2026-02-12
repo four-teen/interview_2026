@@ -5,10 +5,12 @@
  * Global Database Connection (MySQLi)
  * Used across Administrator module
  */
+define('BASE_URL', '/interview');
+
 
 $DB_HOST = 'localhost';
 $DB_USER = 'root';
-$DB_PASS = 'vertrigo';
+$DB_PASS = '';
 $DB_NAME = 'the_interview_db';
 
 $conn = new mysqli($DB_HOST, $DB_USER, $DB_PASS, $DB_NAME);
