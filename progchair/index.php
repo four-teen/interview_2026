@@ -308,19 +308,29 @@ if ($activeBatchId) {
   <div class="card-body">
 
     <!-- SEARCH -->
-    <div class="mb-4">
-      <div class="input-group">
-        <span class="input-group-text">
-          <i class="bx bx-search"></i>
-        </span>
-        <input
-          type="text"
-          id="studentSearch"
-          class="form-control"
-          placeholder="Search by name or examinee number..."
-        />
-      </div>
-    </div>
+<!-- SEARCH + QUALIFIED COUNT -->
+<div class="mb-4 d-flex justify-content-between align-items-center">
+
+  <div class="input-group w-75">
+    <span class="input-group-text">
+      <i class="bx bx-search"></i>
+    </span>
+    <input
+      type="text"
+      id="studentSearch"
+      class="form-control"
+      placeholder="Search by name or examinee number..."
+    />
+  </div>
+
+  <div class="ms-3">
+    <span class="badge bg-label-success fs-6" id="qualifiedCountBadge">
+      0 Qualified
+    </span>
+  </div>
+
+</div>
+
 
     <!-- STUDENT LIST CONTAINER -->
     <div id="studentContainer"></div>
@@ -493,24 +503,31 @@ function createStudentCard(student) {
 
     fetch(`fetch_students.php?page=${page}&search=${encodeURIComponent(currentSearch)}`)
       .then(res => res.json())
-      .then(data => {
-        if (!data.success) return;
+.then(data => {
+  if (!data.success) return;
 
-        if (reset) {
-          container.innerHTML = '';
-        }
+  if (reset) {
+    container.innerHTML = '';
+  }
 
-        if (data.data.length === 0) {
-          hasMore = false;
-        } else {
-          data.data.forEach(student => {
-            container.insertAdjacentHTML('beforeend', createStudentCard(student));
-          });
-        }
+  // ✅ Update Qualified Count Badge
+  if (typeof data.total !== 'undefined') {
+    const badge = document.getElementById('qualifiedCountBadge');
+    badge.innerText = data.total + ' Qualified';
+  }
 
-        isLoading = false;
-        loadingIndicator.classList.add("d-none");
-      })
+  if (data.data.length === 0) {
+    hasMore = false;
+  } else {
+    data.data.forEach(student => {
+      container.insertAdjacentHTML('beforeend', createStudentCard(student));
+    });
+  }
+
+  isLoading = false;
+  loadingIndicator.classList.add("d-none");
+})
+
       .catch(err => {
         console.error(err);
         isLoading = false;
