@@ -2,7 +2,7 @@
   require_once '../config/db.php';
   session_start();
 
-  // ELBREN IS TESTING SOMETHING HERE
+  // i remote it and it works, but i will just leave it here for now
 
   // header('Content-Type: application/json');
 
