@@ -2,6 +2,10 @@
   require_once '../config/db.php';
   session_start();
 
+
+ini_set('display_errors', 1);
+error_reporting(E_ALL);
+
 /**
  * ============================================================================
  * PROGRAMS UNDER ASSIGNED CAMPUS
@@ -411,6 +415,141 @@ if ($activeBatchId) {
 
             <!-- / Content -->
 
+<!-- ========================================================= -->
+<!-- STUDENT DETAILS VERIFICATION MODAL -->
+<!-- File Path: root_folder/progchair/index.php -->
+<!-- ========================================================= -->
+<div class="modal fade" id="studentModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+
+      <form id="studentInterviewForm" autocomplete="off">
+
+        <div class="modal-header">
+          <h5 class="modal-title">Student Details Verification</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+
+        <div class="modal-body">
+
+          <!-- Hidden -->
+          <input type="hidden" name="placement_result_id" id="placement_result_id">
+          <input type="hidden" name="examinee_number" id="examinee_number">
+
+          <!-- Display Only -->
+          <div class="row g-3 mb-3">
+            <div class="col-md-6">
+              <label class="form-label">Examinee #</label>
+              <input type="text" id="display_examinee" class="form-control" readonly>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">SAT Score</label>
+              <input type="text" id="display_sat" class="form-control" readonly>
+            </div>
+            <div class="col-12">
+              <label class="form-label">Full Name</label>
+              <input type="text" id="display_name" class="form-control" readonly>
+            </div>
+          </div>
+
+          <hr>
+
+          <!-- CLASSIFICATION -->
+          <div class="mb-3">
+            <label class="form-label">Classification <span class="text-danger">*</span></label>
+            <select name="classification" id="classification" class="form-select" required>
+              <option value="REGULAR">Regular</option>
+              <option value="ETG">ETG</option>
+            </select>
+          </div>
+
+          <!-- ETG CLASS -->
+          <div class="mb-3 d-none" id="etgClassWrapper">
+            <label class="form-label">ETG Classification <span class="text-danger">*</span></label>
+            <select name="etg_class_id" id="etg_class_id" class="form-select">
+              <option value="">Select ETG Class</option>
+              <?php foreach ($etgClasses as $etg): ?>
+                <option value="<?= (int)$etg['etg_class_id']; ?>">
+                  <?= htmlspecialchars($etg['class_name']); ?>
+                </option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+
+          <!-- MOBILE -->
+          <div class="mb-3">
+            <label class="form-label">Mobile Number <span class="text-danger">*</span></label>
+            <input type="text" name="mobile_number" class="form-control" required>
+          </div>
+
+          <!-- PROGRAM CHOICES -->
+          <?php
+          function renderProgramOptions($programs) {
+              foreach ($programs as $p) {
+                  $display = $p['program_name'] . (!empty($p['major']) ? ' – ' . $p['major'] : '');
+                  echo '<option value="' . (int)$p['program_id'] . '">' . htmlspecialchars($display) . '</option>';
+              }
+          }
+          ?>
+
+          <div class="mb-3">
+            <label class="form-label">1st Choice <span class="text-danger">*</span></label>
+            <select name="first_choice" class="form-select" required>
+              <option value="">Select Program</option>
+              <?php renderProgramOptions($allPrograms); ?>
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">2nd Choice <span class="text-danger">*</span></label>
+            <select name="second_choice" class="form-select" required>
+              <option value="">Select Program</option>
+              <?php renderProgramOptions($allPrograms); ?>
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">3rd Choice <span class="text-danger">*</span></label>
+            <select name="third_choice" class="form-select" required>
+              <option value="">Select Program</option>
+              <?php renderProgramOptions($allPrograms); ?>
+            </select>
+          </div>
+
+          <!-- SHS TRACK -->
+          <div class="mb-3">
+            <label class="form-label">SHS Track <span class="text-danger">*</span></label>
+            <select name="shs_track_id" class="form-select" required>
+              <option value="">Select Track</option>
+              <?php foreach ($allTracks as $track): ?>
+                <option value="<?= (int)$track['track_id']; ?>">
+                  <?= htmlspecialchars($track['track_name']); ?>
+                </option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+
+          <!-- DATETIME -->
+          <div class="mb-0">
+            <label class="form-label">Date/Time</label>
+            <input type="text" class="form-control" value="<?= date('F d, Y h:i A'); ?>" readonly>
+          </div>
+
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">Close</button>
+          <button type="submit" class="btn btn-success">Save</button>
+        </div>
+
+      </form>
+
+    </div>
+  </div>
+</div>
+
+
+
             <!-- Footer -->
               <?php 
                 include '../footer.php';
@@ -451,48 +590,55 @@ document.addEventListener("DOMContentLoaded", function () {
   let hasMore = true;
   let currentSearch = '';
 
-function createStudentCard(student) {
-  return `
-    <div class="card mb-2 shadow-sm border-0"
-         style="
-           border-left: 6px solid #28c76f;
-           background: linear-gradient(to right, #e9f9f1 0%, #ffffff 8%);
-         ">
+  function createStudentCard(student) {
+    return `
+      <div class="card mb-2 shadow-sm border-0"
+           style="
+             border-left: 6px solid #28c76f;
+             background: linear-gradient(to right, #e9f9f1 0%, #ffffff 8%);
+           ">
 
-      <div class="card-body py-2 px-3">
+        <div class="card-body py-2 px-3">
 
-        <div class="d-flex justify-content-between align-items-center">
+          <div class="d-flex justify-content-between align-items-center">
 
-          <!-- LEFT SIDE -->
-          <div>
-            <div class="fw-semibold small mb-1">
-              ${student.full_name}
+            <!-- LEFT SIDE -->
+            <div>
+              <div class="fw-semibold small mb-1">
+                ${student.full_name}
+              </div>
+              <small class="text-muted">
+                Examinee #: ${student.examinee_number}
+                &nbsp; | &nbsp;
+                SAT: ${student.sat_score}
+                &nbsp; | &nbsp;
+                ${student.qualitative_text}
+              </small>
             </div>
-            <small class="text-muted">
-              Examinee #: ${student.examinee_number}
-              &nbsp; | &nbsp;
-              SAT: ${student.sat_score}
-              &nbsp; | &nbsp;
-              ${student.qualitative_text}
-            </small>
-          </div>
 
-          <!-- RIGHT SIDE BUTTON -->
-          <div class="ms-3">
-            <button class="btn btn-sm btn-primary px-3 py-1">
-              Interview
+            <!-- RIGHT SIDE BUTTON -->
+            <div class="ms-3">
+            <button
+              type="button"
+              class="btn btn-sm btn-primary px-3 py-1"
+              data-bs-toggle="modal"
+              data-bs-target="#studentModal"
+              data-id="${student.placement_result_id}"
+              data-examinee="${student.examinee_number}"
+              data-name="${student.full_name}"
+              data-score="${student.sat_score}"
+            >
+              Manage
             </button>
+
+            </div>
+
           </div>
 
         </div>
-
       </div>
-    </div>
-  `;
-}
-
-
-
+    `;
+  }
 
 
   function loadStudents(reset = false) {
@@ -503,30 +649,30 @@ function createStudentCard(student) {
 
     fetch(`fetch_students.php?page=${page}&search=${encodeURIComponent(currentSearch)}`)
       .then(res => res.json())
-.then(data => {
-  if (!data.success) return;
+        .then(data => {
+          if (!data.success) return;
 
-  if (reset) {
-    container.innerHTML = '';
-  }
+          if (reset) {
+            container.innerHTML = '';
+          }
 
-  // ✅ Update Qualified Count Badge
-  if (typeof data.total !== 'undefined') {
-    const badge = document.getElementById('qualifiedCountBadge');
-    badge.innerText = data.total + ' Qualified';
-  }
+          // ✅ Update Qualified Count Badge
+          if (typeof data.total !== 'undefined') {
+            const badge = document.getElementById('qualifiedCountBadge');
+            badge.innerText = data.total + ' Qualified';
+          }
 
-  if (data.data.length === 0) {
-    hasMore = false;
-  } else {
-    data.data.forEach(student => {
-      container.insertAdjacentHTML('beforeend', createStudentCard(student));
-    });
-  }
+          if (data.data.length === 0) {
+            hasMore = false;
+          } else {
+            data.data.forEach(student => {
+              container.insertAdjacentHTML('beforeend', createStudentCard(student));
+            });
+          }
 
-  isLoading = false;
-  loadingIndicator.classList.add("d-none");
-})
+          isLoading = false;
+          loadingIndicator.classList.add("d-none");
+        })
 
       .catch(err => {
         console.error(err);
@@ -560,6 +706,79 @@ function createStudentCard(student) {
 
   // Initial Load
   loadStudents();
+
+
+
+// ==============================================
+// Populate Modal (Student Details Verification)
+// ==============================================
+const studentModal = document.getElementById('studentModal');
+
+if (studentModal) {
+  studentModal.addEventListener('show.bs.modal', function (event) {
+
+    const button = event.relatedTarget;
+
+    const id       = button.getAttribute('data-id');
+    const examinee = button.getAttribute('data-examinee');
+    const name     = button.getAttribute('data-name');
+    const score    = button.getAttribute('data-score');
+
+    // hidden fields (for saving later)
+    document.getElementById('placement_result_id').value = id || '';
+    document.getElementById('examinee_number').value     = examinee || '';
+
+    // display-only fields
+    document.getElementById('display_examinee').value = examinee || '';
+    document.getElementById('display_name').value     = name || '';
+    document.getElementById('display_sat').value      = score || '';
+
+    // reset form fields every open
+    document.getElementById('studentInterviewForm').reset();
+
+    // keep student display after reset
+    document.getElementById('display_examinee').value = examinee || '';
+    document.getElementById('display_name').value     = name || '';
+    document.getElementById('display_sat').value      = score || '';
+
+    // default classification to REGULAR on open
+    document.getElementById('classification').value = 'REGULAR';
+
+    // apply ETG UI rules
+    syncEtgUI();
+  });
+}
+
+// ==============================================
+// ETG CLASS RULES
+// - If REGULAR: etg_class_id becomes "not required" and hidden
+// - If ETG: show dropdown and required
+// ==============================================
+function syncEtgUI() {
+  const classificationEl = document.getElementById('classification');
+  const etgWrapperEl     = document.getElementById('etgClassWrapper');
+  const etgSelectEl      = document.getElementById('etg_class_id');
+
+  if (!classificationEl || !etgWrapperEl || !etgSelectEl) return;
+
+  if (classificationEl.value === 'ETG') {
+    etgWrapperEl.style.display = 'block';
+    etgSelectEl.required = true;
+  } else {
+    etgWrapperEl.style.display = 'none';
+    etgSelectEl.required = false;
+    etgSelectEl.value = '';
+  }
+}
+
+// Hook change event
+const classificationElHook = document.getElementById('classification');
+if (classificationElHook) {
+  classificationElHook.addEventListener('change', syncEtgUI);
+}
+
+
+
 
 });
 </script>

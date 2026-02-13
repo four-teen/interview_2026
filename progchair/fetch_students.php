@@ -1,7 +1,7 @@
 <?php
 /**
  * ============================================================================
- * root_folder/interview/prograchir/fetch_students.php
+ * root_folder/interview/progchair/fetch_students.php
  * Fetch students (Eligibility Filtering + Infinite Scroll + Search + Count)
  * ============================================================================
  */
@@ -43,6 +43,15 @@ $cutoffSql = "
 ";
 
 $stmtCutoff = $conn->prepare($cutoffSql);
+if (!$stmtCutoff) {
+    echo json_encode([
+        'success' => false,
+        'message' => 'SQL prepare failed (STEP 1)',
+        'error'   => $conn->error
+    ]);
+    exit;
+}
+
 $stmtCutoff->bind_param("i", $assignedProgramId);
 $stmtCutoff->execute();
 $cutoffResult = $stmtCutoff->get_result();
@@ -108,18 +117,31 @@ $searchLike = '%' . $search . '%';
 // STEP 5 – COUNT TOTAL ELIGIBLE STUDENTS
 // ======================================================
 
-$countSql = "
-    SELECT COUNT(*) AS total
-    FROM tbl_placement_results
-    WHERE upload_batch_id = ?
-      AND sat_score >= ?
-      AND (
-            full_name LIKE ?
-            OR examinee_number LIKE ?
-          )
-";
+    $countSql = "
+        SELECT COUNT(*) AS total
+        FROM tbl_placement_results pr
+        LEFT JOIN tbl_student_interview si
+            ON pr.examinee_number = si.examinee_number
+        WHERE pr.upload_batch_id = ?
+          AND pr.sat_score >= ?
+          AND si.examinee_number IS NULL
+          AND (
+                pr.full_name LIKE ?
+                OR pr.examinee_number LIKE ?
+              )
+    ";
+
 
 $stmtCount = $conn->prepare($countSql);
+if (!$stmtCount) {
+    echo json_encode([
+        'success' => false,
+        'message' => 'SQL prepare failed (STEP 5)',
+        'error'   => $conn->error
+    ]);
+    exit;
+}
+
 $stmtCount->bind_param(
     "siss",
     $activeBatchId,
@@ -139,23 +161,35 @@ $totalQualified = (int) $countResult->fetch_assoc()['total'];
 
 $sql = "
     SELECT
-        id,
-        examinee_number,
-        full_name,
-        sat_score,
-        qualitative_text
-    FROM tbl_placement_results
-    WHERE upload_batch_id = ?
-      AND sat_score >= ?
+        pr.id AS placement_result_id,
+        pr.examinee_number,
+        pr.full_name,
+        pr.sat_score,
+        pr.qualitative_text
+    FROM tbl_placement_results pr
+    LEFT JOIN tbl_student_interview si
+        ON pr.examinee_number = si.examinee_number
+    WHERE pr.upload_batch_id = ?
+      AND pr.sat_score >= ?
+      AND si.examinee_number IS NULL
       AND (
-            full_name LIKE ?
-            OR examinee_number LIKE ?
+            pr.full_name LIKE ?
+            OR pr.examinee_number LIKE ?
           )
-    ORDER BY sat_score DESC
+    ORDER BY pr.sat_score DESC
     LIMIT ? OFFSET ?
 ";
 
+
 $stmt = $conn->prepare($sql);
+if (!$stmt) {
+    echo json_encode([
+        'success' => false,
+        'message' => 'SQL prepare failed (STEP 6)',
+        'error'   => $conn->error
+    ]);
+    exit;
+}
 $stmt->bind_param(
     "sissii",
     $activeBatchId,
