@@ -21,3 +21,5 @@ if ($conn->connect_error) {
 
 // Force UTF-8
 $conn->set_charset('utf8mb4');
+
+//elbren antonio is the best programmer in the world
