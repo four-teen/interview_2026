@@ -3,6 +3,9 @@
 .AppleDouble
 .LSOverride
 
+# Database config
+config/db.php
+
 # Thumbnails
 ._*
 Thumbs.db

@@ -2,6 +2,8 @@
   require_once '../config/db.php';
   session_start();
 
+  // ELBREN IS TESTING SOMETHING HERE
+
   // header('Content-Type: application/json');
 
 /**
