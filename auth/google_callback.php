@@ -151,17 +151,16 @@ log_auth('Session created', $_SESSION);
  * ========================================================================== */
 switch ($account['role']) {
     case 'administrator':
-        $redirect = '/interview/administrator/index.php';
+        $redirect = BASE_URL . '/administrator/index.php';
         break;
 
     case 'progchair':
-        $redirect = '/interview/progchair/index.php';
+        $redirect = BASE_URL . '/progchair/index.php';
         break;
 
     case 'monitoring':
-        $redirect = '/interview/monitoring/index.php';
+        $redirect = BASE_URL . '/monitoring/index.php';
         break;
-
     default:
         http_response_code(403);
         log_auth('Invalid role', $account['role']);

@@ -124,6 +124,7 @@ $searchLike = '%' . $search . '%';
             ON pr.examinee_number = si.examinee_number
         WHERE pr.upload_batch_id = ?
           AND pr.sat_score >= ?
+          AND si.examinee_number IS NULL
           AND (
                 pr.full_name LIKE ?
                 OR pr.examinee_number LIKE ?
@@ -164,14 +165,13 @@ $sql = "
         pr.examinee_number,
         pr.full_name,
         pr.sat_score,
-        pr.qualitative_text,
-        si.interview_id,
-        si.program_chair_id        
+        pr.qualitative_text
     FROM tbl_placement_results pr
     LEFT JOIN tbl_student_interview si
         ON pr.examinee_number = si.examinee_number
     WHERE pr.upload_batch_id = ?
       AND pr.sat_score >= ?
+      AND si.examinee_number IS NULL
       AND (
             pr.full_name LIKE ?
             OR pr.examinee_number LIKE ?
@@ -206,19 +206,8 @@ $result = $stmt->get_result();
 $students = [];
 
 while ($row = $result->fetch_assoc()) {
-
-    // Flag: does interview already exist?
-    $row['has_interview'] = !empty($row['interview_id']);
-
-    // Flag: can current program chair edit?
-    $row['can_edit'] = (
-        !empty($row['program_chair_id']) &&
-        (int)$row['program_chair_id'] === (int)$_SESSION['accountid']
-    );
-
     $students[] = $row;
 }
-
 
 
 // ======================================================

@@ -495,8 +495,6 @@ if ($activeBatchId) {
           <!-- Hidden -->
           <input type="hidden" name="placement_result_id" id="placement_result_id">
           <input type="hidden" name="examinee_number" id="examinee_number">
-          <!-- Interview ID (for update mode) -->
-          <input type="hidden" name="interview_id" id="interview_id">          
 
 <!-- STUDENT SUMMARY CARD -->
 <div class="card border-0 shadow-sm mb-4"
@@ -557,7 +555,7 @@ if ($activeBatchId) {
             required>
 
       <!-- DEFAULT FOR REGULAR -->
-      <option value="">Select ETG Class</option>
+      <option value="REGULAR">REGULAR</option>
 
       <!-- ETG OPTIONS -->
       <?php foreach ($etgClasses as $etg): ?>
@@ -676,7 +674,6 @@ if ($activeBatchId) {
     <script src="../assets/vendor/libs/perfect-scrollbar/perfect-scrollbar.js"></script>
     <script src="../assets/vendor/js/menu.js"></script>
     <script src="../assets/js/main.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
 <script>
 document.addEventListener("DOMContentLoaded", function () {
@@ -690,121 +687,55 @@ document.addEventListener("DOMContentLoaded", function () {
   let hasMore = true;
   let currentSearch = '';
 
-function createStudentCard(student) {
+  function createStudentCard(student) {
+    return `
+      <div class="card mb-2 shadow-sm border-0"
+           style="
+             border-left: 6px solid #28c76f;
+             background: linear-gradient(to right, #e9f9f1 0%, #ffffff 8%);
+           ">
 
-  let buttonHtml = '';
+        <div class="card-body py-2 px-3">
 
-  // ==============================
-  // 1️⃣ NO INTERVIEW YET
-  // ==============================
-  if (!student.has_interview) {
+          <div class="d-flex justify-content-between align-items-center">
 
-    buttonHtml = `
-      <button
-        type="button"
-        class="btn btn-sm btn-primary px-3 py-1"
-        data-bs-toggle="modal"
-        data-bs-target="#studentModal"
-        data-id="${student.placement_result_id}"
-        data-examinee="${student.examinee_number}"
-        data-name="${student.full_name}"
-        data-score="${student.sat_score}"
-        data-has-interview="0"
-      >
-        Manage
-      </button>
-    `;
-
-  }
-
-  // ==============================
-  // 2️⃣ HAS INTERVIEW AND I AM OWNER
-  // ==============================
-  else if (student.can_edit) {
-
-    buttonHtml = `
-      <button
-        type="button"
-        class="btn btn-sm btn-warning px-3 py-1"
-        data-bs-toggle="modal"
-        data-bs-target="#studentModal"
-        data-id="${student.placement_result_id}"
-        data-examinee="${student.examinee_number}"
-        data-name="${student.full_name}"
-        data-score="${student.sat_score}"
-        data-has-interview="1"
-      >
-        Manage Details
-      </button>
-    `;
-
-  }
-
-  // ==============================
-  // 3️⃣ HAS INTERVIEW BUT NOT MINE
-  // ==============================
-  else {
-
-    buttonHtml = `
-      <div class="d-flex gap-2">
-        <button
-          type="button"
-          class="btn btn-sm btn-success px-3 py-1"
-          data-bs-toggle="modal"
-          data-bs-target="#studentModal"
-          data-id="${student.placement_result_id}"
-          data-examinee="${student.examinee_number}"
-          data-name="${student.full_name}"
-          data-score="${student.sat_score}"
-          data-has-interview="1"
-        >
-          View Details
-        </button>
-
-        <button
-          type="button"
-          class="btn btn-sm btn-outline-danger px-3 py-1 transfer-btn"
-          data-id="${student.placement_result_id}"
-        >
-          Transfer
-        </button>
-      </div>
-    `;
-  }
-
-  return `
-    <div class="card mb-2 shadow-sm border-0"
-         style="
-           border-left: 6px solid #28c76f;
-           background: linear-gradient(to right, #e9f9f1 0%, #ffffff 8%);
-         ">
-
-      <div class="card-body py-2 px-3">
-        <div class="d-flex justify-content-between align-items-center">
-
-          <div>
-            <div class="fw-semibold small mb-1">
-              ${student.full_name}
+            <!-- LEFT SIDE -->
+            <div>
+              <div class="fw-semibold small mb-1">
+                ${student.full_name}
+              </div>
+              <small class="text-muted">
+                Examinee #: ${student.examinee_number}
+                &nbsp; | &nbsp;
+                SAT: ${student.sat_score}
+                &nbsp; | &nbsp;
+                ${student.qualitative_text}
+              </small>
             </div>
-            <small class="text-muted">
-              Examinee #: ${student.examinee_number}
-              &nbsp; | &nbsp;
-              SAT: ${student.sat_score}
-              &nbsp; | &nbsp;
-              ${student.qualitative_text}
-            </small>
-          </div>
 
-          <div class="ms-3">
-            ${buttonHtml}
+            <!-- RIGHT SIDE BUTTON -->
+            <div class="ms-3">
+            <button
+              type="button"
+              class="btn btn-sm btn-primary px-3 py-1"
+              data-bs-toggle="modal"
+              data-bs-target="#studentModal"
+              data-id="${student.placement_result_id}"
+              data-examinee="${student.examinee_number}"
+              data-name="${student.full_name}"
+              data-score="${student.sat_score}"
+            >
+              Manage
+            </button>
+
+            </div>
+
           </div>
 
         </div>
       </div>
-    </div>
-  `;
-}
-
+    `;
+  }
 
 
   function loadStudents(reset = false) {
@@ -885,101 +816,35 @@ if (studentModal) {
 
     const button = event.relatedTarget;
 
-    const placementId  = button.getAttribute('data-id');
-    const examinee     = button.getAttribute('data-examinee');
-    const name         = button.getAttribute('data-name');
-    const score        = button.getAttribute('data-score');
-    const hasInterview = button.getAttribute('data-has-interview') == "1";
+    const id       = button.getAttribute('data-id');
+    const examinee = button.getAttribute('data-examinee');
+    const name     = button.getAttribute('data-name');
+    const score    = button.getAttribute('data-score');
 
-    // reset first (clears old values)
-    document.getElementById('studentInterviewForm').reset();
-
-    // hidden
-    document.getElementById('placement_result_id').value = placementId || '';
+    // hidden fields (for saving later)
+    document.getElementById('placement_result_id').value = id || '';
     document.getElementById('examinee_number').value     = examinee || '';
-    document.getElementById('interview_id').value        = '';
 
-    // display
+    // display-only fields
     document.getElementById('display_examinee').innerText = examinee || '';
     document.getElementById('display_name').innerText     = name || '';
     document.getElementById('display_sat').innerText      = score || '';
 
-    const saveButton = document.querySelector('#studentInterviewForm button[type="submit"]');
+    // reset form fields every open
+    document.getElementById('studentInterviewForm').reset();
 
-    // ================================
-    // INSERT MODE
-    // ================================
-    if (!hasInterview) {
+    // keep student display after reset
+document.getElementById('display_examinee').innerText = examinee || '';
+document.getElementById('display_name').innerText     = name || '';
+document.getElementById('display_sat').innerText      = score || '';
 
-      saveButton.textContent = 'Save';
-      saveButton.classList.remove('btn-secondary');
-      saveButton.classList.add('btn-success');
-      saveButton.disabled = false;
+    // default classification to REGULAR on open
+    document.getElementById('classification').value = 'REGULAR';
 
-      document.querySelectorAll('#studentInterviewForm input, #studentInterviewForm select')
-        .forEach(el => el.disabled = false);
-
-      document.getElementById('classification').value = 'REGULAR';
-      syncEtgUI();
-
-      return;
-    }
-
-    // ================================
-    // EDIT / VIEW MODE
-    // ================================
-    fetch(`get_interview.php?placement_result_id=${placementId}`)
-      .then(res => res.json())
-      .then(data => {
-
-        if (!data.success || !data.exists) return;
-
-        const record = data.data;
-
-        // populate
-        document.getElementById('interview_id').value = record.interview_id;
-        document.getElementById('classification').value = record.classification;
-
-        document.querySelector('[name="mobile_number"]').value = record.mobile_number || '';
-        document.querySelector('[name="first_choice"]').value  = record.first_choice || '';
-        document.querySelector('[name="second_choice"]').value = record.second_choice || '';
-        document.querySelector('[name="third_choice"]').value  = record.third_choice || '';
-        document.querySelector('[name="shs_track_id"]').value  = record.shs_track_id || '';
-
-        if (record.classification === 'ETG') {
-          document.getElementById('etg_class_id').value = record.etg_class_id || '';
-        }
-
-        syncEtgUI();
-
-        // OWNER CHECK
-        if (data.is_owner) {
-
-          saveButton.textContent = 'Update';
-          saveButton.classList.remove('btn-secondary');
-          saveButton.classList.add('btn-success');
-          saveButton.disabled = false;
-
-          document.querySelectorAll('#studentInterviewForm input, #studentInterviewForm select')
-            .forEach(el => el.disabled = false);
-
-        } else {
-
-          saveButton.textContent = 'View Only';
-          saveButton.classList.remove('btn-success');
-          saveButton.classList.add('btn-secondary');
-          saveButton.disabled = true;
-
-          document.querySelectorAll('#studentInterviewForm input, #studentInterviewForm select')
-            .forEach(el => el.disabled = true);
-
-        }
-
-      });
-
+    // apply ETG UI rules
+    syncEtgUI();
   });
 }
-
 
 // ==============================================
 // ETG CLASS RULES
@@ -1000,17 +865,16 @@ function syncEtgUI() {
     etgSelectEl.required = true;
 
     // If currently REGULAR, switch to first ETG option
-    if (!etgSelectEl.value) {
-        if (etgSelectEl.options.length > 1) {
-            etgSelectEl.selectedIndex = 1;
-        }
+    if (etgSelectEl.value === 'REGULAR') {
+      if (etgSelectEl.options.length > 1) {
+        etgSelectEl.selectedIndex = 1;
+      }
     }
-
 
   } else {
 
     // Set to REGULAR
-    etgSelectEl.value = '';
+    etgSelectEl.value = 'REGULAR';
 
     // Disable dropdown
     etgSelectEl.disabled = true;
@@ -1028,78 +892,6 @@ if (classificationElHook) {
 }
 
 
-// =========================================================================
-// AJAX SAVE INTERVIEW (Insert + Update)
-// File: root_folder/progchair/index.php
-// =========================================================================
-
-const interviewForm = document.getElementById('studentInterviewForm');
-
-if (interviewForm) {
-
-  interviewForm.addEventListener('submit', function (e) {
-
-    e.preventDefault();
-
-    const formData = new FormData(interviewForm);
-
-    fetch('save_interview.php', {
-      method: 'POST',
-      body: formData
-    })
-    .then(res => res.json())
-    .then(data => {
-
-      if (!data.success) {
-        Swal.fire({
-          icon: 'error',
-          title: 'Error',
-          text: data.message || 'Something went wrong.'
-        });
-        return;
-      }
-
-      // Close modal
-      const modal = bootstrap.Modal.getInstance(document.getElementById('studentModal'));
-      modal.hide();
-
-// 🔥 RELOAD LIST PROPERLY AFTER SAVE
-page = 1;
-hasMore = true;
-loadStudents(true);
-
-      // Ask next action
-      Swal.fire({
-        icon: 'success',
-        title: 'Saved Successfully',
-        text: 'Do you want to enter scores now?',
-        showCancelButton: true,
-        confirmButtonText: 'Yes, Enter Scores',
-        cancelButtonText: 'Return to List'
-      }).then((result) => {
-
-        if (result.isConfirmed) {
-
-          // redirect to score page (we create later)
-          window.location.href = 'interview_scores.php?interview_id=' + data.interview_id;
-
-        }
-
-      });
-
-    })
-    .catch(err => {
-      console.error(err);
-      Swal.fire({
-        icon: 'error',
-        title: 'Error',
-        text: 'Request failed.'
-      });
-    });
-
-  });
-
-}
 
 
 });
