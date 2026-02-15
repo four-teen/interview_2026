@@ -42,29 +42,31 @@ if ($fromProgramId === $toProgramId) {
 }
 
 /* ======================================================
-   PREVENT DUPLICATE TRANSFER TO SAME TARGET
+   PREVENT MULTIPLE PENDING TRANSFERS
 ====================================================== */
-$checkSql = "
+$pendingSql = "
 SELECT transfer_id
 FROM tbl_student_transfer_history
 WHERE interview_id = ?
-AND to_program_id = ?
+AND status = 'pending'
 LIMIT 1
 ";
 
-$stmtCheck = $conn->prepare($checkSql);
-if (!$stmtCheck) {
-    die("SQL Error (checkSql): " . $conn->error);
+$stmtPending = $conn->prepare($pendingSql);
+if (!$stmtPending) {
+    die("SQL Error (pendingSql): " . $conn->error);
 }
 
-$stmtCheck->bind_param("ii", $interviewId, $toProgramId);
-$stmtCheck->execute();
-$exists = $stmtCheck->get_result()->fetch_assoc();
+$stmtPending->bind_param("i", $interviewId);
+$stmtPending->execute();
+$pendingExists = $stmtPending->get_result()->fetch_assoc();
 
-if ($exists) {
-    header('Location: index.php?msg=duplicate_transfer');
+if ($pendingExists) {
+    header('Location: index.php?msg=pending_transfer_exists');
     exit;
 }
+
+
 
 /* ======================================================
    INSERT TRANSFER RECORD

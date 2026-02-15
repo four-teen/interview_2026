@@ -79,6 +79,35 @@ if (!$student || empty($student['interview_id'])) {
     exit;
 }
 
+
+/**
+ * ============================================================
+ * CHECK IF THERE IS ALREADY A PENDING TRANSFER
+ * ============================================================
+ */
+
+$pendingSql = "
+    SELECT transfer_id
+    FROM tbl_student_transfer_history
+    WHERE interview_id = ?
+    AND status = 'pending'
+    LIMIT 1
+";
+
+$stmtPending = $conn->prepare($pendingSql);
+
+if (!$stmtPending) {
+    die("SQL Error (pendingSql): " . $conn->error);
+}
+
+$stmtPending->bind_param("i", $student['interview_id']);
+$stmtPending->execute();
+$pendingResult = $stmtPending->get_result();
+
+$hasPendingTransfer = $pendingResult->num_rows > 0;
+
+
+
 /**
  * ============================================================
  * LOAD PROGRAMS (SAME CAMPUS ONLY)
@@ -247,8 +276,19 @@ $programs = $stmtProg->get_result();
 </div>
 
 
+<?php if ($hasPendingTransfer): ?>
+
+<div class="alert alert-warning mb-4">
+    <strong>Pending Transfer Exists.</strong><br>
+    This student already has a pending transfer request.
+    You must approve or reject it before creating a new one.
+</div>
+
+<?php endif; ?>
+
+
 <!-- ================= PROGRAM LIST ================= -->
-<form method="POST" action="process_transfer.php">
+<form method="POST" action="process_transfer.php" <?= $hasPendingTransfer ? 'style="pointer-events:none; opacity:0.6;"' : ''; ?>>
 
 <input type="hidden" name="interview_id" value="<?= $student['interview_id']; ?>">
 <input type="hidden" name="from_program_id" value="<?= $student['program_id']; ?>">
