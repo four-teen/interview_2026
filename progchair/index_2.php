@@ -538,25 +538,30 @@ if ($activeBatchId) {
         <small class="text-muted">
           Examinee #: <strong id="display_examinee"></strong>
         </small>
+        <div class="mt-1">
+          <small class="text-muted">
+            Encoded by:
+            <strong id="display_encoded_by"></strong>
+          </small>
+        </div>
       </div>
 
       <div class="text-end">
-        <small class="text-muted">SAT Score</small>
-        <div class="fw-bold text-success fs-5" id="display_sat"></div>
+        <div>
+          <small class="text-muted">SAT Score</small>
+          <div class="fw-bold text-success fs-5" id="display_sat"></div>
+        </div>
+        <div class="mt-2">
+          <small class="text-muted">Final Interview Score</small>
+          <div class="fw-bold text-warning fs-4" id="display_final_score"></div>
+        </div>
       </div>
-
-<div id="viewOnlyExtra" class="text-end mt-2 d-none">
-  <small class="text-muted">Interview Score</small>
-  <div class="fw-bold text-warning fs-5" id="display_final_score"></div>
-  <small class="text-muted d-block mt-1">
-    Encoded by: <strong id="display_encoded_by"></strong>
-  </small>
-</div>
 
     </div>
 
   </div>
 </div>
+
 
 
           <hr>
@@ -699,116 +704,6 @@ if ($activeBatchId) {
   </div>
 </div>
 
-<!-- ========================================================= -->
-<!-- STUDENT DETAILS VIEW-ONLY MODAL (GREEN BUTTON) -->
-<!-- File Path: root_folder/interview/progchair/index.php -->
-<!-- ========================================================= -->
-<div class="modal fade" id="studentViewModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-lg modal-dialog-centered">
-    <div class="modal-content">
-
-      <div class="modal-header">
-        <h5 class="modal-title">Student Details Verification</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
-
-      <div class="modal-body">
-
-        <!-- STUDENT SUMMARY CARD (same look/feel as manage modal) -->
-        <div class="card border-0 shadow-sm mb-4"
-             style="border-left: 5px solid #28c76f; background: #f4fff8;">
-          <div class="card-body py-3">
-
-            <div class="d-flex justify-content-between align-items-center flex-wrap">
-
-              <div>
-                <div class="fw-semibold text-dark">
-                  <i class="bx bx-user me-1"></i>
-                  <span id="v_display_name"></span>
-                </div>
-                <small class="text-muted">
-                  Examinee #: <strong id="v_display_examinee"></strong>
-                </small>
-              </div>
-
-              <div class="text-end">
-                <small class="text-muted">SAT Score</small>
-                <div class="fw-bold text-success fs-5" id="v_display_sat"></div>
-              </div>
-
-              <div class="text-end mt-2">
-                <small class="text-muted">Interview Score</small>
-                <div class="fw-bold text-warning fs-5" id="v_display_final_score"></div>
-                <small class="text-muted d-block mt-1">
-                  Encoded by: <strong id="v_display_encoded_by"></strong>
-                </small>
-              </div>
-
-            </div>
-
-          </div>
-        </div>
-
-        <hr>
-
-        <!-- SIMPLE INFO LIST (NO INPUT BOXES) -->
-        <div class="row g-3">
-
-          <div class="col-md-6">
-            <small class="text-muted d-block">Classification</small>
-            <div class="fw-semibold" id="v_classification"></div>
-          </div>
-
-          <div class="col-md-6">
-            <small class="text-muted d-block">ETG Classification</small>
-            <div class="fw-semibold" id="v_etg_class"></div>
-          </div>
-
-          <div class="col-md-6">
-            <small class="text-muted d-block">Mobile Number</small>
-            <div class="fw-semibold" id="v_mobile_number"></div>
-          </div>
-
-          <div class="col-md-6">
-            <small class="text-muted d-block">SHS Track</small>
-            <div class="fw-semibold" id="v_shs_track"></div>
-          </div>
-
-          <div class="col-12">
-            <small class="text-muted d-block">1st Choice</small>
-            <div class="fw-semibold" id="v_first_choice"></div>
-          </div>
-
-          <div class="col-12">
-            <small class="text-muted d-block">2nd Choice</small>
-            <div class="fw-semibold" id="v_second_choice"></div>
-          </div>
-
-          <div class="col-12">
-            <small class="text-muted d-block">3rd Choice</small>
-            <div class="fw-semibold" id="v_third_choice"></div>
-          </div>
-
-          <div class="col-12">
-            <small class="text-muted d-block">Date/Time</small>
-            <div class="fw-semibold" id="v_interview_datetime"></div>
-          </div>
-
-        </div>
-
-      </div>
-
-      <!-- FOOTER: CLOSE ONLY -->
-      <div class="modal-footer">
-        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-      </div>
-
-    </div>
-  </div>
-</div>
-
-
-
 
 
             <!-- Footer -->
@@ -859,25 +754,25 @@ function createStudentCard(student) {
   // =========================================
   // 1️⃣ NO INTERVIEW YET → CAN MANAGE
   // =========================================
-if (!student.has_interview) {
+  if (!student.has_interview) {
 
-  buttonHtml = `
-    <button
-      type="button"
-      class="btn btn-sm btn-primary px-3 py-1"
-      data-bs-toggle="modal"
-      data-bs-target="#studentModal"
-      data-id="${student.placement_result_id}"
-      data-examinee="${student.examinee_number}"
-      data-name="${student.full_name}"
-      data-score="${student.sat_score}"
-      data-has-interview="0"
-    >
-      Manage
-    </button>
-  `;
-}
+    buttonHtml = `
+      <button
+        type="button"
+        class="btn btn-sm btn-primary px-3 py-1"
+        data-bs-toggle="modal"
+        data-bs-target="#studentModal"
+        data-id="${student.placement_result_id}"
+        data-examinee="${student.examinee_number}"
+        data-name="${student.full_name}"
+        data-score="${student.sat_score}"
+        data-has-interview="0"
+      >
+        Manage
+      </button>
+    `;
 
+  }
 
   // =========================================
   // 2️⃣ HAS INTERVIEW AND I AM OWNER
@@ -924,7 +819,7 @@ if (!student.has_interview) {
         type="button"
         class="btn btn-sm btn-success px-3 py-1"
         data-bs-toggle="modal"
-        data-bs-target="#studentViewModal"
+        data-bs-target="#studentModal"
         data-id="${student.placement_result_id}"
         data-examinee="${student.examinee_number}"
         data-name="${student.full_name}"
@@ -1080,7 +975,6 @@ if (studentModal) {
 
     // reset first (clears old values)
     document.getElementById('studentInterviewForm').reset();
-    document.getElementById('viewOnlyExtra').classList.add('d-none');
 
     // hidden
     document.getElementById('placement_result_id').value = placementId || '';
@@ -1144,7 +1038,6 @@ if (studentModal) {
         // OWNER CHECK
 if (data.is_owner) {
 
-  // OWNER MODE
   saveButton.textContent = 'Update';
   saveButton.classList.remove('btn-secondary');
   saveButton.classList.add('btn-success');
@@ -1153,144 +1046,43 @@ if (data.is_owner) {
   document.querySelectorAll('#studentInterviewForm input, #studentInterviewForm select')
     .forEach(el => el.disabled = false);
 
+  // 🔥 SHOW ENTER SCORES BUTTON
   scoreButton.classList.remove('d-none');
 
   scoreButton.onclick = function () {
     window.location.href = 'interview_scores.php?interview_id=' + record.interview_id;
   };
 
-  // Hide view-only section
-  document.getElementById('viewOnlyExtra').classList.add('d-none');
-
 } else {
 
-  // VIEW ONLY MODE
-  saveButton.textContent = 'View Only';
-  saveButton.classList.remove('btn-success');
-  saveButton.classList.add('btn-secondary');
-  saveButton.disabled = true;
-
-  document.querySelectorAll('#studentInterviewForm input, #studentInterviewForm select')
-    .forEach(el => el.disabled = true);
-
+  // HIDE SAVE BUTTON
+  saveButton.classList.add('d-none');
   scoreButton.classList.add('d-none');
 
-  // SHOW FINAL SCORE + ENCODED BY
-  if (record.final_score !== null && record.final_score !== '') {
-    document.getElementById('display_final_score').innerText =
-      Number(record.final_score).toFixed(2) + '%';
-  } else {
-    document.getElementById('display_final_score').innerText = 'No Score';
-  }
+  // Populate additional display fields
+  document.getElementById('display_final_score').innerText =
+    data.data.final_score !== null
+      ? Number(data.data.final_score).toFixed(2) + '%'
+      : 'N/A';
 
   document.getElementById('display_encoded_by').innerText =
-    record.encoded_by || 'N/A';
+    data.data.encoded_by || 'Unknown';
 
-  document.getElementById('viewOnlyExtra').classList.remove('d-none');
+  // 🔥 REMOVE FORM INPUTS AREA (VIEW MODE ONLY)
+  const formFields = document.querySelectorAll(
+    '#studentInterviewForm .mb-3, #studentInterviewForm .row'
+  );
 
-}
-
-
-
-      });
-
+  formFields.forEach(el => {
+    if (!el.closest('.card')) {
+      el.style.display = 'none';
+    }
   });
+
 }
 
-// ==============================================
-// Populate Modal (VIEW ONLY) - studentViewModal
-// ==============================================
-const studentViewModal = document.getElementById('studentViewModal');
 
-if (studentViewModal) {
-  studentViewModal.addEventListener('show.bs.modal', function (event) {
 
-    const button = event.relatedTarget;
-
-    const placementId  = button.getAttribute('data-id');
-    const examinee     = button.getAttribute('data-examinee');
-    const name         = button.getAttribute('data-name');
-    const score        = button.getAttribute('data-score');
-
-    // Header fields
-    document.getElementById('v_display_examinee').innerText = examinee || '';
-    document.getElementById('v_display_name').innerText     = name || '';
-    document.getElementById('v_display_sat').innerText      = score || '';
-
-    // Reset body fields
-    document.getElementById('v_classification').innerText     = '';
-    document.getElementById('v_etg_class').innerText          = '';
-    document.getElementById('v_mobile_number').innerText      = '';
-    document.getElementById('v_first_choice').innerText       = '';
-    document.getElementById('v_second_choice').innerText      = '';
-    document.getElementById('v_third_choice').innerText       = '';
-    document.getElementById('v_shs_track').innerText          = '';
-    document.getElementById('v_interview_datetime').innerText = '';
-
-    document.getElementById('v_display_final_score').innerText = 'Loading...';
-    document.getElementById('v_display_encoded_by').innerText  = 'Loading...';
-
-    // Fetch interview details
-    fetch(`get_interview.php?placement_result_id=${placementId}`)
-      .then(res => res.json())
-      .then(data => {
-
-        if (!data.success || !data.exists) {
-          document.getElementById('v_display_final_score').innerText = 'No Record';
-          document.getElementById('v_display_encoded_by').innerText  = 'N/A';
-          return;
-        }
-
-        const record = data.data;
-
-        // Interview score + encoder
-        if (record.final_score !== null && record.final_score !== '') {
-          document.getElementById('v_display_final_score').innerText =
-            Number(record.final_score).toFixed(2) + '%';
-        } else {
-          document.getElementById('v_display_final_score').innerText = 'No Score';
-        }
-
-        document.getElementById('v_display_encoded_by').innerText =
-          record.encoded_by || 'N/A';
-
-        // Simple list fields
-        document.getElementById('v_classification').innerText =
-          record.classification || '—';
-
-        // ETG class (only meaningful if ETG)
-        if (record.classification === 'ETG' && record.etg_class_id) {
-          // Pull label from existing select options in the manage modal (no extra queries)
-          const opt = document.querySelector(`#etg_class_id option[value="${record.etg_class_id}"]`);
-          document.getElementById('v_etg_class').innerText = opt ? opt.textContent.trim() : '—';
-        } else {
-          document.getElementById('v_etg_class').innerText = '—';
-        }
-
-        document.getElementById('v_mobile_number').innerText =
-          record.mobile_number || '—';
-
-        // Program choices: pull label from existing select options in manage modal
-        const p1 = document.querySelector(`[name="first_choice"] option[value="${record.first_choice}"]`);
-        const p2 = document.querySelector(`[name="second_choice"] option[value="${record.second_choice}"]`);
-        const p3 = document.querySelector(`[name="third_choice"] option[value="${record.third_choice}"]`);
-
-        document.getElementById('v_first_choice').innerText  = p1 ? p1.textContent.trim() : '—';
-        document.getElementById('v_second_choice').innerText = p2 ? p2.textContent.trim() : '—';
-        document.getElementById('v_third_choice').innerText  = p3 ? p3.textContent.trim() : '—';
-
-        // SHS Track label from existing select options
-        const t = document.querySelector(`[name="shs_track_id"] option[value="${record.shs_track_id}"]`);
-        document.getElementById('v_shs_track').innerText = t ? t.textContent.trim() : '—';
-
-        // Datetime
-        document.getElementById('v_interview_datetime').innerText =
-          record.interview_datetime || '—';
-
-      })
-      .catch(() => {
-        document.getElementById('v_display_final_score').innerText = 'Error';
-        document.getElementById('v_display_encoded_by').innerText  = 'Error';
       });
 
   });

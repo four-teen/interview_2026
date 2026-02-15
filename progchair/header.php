@@ -31,7 +31,8 @@
           <ul class="navbar-nav flex-row align-items-center ms-auto">
             <!-- Place this tag where you want the button to render. -->
             <li class="nav-item lh-1 me-3">
-<?= htmlspecialchars($pc_fullname); ?>
+<?= htmlspecialchars($_SESSION['fullname']); ?> (<?= htmlspecialchars($_SESSION['accountid']); ?>)
+
             </li>
 
             <!-- User -->

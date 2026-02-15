@@ -1,0 +1,685 @@
+<?php
+/**
+ * ============================================================================
+ * FILE: root_folder/interview/progchair/interview_scores.php
+ * PURPOSE: Interview Scoring Page
+ *
+ * PHASE 2:
+ *   ✅ Load SAT automatically from placement
+ *   ✅ Lock SAT input
+ *   ✅ Load saved scores from tbl_interview_scores
+ *
+ * PHASE 3:
+ *   ✅ Save/Update scores to tbl_interview_scores (server-side compute)
+ *   ✅ Only OWNER (encoder) can save/edit
+ * ============================================================================
+ */
+
+require_once '../config/db.php';
+session_start();
+
+// ======================================================
+// GUARD
+// ======================================================
+if (
+    !isset($_SESSION['logged_in']) ||
+    $_SESSION['role'] !== 'progchair' ||
+    empty($_SESSION['accountid'])
+) {
+    header('Location: ../index.php');
+    exit;
+}
+
+$accountId   = (int) $_SESSION['accountid'];
+$interviewId = isset($_GET['interview_id']) ? (int) $_GET['interview_id'] : 0;
+
+if ($interviewId <= 0) {
+    header('Location: index.php');
+    exit;
+}
+
+// ======================================================
+// 1) GET INTERVIEW + PLACEMENT SAT (AUTO LOAD)
+//   tbl_student_interview.placement_result_id -> tbl_placement_results.id
+//   also fetch program_chair_id (OWNER CHECK)
+// ======================================================
+$satScoreFromPlacement = 0;
+$placementResultId     = 0;
+$studentName           = '';
+$examineeNumber        = '';
+$ownerProgramChairId   = 0;
+
+$baseSql = "
+    SELECT 
+        si.interview_id,
+        si.placement_result_id,
+        si.program_chair_id,
+        pr.sat_score,
+        pr.full_name,
+        pr.examinee_number
+    FROM tbl_student_interview si
+    INNER JOIN tbl_placement_results pr
+        ON pr.id = si.placement_result_id
+    WHERE si.interview_id = ?
+    LIMIT 1
+";
+
+$stmtBase = $conn->prepare($baseSql);
+if (!$stmtBase) {
+    die("Prepare failed (baseSql): " . $conn->error);
+}
+$stmtBase->bind_param("i", $interviewId);
+$stmtBase->execute();
+$resBase = $stmtBase->get_result();
+
+if ($resBase->num_rows === 0) {
+    header('Location: index.php');
+    exit;
+}
+
+$baseRow = $resBase->fetch_assoc();
+$placementResultId     = (int) $baseRow['placement_result_id'];
+$ownerProgramChairId   = (int) $baseRow['program_chair_id'];
+$satScoreFromPlacement = (float) $baseRow['sat_score'];
+$studentName           = $baseRow['full_name'];
+$examineeNumber        = $baseRow['examinee_number'];
+
+$isOwner = ($ownerProgramChairId === $accountId);
+
+// ======================================================
+// PHASE 3) SAVE SCORES
+// NOTE: must be AFTER base query so we know owner + SAT
+// ======================================================
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_scores'])) {
+  $totalFinalScore = 0;
+
+    // OWNER ONLY
+    if (!$isOwner) {
+        header("Location: interview_scores.php?interview_id={$interviewId}&forbidden=1");
+        exit;
+    }
+
+    if (!isset($_POST['raw_score']) || !is_array($_POST['raw_score'])) {
+        header("Location: interview_scores.php?interview_id={$interviewId}&error=1");
+        exit;
+    }
+
+    // optional: transaction for safety
+    $conn->begin_transaction();
+
+    try {
+
+        foreach ($_POST['raw_score'] as $componentId => $rawScore) {
+
+            $componentId = (int) $componentId;
+
+            // sanitize numeric
+            $rawScore = trim((string)$rawScore);
+            $rawScore = ($rawScore === '') ? 0 : (float)$rawScore;
+
+            // Get component details (max + weight)
+            $compSql = "
+                SELECT max_score, weight_percent, is_auto_computed, component_name
+                FROM tbl_scoring_components
+                WHERE component_id = ?
+                AND status = 'ACTIVE'
+                LIMIT 1
+            ";
+
+            $stmtComp = $conn->prepare($compSql);
+            if (!$stmtComp) {
+                throw new Exception("Prepare failed (compSql): " . $conn->error);
+            }
+
+            $stmtComp->bind_param("i", $componentId);
+            $stmtComp->execute();
+            $compResult = $stmtComp->get_result();
+
+            $component = $compResult->fetch_assoc();
+            if (!$component) {
+                // component removed/inactive, skip
+                continue;
+            }
+
+            $maxScore = (float) $component['max_score'];
+            $weight   = (float) $component['weight_percent'];
+
+            $isAuto = ((int)$component['is_auto_computed'] === 1) || (strtoupper(trim($component['component_name'])) === 'SAT');
+
+            // enforce SAT from placement (cannot be overridden)
+            if ($isAuto) {
+                $rawScore = $satScoreFromPlacement;
+            }
+
+            if ($maxScore <= 0) {
+                continue;
+            }
+
+            // SERVER-SIDE COMPUTATION
+            $weightedScore = ($rawScore / $maxScore) * $weight;
+            $totalFinalScore += $weightedScore;
+
+// ==========================================
+// CHECK IF SCORE EXISTS + GET OLD VALUES
+// ==========================================
+$oldRaw = null;
+$oldWeighted = null;
+
+$checkSql = "
+    SELECT score_id, raw_score, weighted_score
+    FROM tbl_interview_scores
+    WHERE interview_id = ?
+    AND component_id = ?
+    LIMIT 1
+";
+
+$stmtCheck = $conn->prepare($checkSql);
+if (!$stmtCheck) {
+    throw new Exception("Prepare failed (checkSql): " . $conn->error);
+}
+
+$stmtCheck->bind_param("ii", $interviewId, $componentId);
+$stmtCheck->execute();
+$checkResult = $stmtCheck->get_result();
+
+$rowExisting = $checkResult->fetch_assoc();
+
+if ($rowExisting) {
+    $oldRaw = (float)$rowExisting['raw_score'];
+    $oldWeighted = (float)$rowExisting['weighted_score'];
+}
+
+
+
+
+            if ($checkResult->num_rows > 0) {
+
+                // UPDATE
+                $updateSql = "
+                    UPDATE tbl_interview_scores
+                    SET raw_score = ?, weighted_score = ?
+                    WHERE interview_id = ?
+                    AND component_id = ?
+                ";
+
+                $stmtUpdate = $conn->prepare($updateSql);
+                if (!$stmtUpdate) {
+                    throw new Exception("Prepare failed (updateSql): " . $conn->error);
+                }
+
+                $stmtUpdate->bind_param("ddii", $rawScore, $weightedScore, $interviewId, $componentId);
+                $stmtUpdate->execute();
+
+
+//loging audit
+$action = ($oldRaw === null) ? 'SCORE_SAVE' : 'SCORE_UPDATE';
+
+$auditSql = "
+  INSERT INTO tbl_score_audit_logs
+  (interview_id, component_id, actor_accountid, action, old_raw, new_raw, old_weighted, new_weighted, ip_address, user_agent)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+";
+$stmtAudit = $conn->prepare($auditSql);
+
+$ip = $_SERVER['REMOTE_ADDR'] ?? null;
+$ua = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 255);
+
+$stmtAudit->bind_param(
+  "iiissdddss",
+  $interviewId,
+  $componentId,
+  $accountId,
+  $action,
+  $oldRaw,
+  $rawScore,
+  $oldWeighted,
+  $weightedScore,
+  $ip,
+  $ua
+);
+$stmtAudit->execute();
+
+
+            } else {
+
+                // INSERT
+                $insertSql = "
+                    INSERT INTO tbl_interview_scores
+                    (interview_id, component_id, raw_score, weighted_score)
+                    VALUES (?, ?, ?, ?)
+                ";
+
+                $stmtInsert = $conn->prepare($insertSql);
+                if (!$stmtInsert) {
+                    throw new Exception("Prepare failed (insertSql): " . $conn->error);
+                }
+
+                $stmtInsert->bind_param("iidd", $interviewId, $componentId, $rawScore, $weightedScore);
+                $stmtInsert->execute();
+
+//audit loging
+$action = ($oldRaw === null) ? 'SCORE_SAVE' : 'SCORE_UPDATE';
+
+$auditSql = "
+  INSERT INTO tbl_score_audit_logs
+  (interview_id, component_id, actor_accountid, action, old_raw, new_raw, old_weighted, new_weighted, ip_address, user_agent)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+";
+$stmtAudit = $conn->prepare($auditSql);
+
+$ip = $_SERVER['REMOTE_ADDR'] ?? null;
+$ua = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 255);
+
+$stmtAudit->bind_param(
+  "iiissdddss",
+  $interviewId,
+  $componentId,
+  $accountId,
+  $action,
+  $oldRaw,
+  $rawScore,
+  $oldWeighted,
+  $weightedScore,
+  $ip,
+  $ua
+);
+$stmtAudit->execute();
+
+
+
+            }
+        }
+
+// ==========================================
+// RECOMPUTE FINAL SCORE FROM DB (SAFE)
+// ==========================================
+$recomputeSql = "
+    SELECT SUM(weighted_score) AS total_score
+    FROM tbl_interview_scores
+    WHERE interview_id = ?
+";
+
+$stmtRecompute = $conn->prepare($recomputeSql);
+$stmtRecompute->bind_param("i", $interviewId);
+$stmtRecompute->execute();
+$resRecompute = $stmtRecompute->get_result();
+$rowRecompute = $resRecompute->fetch_assoc();
+
+$totalFinalScore = (float)($rowRecompute['total_score'] ?? 0);
+
+// ==========================================
+// UPDATE FINAL SCORE IN tbl_student_interview
+// ==========================================
+$updateFinalSql = "
+    UPDATE tbl_student_interview
+    SET final_score = ?
+    WHERE interview_id = ?
+";
+
+$stmtFinal = $conn->prepare($updateFinalSql);
+$stmtFinal->bind_param("di", $totalFinalScore, $interviewId);
+
+//start loging audit
+$finalBefore = null;
+$getFinalSql = "SELECT final_score FROM tbl_student_interview WHERE interview_id = ? LIMIT 1";
+$stmtGetFinal = $conn->prepare($getFinalSql);
+$stmtGetFinal->bind_param("i", $interviewId);
+$stmtGetFinal->execute();
+$resGetFinal = $stmtGetFinal->get_result();
+if ($r = $resGetFinal->fetch_assoc()) {
+    $finalBefore = $r['final_score'] !== null ? (float)$r['final_score'] : null;
+}
+//end of loging audit
+
+$stmtFinal->execute();
+$auditSql2 = "
+  INSERT INTO tbl_score_audit_logs
+  (interview_id, component_id, actor_accountid, action, final_before, final_after, ip_address, user_agent)
+  VALUES (?, NULL, ?, 'FINAL_SCORE_UPDATE', ?, ?, ?, ?)
+";
+$stmtAudit2 = $conn->prepare($auditSql2);
+
+$ip = $_SERVER['REMOTE_ADDR'] ?? null;
+$ua = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 255);
+
+$stmtAudit2->bind_param(
+  "iiddss",
+  $interviewId,
+  $accountId,
+  $finalBefore,
+  $totalFinalScore,
+  $ip,
+  $ua
+);
+$stmtAudit2->execute();
+
+//loging audit
+
+        $conn->commit();
+
+        // Redirect (Swal will run after page loads)
+        header("Location: interview_scores.php?interview_id={$interviewId}&saved=1");
+        exit;
+
+    } catch (Exception $e) {
+
+        $conn->rollback();
+        // keep it simple: show error message
+        die("Save failed: " . $e->getMessage());
+    }
+}
+
+// ======================================================
+// 2) LOAD COMPONENTS (DYNAMIC)
+// ======================================================
+$components = [];
+
+$componentSql = "
+    SELECT component_id, component_name, max_score, weight_percent, is_auto_computed, status
+    FROM tbl_scoring_components
+    WHERE status = 'ACTIVE'
+    ORDER BY component_id ASC
+";
+
+$componentResult = $conn->query($componentSql);
+if (!$componentResult) {
+    die("Component Query Error: " . $conn->error);
+}
+
+while ($row = $componentResult->fetch_assoc()) {
+    $components[] = $row;
+}
+
+// ======================================================
+// 3) LOAD SAVED SCORES (IF ANY) → keyed by component_id
+// ======================================================
+$savedScores = [];
+
+$savedSql = "
+    SELECT component_id, raw_score, weighted_score
+    FROM tbl_interview_scores
+    WHERE interview_id = ?
+";
+$stmtSaved = $conn->prepare($savedSql);
+if (!$stmtSaved) {
+    die("Prepare failed (savedSql): " . $conn->error);
+}
+$stmtSaved->bind_param("i", $interviewId);
+$stmtSaved->execute();
+$resSaved = $stmtSaved->get_result();
+
+while ($row = $resSaved->fetch_assoc()) {
+    $cid = (int) $row['component_id'];
+    $savedScores[$cid] = [
+        'raw_score'      => (float) $row['raw_score'],
+        'weighted_score' => (float) $row['weighted_score'],
+    ];
+}
+
+// ======================================================
+// 4) BUILD INITIAL TOTALS (SERVER SIDE DISPLAY)
+// ======================================================
+$totalWeight = 0.0;
+$finalScore  = 0.0;
+
+foreach ($components as $c) {
+    $weight = (float) $c['weight_percent'];
+    $max    = (float) $c['max_score'];
+    $cid    = (int) $c['component_id'];
+
+    $totalWeight += $weight;
+
+    $raw = 0.0;
+
+    $isAuto = ((int)$c['is_auto_computed'] === 1) || (strtoupper(trim($c['component_name'])) === 'SAT');
+
+    if ($isAuto) {
+        $raw = $satScoreFromPlacement;
+    } elseif (isset($savedScores[$cid])) {
+        $raw = (float) $savedScores[$cid]['raw_score'];
+    }
+
+    if ($max > 0) {
+        $finalScore += (($raw / $max) * $weight);
+    }
+}
+?>
+<!DOCTYPE html>
+<html lang="en" class="light-style layout-menu-fixed" dir="ltr">
+<head>
+  <meta charset="utf-8" />
+  <title>Interview Scoring</title>
+  <meta name="description" content="" />
+
+  <link rel="icon" type="image/x-icon" href="../assets/img/favicon/favicon.ico" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Public+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600;1,700&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="../assets/vendor/fonts/boxicons.css" />
+  <link rel="stylesheet" href="../assets/vendor/css/core.css" class="template-customizer-core-css" />
+  <link rel="stylesheet" href="../assets/vendor/css/theme-default.css" class="template-customizer-theme-css" />
+  <link rel="stylesheet" href="../assets/css/demo.css" />
+  <link rel="stylesheet" href="../assets/vendor/libs/perfect-scrollbar/perfect-scrollbar.css" />
+
+  <script src="../assets/vendor/js/helpers.js"></script>
+  <script src="../assets/js/config.js"></script>
+</head>
+
+<body>
+<div class="layout-wrapper layout-content-navbar">
+  <div class="layout-container">
+
+    <?php include 'sidebar.php'; ?>
+
+    <div class="layout-page">
+      <?php include 'header.php'; ?>
+
+      <div class="content-wrapper">
+        <div class="container-xxl flex-grow-1 container-p-y">
+
+          <!-- HEADER CARD -->
+          <div class="card mb-4">
+            <div class="card-body">
+              <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <div>
+                  <h5 class="mb-1">Interview Scoring</h5>
+                  <small class="text-muted">
+                    Interview ID: <?= (int)$interviewId; ?> |
+                    Examinee #: <?= htmlspecialchars($examineeNumber); ?> |
+                    <?= htmlspecialchars($studentName); ?>
+                  </small>
+                </div>
+
+                <a href="index.php" class="btn btn-label-secondary btn-sm btn-primary">
+                  <i class="bx bx-arrow-back me-1"></i> Back to List
+                </a>
+              </div>
+            </div>
+          </div>
+
+          <!-- SCORE COMPONENTS -->
+          <div class="card">
+            <div class="card-header">
+              <h6 class="mb-0">Score Components</h6>
+            </div>
+
+            <div class="card-body">
+
+              <!-- IMPORTANT: method="POST" for Phase 3 -->
+              <form id="scoreForm" method="POST" autocomplete="off">
+
+                <div class="table-responsive">
+                  <table class="table table-bordered align-middle text-center">
+                    <thead class="table-light">
+                      <tr>
+                        <th class="text-start">Component</th>
+                        <th>Raw Score</th>
+                        <th>Max Score</th>
+                        <th>Weight (%)</th>
+                        <th>Weighted Result</th>
+                      </tr>
+                    </thead>
+
+                    <tbody>
+                    <?php foreach ($components as $component): ?>
+                      <?php
+                        $cid    = (int) $component['component_id'];
+                        $name   = $component['component_name'];
+                        $max    = (float) $component['max_score'];
+                        $weight = (float) $component['weight_percent'];
+
+                        $isAuto = ((int)$component['is_auto_computed'] === 1) || (strtoupper(trim($name)) === 'SAT');
+
+                        // raw score value
+                        if ($isAuto) {
+                            $rawValue = $satScoreFromPlacement;
+                        } else {
+                            $rawValue = isset($savedScores[$cid]) ? (float)$savedScores[$cid]['raw_score'] : '';
+                        }
+
+                        // initial weighted
+                        $weightedValue = 0.0;
+                        if ($max > 0 && $rawValue !== '') {
+                            $weightedValue = ((float)$rawValue / $max) * $weight;
+                        }
+                      ?>
+                      <tr data-max="<?= $max; ?>" data-weight="<?= $weight; ?>">
+                        <td class="text-start"><?= htmlspecialchars($name); ?></td>
+
+                        <td>
+                          <input
+                            type="number"
+                            step="0.01"
+                            class="form-control raw-input"
+                            name="raw_score[<?= $cid; ?>]"
+                            value="<?= ($rawValue === '' ? '' : htmlspecialchars((string)$rawValue)); ?>"
+                            min="0"
+                            max="<?= htmlspecialchars((string)$max); ?>"
+                            <?= $isAuto ? 'readonly' : ''; ?>
+                            <?= (!$isOwner && !$isAuto) ? 'readonly' : ''; ?>
+                          >
+                        </td>
+
+                        <td>
+                          <input type="number" class="form-control" value="<?= htmlspecialchars((string)$max); ?>" readonly>
+                        </td>
+
+                        <td>
+                          <input type="number" class="form-control" value="<?= htmlspecialchars((string)$weight); ?>" readonly>
+                        </td>
+
+                        <td class="weighted-result"><?= number_format($weightedValue, 2); ?></td>
+                      </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div class="mt-3 d-flex justify-content-between flex-wrap gap-2">
+                  <div>
+                    <strong>Total Weight:</strong>
+                    <span id="totalWeight" class="text-primary"><?= number_format($totalWeight, 2); ?>%</span>
+                  </div>
+
+                  <div>
+                    <strong>Final Score:</strong>
+                    <span id="finalScore" class="text-success"><?= number_format($finalScore, 2); ?>%</span>
+                  </div>
+                </div>
+
+                <div class="mt-4 text-end">
+                  <button
+                    type="submit"
+                    name="save_scores"
+                    class="btn btn-success"
+                    <?= $isOwner ? '' : 'disabled'; ?>
+                  >
+                    Save Scores
+                  </button>
+                </div>
+
+                <?php if (!$isOwner): ?>
+                  <div class="mt-2 text-end">
+                    <small class="text-muted">
+                      You can view only. Only the encoder can update scores.
+                    </small>
+                  </div>
+                <?php endif; ?>
+
+              </form>
+
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Core JS -->
+<script src="../assets/vendor/libs/jquery/jquery.js"></script>
+<script src="../assets/vendor/libs/popper/popper.js"></script>
+<script src="../assets/vendor/js/bootstrap.js"></script>
+<script src="../assets/vendor/libs/perfect-scrollbar/perfect-scrollbar.js"></script>
+<script src="../assets/vendor/js/menu.js"></script>
+<script src="../assets/js/main.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+<script>
+function computeScores() {
+  let totalWeight = 0;
+  let finalScore  = 0;
+
+  document.querySelectorAll('tbody tr').forEach(row => {
+    const max    = parseFloat(row.getAttribute('data-max') || '0');
+    const weight = parseFloat(row.getAttribute('data-weight') || '0');
+    const rawEl  = row.querySelector('.raw-input');
+    const raw    = rawEl ? parseFloat(rawEl.value || '0') : 0;
+    const outEl  = row.querySelector('.weighted-result');
+
+    totalWeight += weight;
+
+    let weighted = 0;
+    if (max > 0) weighted = (raw / max) * weight;
+
+    finalScore += weighted;
+    if (outEl) outEl.innerText = weighted.toFixed(2);
+  });
+
+  document.getElementById('totalWeight').innerText = totalWeight.toFixed(2) + '%';
+  document.getElementById('finalScore').innerText  = finalScore.toFixed(2) + '%';
+}
+
+// live compute
+document.addEventListener('input', function(e) {
+  if (e.target.classList.contains('raw-input')) {
+    computeScores();
+  }
+});
+
+// initial compute
+computeScores();
+
+// Swal messages (after scripts loaded)
+<?php if (isset($_GET['saved']) && $_GET['saved'] == '1'): ?>
+Swal.fire({
+  icon: 'success',
+  title: 'Scores Saved Successfully!',
+  confirmButtonColor: '#71dd37'
+});
+<?php endif; ?>
+
+<?php if (isset($_GET['forbidden']) && $_GET['forbidden'] == '1'): ?>
+Swal.fire({
+  icon: 'error',
+  title: 'Not Allowed',
+  text: 'Only the encoder can update scores.'
+});
+<?php endif; ?>
+</script>
+
+</body>
+</html>

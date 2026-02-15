@@ -166,7 +166,8 @@ $sql = "
         pr.sat_score,
         pr.qualitative_text,
         si.interview_id,
-        si.program_chair_id        
+        si.program_chair_id,
+        si.final_score       
     FROM tbl_placement_results pr
     LEFT JOIN tbl_student_interview si
         ON pr.examinee_number = si.examinee_number
