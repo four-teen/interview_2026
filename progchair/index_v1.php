@@ -265,33 +265,46 @@ if ($activeBatchId) {
     <title>Dashboard - interview</title>
 
     <meta name="description" content="" />
-
-    <!-- Favicon -->
     <link rel="icon" type="image/x-icon" href="../assets/img/favicon/favicon.ico" />
-
-    <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=Public+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600;1,700&display=swap"
       rel="stylesheet"
     />
-
-    <!-- Icons. Uncomment required icon fonts -->
     <link rel="stylesheet" href="../assets/vendor/fonts/boxicons.css" />
-
-    <!-- Core CSS -->
     <link rel="stylesheet" href="../assets/vendor/css/core.css" class="template-customizer-core-css" />
     <link rel="stylesheet" href="../assets/vendor/css/theme-default.css" class="template-customizer-theme-css" />
     <link rel="stylesheet" href="../assets/css/demo.css" />
-
-    <!-- Vendors CSS -->
     <link rel="stylesheet" href="../assets/vendor/libs/perfect-scrollbar/perfect-scrollbar.css" />
-
     <link rel="stylesheet" href="../assets/vendor/libs/apex-charts/apex-charts.css" />
-
     <script src="../assets/vendor/js/helpers.js"></script>
     <script src="../assets/js/config.js"></script>
+<style>
+/* =========================================================
+   SCORE BADGE ENHANCEMENT
+   File: root_folder/interview/progchair/index.php
+========================================================= */
+
+.score-badge {
+  font-size: 0.85rem;
+  letter-spacing: 0.5px;
+}
+/* =========================================
+   STUDENT CARD HOVER EFFECT
+========================================= */
+
+.student-card {
+  transition: all 0.25s ease-in-out;
+  cursor: pointer;
+}
+
+.student-card:hover {
+  transform: scale(1.015);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.08);
+}
+
+</style>
 
   </head>
 
@@ -495,6 +508,8 @@ if ($activeBatchId) {
           <!-- Hidden -->
           <input type="hidden" name="placement_result_id" id="placement_result_id">
           <input type="hidden" name="examinee_number" id="examinee_number">
+          <!-- Interview ID (for update mode) -->
+          <input type="hidden" name="interview_id" id="interview_id">          
 
 <!-- STUDENT SUMMARY CARD -->
 <div class="card border-0 shadow-sm mb-4"
@@ -517,6 +532,14 @@ if ($activeBatchId) {
         <small class="text-muted">SAT Score</small>
         <div class="fw-bold text-success fs-5" id="display_sat"></div>
       </div>
+
+<div id="viewOnlyExtra" class="text-end mt-2 d-none">
+  <small class="text-muted">Interview Score</small>
+  <div class="fw-bold text-warning fs-5" id="display_final_score"></div>
+  <small class="text-muted d-block mt-1">
+    Encoded by: <strong id="display_encoded_by"></strong>
+  </small>
+</div>
 
     </div>
 
@@ -555,7 +578,7 @@ if ($activeBatchId) {
             required>
 
       <!-- DEFAULT FOR REGULAR -->
-      <option value="REGULAR">REGULAR</option>
+      <option value="">Select ETG Class</option>
 
       <!-- ETG OPTIONS -->
       <?php foreach ($etgClasses as $etg): ?>
@@ -635,15 +658,144 @@ if ($activeBatchId) {
         </div>
 
         <div class="modal-footer">
-          <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">Close</button>
-          <button type="submit" class="btn btn-success">Save</button>
+
+          <button type="button"
+                  class="btn btn-label-secondary"
+                  data-bs-dismiss="modal">
+            Close
+          </button>
+
+          <!-- NEW: Enter Scores Button -->
+          <button type="button"
+                  id="enterScoresBtn"
+                  class="btn btn-primary d-none">
+            Enter Scores
+          </button>
+
+          <button type="submit"
+                  id="saveInterviewBtn"
+                  class="btn btn-success">
+            Save
+          </button>
+
         </div>
+
 
       </form>
 
     </div>
   </div>
 </div>
+
+<!-- ========================================================= -->
+<!-- STUDENT DETAILS VIEW-ONLY MODAL (GREEN BUTTON) -->
+<!-- File Path: root_folder/interview/progchair/index.php -->
+<!-- ========================================================= -->
+<div class="modal fade" id="studentViewModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+
+      <div class="modal-header">
+        <h5 class="modal-title">Student Details Verification</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+
+      <div class="modal-body">
+
+        <!-- STUDENT SUMMARY CARD (same look/feel as manage modal) -->
+        <div class="card border-0 shadow-sm mb-4"
+             style="border-left: 5px solid #28c76f; background: #f4fff8;">
+          <div class="card-body py-3">
+
+            <div class="d-flex justify-content-between align-items-center flex-wrap">
+
+              <div>
+                <div class="fw-semibold text-dark">
+                  <i class="bx bx-user me-1"></i>
+                  <span id="v_display_name"></span>
+                </div>
+                <small class="text-muted">
+                  Examinee #: <strong id="v_display_examinee"></strong>
+                </small>
+              </div>
+
+              <div class="text-end">
+                <small class="text-muted">SAT Score</small>
+                <div class="fw-bold text-success fs-5" id="v_display_sat"></div>
+              </div>
+
+              <div class="text-end mt-2">
+                <small class="text-muted">Interview Score</small>
+                <div class="fw-bold text-warning fs-5" id="v_display_final_score"></div>
+                <small class="text-muted d-block mt-1">
+                  Encoded by: <strong id="v_display_encoded_by"></strong>
+                </small>
+              </div>
+
+            </div>
+
+          </div>
+        </div>
+
+        <hr>
+
+        <!-- SIMPLE INFO LIST (NO INPUT BOXES) -->
+        <div class="row g-3">
+
+          <div class="col-md-6">
+            <small class="text-muted d-block">Classification</small>
+            <div class="fw-semibold" id="v_classification"></div>
+          </div>
+
+          <div class="col-md-6">
+            <small class="text-muted d-block">ETG Classification</small>
+            <div class="fw-semibold" id="v_etg_class"></div>
+          </div>
+
+          <div class="col-md-6">
+            <small class="text-muted d-block">Mobile Number</small>
+            <div class="fw-semibold" id="v_mobile_number"></div>
+          </div>
+
+          <div class="col-md-6">
+            <small class="text-muted d-block">SHS Track</small>
+            <div class="fw-semibold" id="v_shs_track"></div>
+          </div>
+
+          <div class="col-12">
+            <small class="text-muted d-block">1st Choice</small>
+            <div class="fw-semibold" id="v_first_choice"></div>
+          </div>
+
+          <div class="col-12">
+            <small class="text-muted d-block">2nd Choice</small>
+            <div class="fw-semibold" id="v_second_choice"></div>
+          </div>
+
+          <div class="col-12">
+            <small class="text-muted d-block">3rd Choice</small>
+            <div class="fw-semibold" id="v_third_choice"></div>
+          </div>
+
+          <div class="col-12">
+            <small class="text-muted d-block">Date/Time</small>
+            <div class="fw-semibold" id="v_interview_datetime"></div>
+          </div>
+
+        </div>
+
+      </div>
+
+      <!-- FOOTER: CLOSE ONLY -->
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+
 
 
 
@@ -674,6 +826,7 @@ if ($activeBatchId) {
     <script src="../assets/vendor/libs/perfect-scrollbar/perfect-scrollbar.js"></script>
     <script src="../assets/vendor/js/menu.js"></script>
     <script src="../assets/js/main.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
 <script>
 document.addEventListener("DOMContentLoaded", function () {
@@ -687,55 +840,173 @@ document.addEventListener("DOMContentLoaded", function () {
   let hasMore = true;
   let currentSearch = '';
 
-  function createStudentCard(student) {
-    return `
-      <div class="card mb-2 shadow-sm border-0"
-           style="
-             border-left: 6px solid #28c76f;
-             background: linear-gradient(to right, #e9f9f1 0%, #ffffff 8%);
-           ">
+/**
+ * ============================================================
+ * BUILD STUDENT CARD HTML
+ * File: root_folder/interview/progchair/index.php
+ * ============================================================
+ */
+function buildStudentCardHtml(student, buttonHtml) {
 
-        <div class="card-body py-2 px-3">
+  let interviewBadge = '';
 
-          <div class="d-flex justify-content-between align-items-center">
+  if (student.final_score !== null && student.final_score !== undefined) {
+    const formattedScore = Number(student.final_score).toFixed(2);
+    interviewBadge = `
+      &nbsp; | &nbsp;
+      <span class="badge score-badge text-warning bg-white fw-bold px-3 py-2">
+        SCORE: ${formattedScore}%
+      </span>
+    `;
+  }
 
-            <!-- LEFT SIDE -->
-            <div>
-              <div class="fw-semibold small mb-1">
-                ${student.full_name}
-              </div>
-              <small class="text-muted">
-                Examinee #: ${student.examinee_number}
-                &nbsp; | &nbsp;
-                SAT: ${student.sat_score}
-                &nbsp; | &nbsp;
-                ${student.qualitative_text}
-              </small>
+  return `
+    <div class="card student-card mb-2 shadow-sm border-0"
+         style="
+           border-left: 6px solid #28c76f;
+           background: linear-gradient(to right, #e9f9f1 0%, #ffffff 8%);
+         ">
+
+      <div class="card-body py-2 px-3">
+        <div class="d-flex justify-content-between align-items-center">
+
+          <div>
+            <div class="fw-semibold small mb-1">
+              ${student.full_name}
             </div>
 
-            <!-- RIGHT SIDE BUTTON -->
-            <div class="ms-3">
-            <button
-              type="button"
-              class="btn btn-sm btn-primary px-3 py-1"
-              data-bs-toggle="modal"
-              data-bs-target="#studentModal"
-              data-id="${student.placement_result_id}"
-              data-examinee="${student.examinee_number}"
-              data-name="${student.full_name}"
-              data-score="${student.sat_score}"
-            >
-              Manage
-            </button>
+            <small class="text-muted">
+              Examinee #: ${student.examinee_number}
+              &nbsp; | &nbsp;
+              SAT: ${student.sat_score}
+              &nbsp; | &nbsp;
+              ${student.qualitative_text}
+              ${interviewBadge}
+            </small>
+          </div>
 
-            </div>
-
+          <div class="ms-3">
+            ${buttonHtml}
           </div>
 
         </div>
       </div>
+    </div>
+  `;
+}
+
+
+function createStudentCard(student) {
+
+  let buttonHtml = ''; // ✅ MOVE THIS TO TOP
+
+  // =========================================
+  // 0️⃣ TRANSFER PENDING → SHOW ACCEPT / REJECT
+  // =========================================
+  if (student.transfer_pending) {
+
+    buttonHtml = `
+      <div class="d-flex align-items-center gap-2">
+        <button
+          type="button"
+          class="btn btn-sm btn-success px-3 py-1"
+          onclick="handleTransferAction(event, ${student.transfer_id}, 'accept')"
+        >
+          Accept
+        </button>
+
+        <button
+          type="button"
+          class="btn btn-sm btn-danger px-3 py-1"
+          onclick="handleTransferAction(event, ${student.transfer_id}, 'reject')"
+        >
+          Reject
+        </button>
+      </div>
+    `;
+
+    return buildStudentCardHtml(student, buttonHtml);
+  }
+
+  // =========================================
+  // 1️⃣ NO INTERVIEW YET
+  // =========================================
+  if (!student.has_interview) {
+
+    buttonHtml = `
+      <button
+        type="button"
+        class="btn btn-sm btn-primary px-3 py-1"
+        data-bs-toggle="modal"
+        data-bs-target="#studentModal"
+        data-id="${student.placement_result_id}"
+        data-examinee="${student.examinee_number}"
+        data-name="${student.full_name}"
+        data-score="${student.sat_score}"
+        data-has-interview="0"
+      >
+        Manage
+      </button>
     `;
   }
+
+  // =========================================
+  // 2️⃣ HAS INTERVIEW & OWNER
+  // =========================================
+  else if (student.can_edit) {
+
+    buttonHtml = `
+      <div class="d-flex align-items-center gap-2">
+        <button
+          type="button"
+          class="btn btn-sm btn-warning px-3 py-1"
+          data-bs-toggle="modal"
+          data-bs-target="#studentModal"
+          data-id="${student.placement_result_id}"
+          data-examinee="${student.examinee_number}"
+          data-name="${student.full_name}"
+          data-score="${student.sat_score}"
+          data-has-interview="1"
+        >
+          Manage Details
+        </button>
+
+        <a
+          href="transfer_student.php?placement_result_id=${student.placement_result_id}"
+          class="btn btn-sm btn-outline-danger px-3 py-1"
+        >
+          Transfer
+        </a>
+      </div>
+    `;
+  }
+
+  // =========================================
+  // 3️⃣ VIEW ONLY
+  // =========================================
+  else {
+
+    buttonHtml = `
+      <button
+        type="button"
+        class="btn btn-sm btn-success px-3 py-1"
+        data-bs-toggle="modal"
+        data-bs-target="#studentViewModal"
+        data-id="${student.placement_result_id}"
+        data-examinee="${student.examinee_number}"
+        data-name="${student.full_name}"
+        data-score="${student.sat_score}"
+        data-has-interview="1"
+      >
+        View Details
+      </button>
+    `;
+  }
+
+  return buildStudentCardHtml(student, buttonHtml);
+}
+
+
 
 
   function loadStudents(reset = false) {
@@ -816,35 +1087,230 @@ if (studentModal) {
 
     const button = event.relatedTarget;
 
-    const id       = button.getAttribute('data-id');
-    const examinee = button.getAttribute('data-examinee');
-    const name     = button.getAttribute('data-name');
-    const score    = button.getAttribute('data-score');
+    const placementId  = button.getAttribute('data-id');
+    const examinee     = button.getAttribute('data-examinee');
+    const name         = button.getAttribute('data-name');
+    const score        = button.getAttribute('data-score');
+    const hasInterview = button.getAttribute('data-has-interview') == "1";
 
-    // hidden fields (for saving later)
-    document.getElementById('placement_result_id').value = id || '';
+    // reset first (clears old values)
+    document.getElementById('studentInterviewForm').reset();
+    document.getElementById('viewOnlyExtra').classList.add('d-none');
+
+    // hidden
+    document.getElementById('placement_result_id').value = placementId || '';
     document.getElementById('examinee_number').value     = examinee || '';
+    document.getElementById('interview_id').value        = '';
 
-    // display-only fields
+    // display
     document.getElementById('display_examinee').innerText = examinee || '';
     document.getElementById('display_name').innerText     = name || '';
     document.getElementById('display_sat').innerText      = score || '';
 
-    // reset form fields every open
-    document.getElementById('studentInterviewForm').reset();
+    const saveButton = document.getElementById('saveInterviewBtn');
+    const scoreButton = document.getElementById('enterScoresBtn');
 
-    // keep student display after reset
-document.getElementById('display_examinee').innerText = examinee || '';
-document.getElementById('display_name').innerText     = name || '';
-document.getElementById('display_sat').innerText      = score || '';
+    // ================================
+    // INSERT MODE
+    // ================================
+    if (!hasInterview) {
 
-    // default classification to REGULAR on open
-    document.getElementById('classification').value = 'REGULAR';
+      saveButton.textContent = 'Save';
+      saveButton.classList.remove('btn-secondary');
+      saveButton.classList.add('btn-success');
+      saveButton.disabled = false;
 
-    // apply ETG UI rules
-    syncEtgUI();
+      document.querySelectorAll('#studentInterviewForm input, #studentInterviewForm select')
+        .forEach(el => el.disabled = false);
+
+      document.getElementById('classification').value = 'REGULAR';
+      syncEtgUI();
+
+      return;
+    }
+
+    // ================================
+    // EDIT / VIEW MODE
+    // ================================
+    fetch(`get_interview.php?placement_result_id=${placementId}`)
+      .then(res => res.json())
+      .then(data => {
+
+        if (!data.success || !data.exists) return;
+
+        const record = data.data;
+
+        // populate
+        document.getElementById('interview_id').value = record.interview_id;
+        document.getElementById('classification').value = record.classification;
+
+        document.querySelector('[name="mobile_number"]').value = record.mobile_number || '';
+        document.querySelector('[name="first_choice"]').value  = record.first_choice || '';
+        document.querySelector('[name="second_choice"]').value = record.second_choice || '';
+        document.querySelector('[name="third_choice"]').value  = record.third_choice || '';
+        document.querySelector('[name="shs_track_id"]').value  = record.shs_track_id || '';
+
+        if (record.classification === 'ETG') {
+          document.getElementById('etg_class_id').value = record.etg_class_id || '';
+        }
+
+        syncEtgUI();
+
+        // OWNER CHECK
+if (data.is_owner) {
+
+  // OWNER MODE
+  saveButton.textContent = 'Update';
+  saveButton.classList.remove('btn-secondary');
+  saveButton.classList.add('btn-success');
+  saveButton.disabled = false;
+
+  document.querySelectorAll('#studentInterviewForm input, #studentInterviewForm select')
+    .forEach(el => el.disabled = false);
+
+  scoreButton.classList.remove('d-none');
+
+  scoreButton.onclick = function () {
+    window.location.href = 'interview_scores.php?interview_id=' + record.interview_id;
+  };
+
+  // Hide view-only section
+  document.getElementById('viewOnlyExtra').classList.add('d-none');
+
+} else {
+
+  // VIEW ONLY MODE
+  saveButton.textContent = 'View Only';
+  saveButton.classList.remove('btn-success');
+  saveButton.classList.add('btn-secondary');
+  saveButton.disabled = true;
+
+  document.querySelectorAll('#studentInterviewForm input, #studentInterviewForm select')
+    .forEach(el => el.disabled = true);
+
+  scoreButton.classList.add('d-none');
+
+  // SHOW FINAL SCORE + ENCODED BY
+  if (record.final_score !== null && record.final_score !== '') {
+    document.getElementById('display_final_score').innerText =
+      Number(record.final_score).toFixed(2) + '%';
+  } else {
+    document.getElementById('display_final_score').innerText = 'No Score';
+  }
+
+  document.getElementById('display_encoded_by').innerText =
+    record.encoded_by || 'N/A';
+
+  document.getElementById('viewOnlyExtra').classList.remove('d-none');
+
+}
+
+
+
+      });
+
   });
 }
+
+// ==============================================
+// Populate Modal (VIEW ONLY) - studentViewModal
+// ==============================================
+const studentViewModal = document.getElementById('studentViewModal');
+
+if (studentViewModal) {
+  studentViewModal.addEventListener('show.bs.modal', function (event) {
+
+    const button = event.relatedTarget;
+
+    const placementId  = button.getAttribute('data-id');
+    const examinee     = button.getAttribute('data-examinee');
+    const name         = button.getAttribute('data-name');
+    const score        = button.getAttribute('data-score');
+
+    // Header fields
+    document.getElementById('v_display_examinee').innerText = examinee || '';
+    document.getElementById('v_display_name').innerText     = name || '';
+    document.getElementById('v_display_sat').innerText      = score || '';
+
+    // Reset body fields
+    document.getElementById('v_classification').innerText     = '';
+    document.getElementById('v_etg_class').innerText          = '';
+    document.getElementById('v_mobile_number').innerText      = '';
+    document.getElementById('v_first_choice').innerText       = '';
+    document.getElementById('v_second_choice').innerText      = '';
+    document.getElementById('v_third_choice').innerText       = '';
+    document.getElementById('v_shs_track').innerText          = '';
+    document.getElementById('v_interview_datetime').innerText = '';
+
+    document.getElementById('v_display_final_score').innerText = 'Loading...';
+    document.getElementById('v_display_encoded_by').innerText  = 'Loading...';
+
+    // Fetch interview details
+    fetch(`get_interview.php?placement_result_id=${placementId}`)
+      .then(res => res.json())
+      .then(data => {
+
+        if (!data.success || !data.exists) {
+          document.getElementById('v_display_final_score').innerText = 'No Record';
+          document.getElementById('v_display_encoded_by').innerText  = 'N/A';
+          return;
+        }
+
+        const record = data.data;
+
+        // Interview score + encoder
+        if (record.final_score !== null && record.final_score !== '') {
+          document.getElementById('v_display_final_score').innerText =
+            Number(record.final_score).toFixed(2) + '%';
+        } else {
+          document.getElementById('v_display_final_score').innerText = 'No Score';
+        }
+
+        document.getElementById('v_display_encoded_by').innerText =
+          record.encoded_by || 'N/A';
+
+        // Simple list fields
+        document.getElementById('v_classification').innerText =
+          record.classification || '—';
+
+        // ETG class (only meaningful if ETG)
+        if (record.classification === 'ETG' && record.etg_class_id) {
+          // Pull label from existing select options in the manage modal (no extra queries)
+          const opt = document.querySelector(`#etg_class_id option[value="${record.etg_class_id}"]`);
+          document.getElementById('v_etg_class').innerText = opt ? opt.textContent.trim() : '—';
+        } else {
+          document.getElementById('v_etg_class').innerText = '—';
+        }
+
+        document.getElementById('v_mobile_number').innerText =
+          record.mobile_number || '—';
+
+        // Program choices: pull label from existing select options in manage modal
+        const p1 = document.querySelector(`[name="first_choice"] option[value="${record.first_choice}"]`);
+        const p2 = document.querySelector(`[name="second_choice"] option[value="${record.second_choice}"]`);
+        const p3 = document.querySelector(`[name="third_choice"] option[value="${record.third_choice}"]`);
+
+        document.getElementById('v_first_choice').innerText  = p1 ? p1.textContent.trim() : '—';
+        document.getElementById('v_second_choice').innerText = p2 ? p2.textContent.trim() : '—';
+        document.getElementById('v_third_choice').innerText  = p3 ? p3.textContent.trim() : '—';
+
+        // SHS Track label from existing select options
+        const t = document.querySelector(`[name="shs_track_id"] option[value="${record.shs_track_id}"]`);
+        document.getElementById('v_shs_track').innerText = t ? t.textContent.trim() : '—';
+
+        // Datetime
+        document.getElementById('v_interview_datetime').innerText =
+          record.interview_datetime || '—';
+
+      })
+      .catch(() => {
+        document.getElementById('v_display_final_score').innerText = 'Error';
+        document.getElementById('v_display_encoded_by').innerText  = 'Error';
+      });
+
+  });
+}
+
 
 // ==============================================
 // ETG CLASS RULES
@@ -865,16 +1331,17 @@ function syncEtgUI() {
     etgSelectEl.required = true;
 
     // If currently REGULAR, switch to first ETG option
-    if (etgSelectEl.value === 'REGULAR') {
-      if (etgSelectEl.options.length > 1) {
-        etgSelectEl.selectedIndex = 1;
-      }
+    if (!etgSelectEl.value) {
+        if (etgSelectEl.options.length > 1) {
+            etgSelectEl.selectedIndex = 1;
+        }
     }
+
 
   } else {
 
     // Set to REGULAR
-    etgSelectEl.value = 'REGULAR';
+    etgSelectEl.value = '';
 
     // Disable dropdown
     etgSelectEl.disabled = true;
@@ -892,6 +1359,129 @@ if (classificationElHook) {
 }
 
 
+// =========================================================================
+// AJAX SAVE INTERVIEW (Insert + Update)
+// File: root_folder/progchair/index.php
+// =========================================================================
+
+const interviewForm = document.getElementById('studentInterviewForm');
+
+if (interviewForm) {
+
+  interviewForm.addEventListener('submit', function (e) {
+
+    e.preventDefault();
+
+    const formData = new FormData(interviewForm);
+
+    fetch('save_interview.php', {
+      method: 'POST',
+      body: formData
+    })
+    .then(res => res.json())
+    .then(data => {
+
+      if (!data.success) {
+        Swal.fire({
+          icon: 'error',
+          title: 'Error',
+          text: data.message || 'Something went wrong.'
+        });
+        return;
+      }
+
+      // Close modal
+      const modal = bootstrap.Modal.getInstance(document.getElementById('studentModal'));
+      modal.hide();
+
+// 🔥 RELOAD LIST PROPERLY AFTER SAVE
+page = 1;
+hasMore = true;
+loadStudents(true);
+
+      // Ask next action
+      Swal.fire({
+        icon: 'success',
+        title: 'Saved Successfully',
+        text: 'Do you want to enter scores now?',
+        showCancelButton: true,
+        confirmButtonText: 'Yes, Enter Scores',
+        cancelButtonText: 'Return to List'
+      }).then((result) => {
+
+        if (result.isConfirmed) {
+
+          // redirect to score page (we create later)
+          window.location.href = 'interview_scores.php?interview_id=' + data.interview_id;
+
+        }
+
+      });
+
+    })
+    .catch(err => {
+      console.error(err);
+      Swal.fire({
+        icon: 'error',
+        title: 'Error',
+        text: 'Request failed.'
+      });
+    });
+
+  });
+
+}
+
+
+/**
+ * ============================================================
+ * TRANSFER ACTION (ACCEPT / REJECT)
+ * File: root_folder/interview/progchair/index.php
+ * ============================================================
+ */
+function handleTransferAction(e, transferId, action) {
+
+  if (e) e.preventDefault();
+
+  Swal.fire({
+    icon: 'question',
+    title: action === 'accept' ? 'Approve Transfer?' : 'Reject Transfer?',
+    text: action === 'accept'
+      ? 'This will move the student to the selected program.'
+      : 'This will cancel the transfer request.',
+    showCancelButton: true,
+    confirmButtonText: 'Yes',
+    cancelButtonText: 'Cancel'
+  }).then((result) => {
+
+    if (!result.isConfirmed) return;
+
+    fetch('process_transfer_action.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `transfer_id=${transferId}&action=${action}`
+    })
+    .then(res => res.json())
+    .then(data => {
+
+      if (!data.success) {
+        Swal.fire('Error', data.message || 'Action failed.', 'error');
+        return;
+      }
+
+      Swal.fire('Success', 'Transfer updated.', 'success');
+
+      // Reload list
+      page = 1;
+      hasMore = true;
+      loadStudents(true);
+    })
+    .catch(() => {
+      Swal.fire('Error', 'Request failed.', 'error');
+    });
+
+  });
+}
 
 
 });

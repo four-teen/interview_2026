@@ -167,19 +167,33 @@ $sql = "
         pr.qualitative_text,
         si.interview_id,
         si.program_chair_id,
-        si.final_score       
+        si.final_score,
+
+        -- TRANSFER FIELDS
+        th.transfer_id,
+        th.to_program_id,
+        th.status AS transfer_status
+
     FROM tbl_placement_results pr
+
     LEFT JOIN tbl_student_interview si
         ON pr.examinee_number = si.examinee_number
+
+    LEFT JOIN tbl_student_transfer_history th
+        ON si.interview_id = th.interview_id
+        AND th.status = 'pending'
+
     WHERE pr.upload_batch_id = ?
       AND pr.sat_score >= ?
       AND (
             pr.full_name LIKE ?
             OR pr.examinee_number LIKE ?
           )
+
     ORDER BY pr.sat_score DESC
     LIMIT ? OFFSET ?
 ";
+
 
 
 $stmt = $conn->prepare($sql);
@@ -204,6 +218,12 @@ $stmt->bind_param(
 $stmt->execute();
 $result = $stmt->get_result();
 
+/**
+ * ============================================================
+ * STEP 6B – BUILD RESPONSE ROWS
+ * File: root_folder/interview/progchair/fetch_students.php
+ * ============================================================
+ */
 $students = [];
 
 while ($row = $result->fetch_assoc()) {
@@ -217,8 +237,16 @@ while ($row = $result->fetch_assoc()) {
         (int)$row['program_chair_id'] === (int)$_SESSION['accountid']
     );
 
+    // NEW: pending transfer exists
+    $row['transfer_pending'] = (
+        !empty($row['transfer_id']) &&
+        $row['transfer_status'] === 'pending'
+    );
+
     $students[] = $row;
 }
+
+
 
 
 

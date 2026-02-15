@@ -8,6 +8,7 @@ error_reporting(E_ALL);
 
 /**
  * ============================================================================
+ * root/progchair/index.php
  * PROGRAMS UNDER ASSIGNED CAMPUS
  * ============================================================================
  */
@@ -265,31 +266,19 @@ if ($activeBatchId) {
     <title>Dashboard - interview</title>
 
     <meta name="description" content="" />
-
-    <!-- Favicon -->
     <link rel="icon" type="image/x-icon" href="../assets/img/favicon/favicon.ico" />
-
-    <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=Public+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600;1,700&display=swap"
       rel="stylesheet"
     />
-
-    <!-- Icons. Uncomment required icon fonts -->
     <link rel="stylesheet" href="../assets/vendor/fonts/boxicons.css" />
-
-    <!-- Core CSS -->
     <link rel="stylesheet" href="../assets/vendor/css/core.css" class="template-customizer-core-css" />
     <link rel="stylesheet" href="../assets/vendor/css/theme-default.css" class="template-customizer-theme-css" />
     <link rel="stylesheet" href="../assets/css/demo.css" />
-
-    <!-- Vendors CSS -->
     <link rel="stylesheet" href="../assets/vendor/libs/perfect-scrollbar/perfect-scrollbar.css" />
-
     <link rel="stylesheet" href="../assets/vendor/libs/apex-charts/apex-charts.css" />
-
     <script src="../assets/vendor/js/helpers.js"></script>
     <script src="../assets/js/config.js"></script>
 <style>
@@ -852,41 +841,123 @@ document.addEventListener("DOMContentLoaded", function () {
   let hasMore = true;
   let currentSearch = '';
 
-function createStudentCard(student) {
+/**
+ * ============================================================
+ * BUILD STUDENT CARD HTML
+ * File: root_folder/interview/progchair/index.php
+ * ============================================================
+ */
+function buildStudentCardHtml(student, buttonHtml) {
 
-  let buttonHtml = '';
+  let interviewBadge = '';
 
-  // =========================================
-  // 1️⃣ NO INTERVIEW YET → CAN MANAGE
-  // =========================================
-if (!student.has_interview) {
+  if (student.final_score !== null && student.final_score !== undefined) {
+    const formattedScore = Number(student.final_score).toFixed(2);
+    interviewBadge = `
+      &nbsp; | &nbsp;
+      <span class="badge score-badge text-warning bg-white fw-bold px-3 py-2">
+        SCORE: ${formattedScore}%
+      </span>
+    `;
+  }
 
-  buttonHtml = `
-    <button
-      type="button"
-      class="btn btn-sm btn-primary px-3 py-1"
-      data-bs-toggle="modal"
-      data-bs-target="#studentModal"
-      data-id="${student.placement_result_id}"
-      data-examinee="${student.examinee_number}"
-      data-name="${student.full_name}"
-      data-score="${student.sat_score}"
-      data-has-interview="0"
-    >
-      Manage
-    </button>
+  return `
+    <div class="card student-card mb-2 shadow-sm border-0"
+         style="
+           border-left: 6px solid #28c76f;
+           background: linear-gradient(to right, #e9f9f1 0%, #ffffff 8%);
+         ">
+
+      <div class="card-body py-2 px-3">
+        <div class="d-flex justify-content-between align-items-center">
+
+          <div>
+            <div class="fw-semibold small mb-1">
+              ${student.full_name}
+            </div>
+
+            <small class="text-muted">
+              Examinee #: ${student.examinee_number}
+              &nbsp; | &nbsp;
+              SAT: ${student.sat_score}
+              &nbsp; | &nbsp;
+              ${student.qualitative_text}
+              ${interviewBadge}
+            </small>
+          </div>
+
+          <div class="ms-3">
+            ${buttonHtml}
+          </div>
+
+        </div>
+      </div>
+    </div>
   `;
 }
 
 
+function createStudentCard(student) {
+
+  let buttonHtml = ''; // ✅ MOVE THIS TO TOP
+
   // =========================================
-  // 2️⃣ HAS INTERVIEW AND I AM OWNER
+  // 0️⃣ TRANSFER PENDING → SHOW ACCEPT / REJECT
+  // =========================================
+  if (student.transfer_pending) {
+
+    buttonHtml = `
+      <div class="d-flex align-items-center gap-2">
+        <button
+          type="button"
+          class="btn btn-sm btn-success px-3 py-1"
+          onclick="handleTransferAction(event, ${student.transfer_id}, 'accept')"
+        >
+          Accept
+        </button>
+
+        <button
+          type="button"
+          class="btn btn-sm btn-danger px-3 py-1"
+          onclick="handleTransferAction(event, ${student.transfer_id}, 'reject')"
+        >
+          Reject
+        </button>
+      </div>
+    `;
+
+    return buildStudentCardHtml(student, buttonHtml);
+  }
+
+  // =========================================
+  // 1️⃣ NO INTERVIEW YET
+  // =========================================
+  if (!student.has_interview) {
+
+    buttonHtml = `
+      <button
+        type="button"
+        class="btn btn-sm btn-primary px-3 py-1"
+        data-bs-toggle="modal"
+        data-bs-target="#studentModal"
+        data-id="${student.placement_result_id}"
+        data-examinee="${student.examinee_number}"
+        data-name="${student.full_name}"
+        data-score="${student.sat_score}"
+        data-has-interview="0"
+      >
+        Manage
+      </button>
+    `;
+  }
+
+  // =========================================
+  // 2️⃣ HAS INTERVIEW & OWNER
   // =========================================
   else if (student.can_edit) {
 
     buttonHtml = `
       <div class="d-flex align-items-center gap-2">
-
         <button
           type="button"
           class="btn btn-sm btn-warning px-3 py-1"
@@ -901,21 +972,18 @@ if (!student.has_interview) {
           Manage Details
         </button>
 
-        <button
-          type="button"
-          class="btn btn-sm btn-outline-danger px-3 py-1 transfer-btn"
-          data-id="${student.placement_result_id}"
+        <a
+          href="transfer_student.php?placement_result_id=${student.placement_result_id}"
+          class="btn btn-sm btn-outline-danger px-3 py-1"
         >
           Transfer
-        </button>
-
+        </a>
       </div>
     `;
-
   }
 
   // =========================================
-  // 3️⃣ HAS INTERVIEW BUT NOT MINE
+  // 3️⃣ VIEW ONLY
   // =========================================
   else {
 
@@ -934,64 +1002,10 @@ if (!student.has_interview) {
         View Details
       </button>
     `;
-
   }
-// =========================================
-// FINAL INTERVIEW SCORE BADGE (ONLY IF EXISTS)
-// =========================================
-let interviewBadge = '';
 
-if (student.final_score !== null && student.final_score !== undefined) {
-
-  const formattedScore = Number(student.final_score).toFixed(2);
-
-interviewBadge = `
-  &nbsp; | &nbsp;
-<span class="badge score-badge text-warning bg-white fw-bold px-3 py-2">
-  SCORE: ${formattedScore}%
-</span>
-
-`;
-
+  return buildStudentCardHtml(student, buttonHtml);
 }
-
-
-  return `
-    <div class="card student-card mb-2 shadow-sm border-0"
-         style="
-           border-left: 6px solid #28c76f;
-           background: linear-gradient(to right, #e9f9f1 0%, #ffffff 8%);
-         ">
-
-      <div class="card-body py-2 px-3">
-        <div class="d-flex justify-content-between align-items-center">
-
-          <div>
-            <div class="fw-semibold small mb-1">
-              ${student.full_name}
-            </div>
-<small class="text-muted">
-  Examinee #: ${student.examinee_number}
-  &nbsp; | &nbsp;
-  SAT: ${student.sat_score}
-  &nbsp; | &nbsp;
-  ${student.qualitative_text}
-  ${interviewBadge}
-</small>
-
-
-          </div>
-
-          <div class="ms-3">
-            ${buttonHtml}
-          </div>
-
-        </div>
-      </div>
-    </div>
-  `;
-}
-
 
 
   function loadStudents(reset = false) {
@@ -1033,6 +1047,9 @@ interviewBadge = `
         loadingIndicator.classList.add("d-none");
       });
   }
+
+// 🔥 Make loadStudents globally accessible
+window.loadStudents = loadStudents;
 
   // Infinite Scroll
   window.addEventListener("scroll", function () {
@@ -1417,8 +1434,61 @@ loadStudents(true);
 
 }
 
-
 });
+
+
+/**
+ * ============================================================
+ * TRANSFER ACTION (ACCEPT / REJECT)
+ * File: root_folder/interview/progchair/index.php
+ * ============================================================
+ */
+function handleTransferAction(e, transferId, action) {
+
+  if (e) e.preventDefault();
+
+  Swal.fire({
+    icon: 'question',
+    title: action === 'accept' ? 'Approve Transfer?' : 'Reject Transfer?',
+    text: action === 'accept'
+      ? 'This will move the student to the selected program.'
+      : 'This will cancel the transfer request.',
+    showCancelButton: true,
+    confirmButtonText: 'Yes',
+    cancelButtonText: 'Cancel'
+  }).then((result) => {
+
+    if (!result.isConfirmed) return;
+
+      fetch('process_transfer_action.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `transfer_id=${transferId}&action=${action}`
+      })
+      .then(res => res.json())
+      .then(data => {
+
+        if (!data.success) {
+          Swal.fire('Error', data.message || 'Action failed.', 'error');
+          return;
+        }
+
+        Swal.fire('Success', 'Transfer updated.', 'success');
+
+        page = 1;
+        hasMore = true;
+        loadStudents(true);
+
+      })
+      .catch(err => {
+        console.error(err);
+        Swal.fire('Error', 'Request failed.', 'error');
+      });
+
+
+
+  });
+}
 </script>
 
 
