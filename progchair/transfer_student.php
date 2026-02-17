@@ -23,6 +23,7 @@ if (
 
 $accountId   = (int) $_SESSION['accountid'];
 $campusId    = (int) $_SESSION['campus_id'];
+$assignedProgramId = (int) ($_SESSION['program_id'] ?? 0);
 $placementId = isset($_GET['placement_result_id'])
     ? (int) $_GET['placement_result_id']
     : 0;
@@ -61,16 +62,19 @@ LEFT JOIN tbl_program p
     ON si.program_id = p.program_id
 
 WHERE pr.id = ?
+AND si.program_chair_id = ?
 LIMIT 1
 ";
 
 
 $stmt = $conn->prepare($studentSql);
 if (!$stmt) {
-    die("SQL Error (studentSql): " . $conn->error);
+    error_log("SQL Error (studentSql): " . $conn->error);
+    header('Location: index.php?msg=server_error');
+    exit;
 }
 
-$stmt->bind_param("i", $placementId);
+$stmt->bind_param("ii", $placementId, $accountId);
 $stmt->execute();
 $student = $stmt->get_result()->fetch_assoc();
 
@@ -97,7 +101,9 @@ $pendingSql = "
 $stmtPending = $conn->prepare($pendingSql);
 
 if (!$stmtPending) {
-    die("SQL Error (pendingSql): " . $conn->error);
+    error_log("SQL Error (pendingSql): " . $conn->error);
+    header('Location: index.php?msg=server_error');
+    exit;
 }
 
 $stmtPending->bind_param("i", $student['interview_id']);
@@ -143,6 +149,7 @@ INNER JOIN tbl_program_cutoff pc
 
 WHERE cam.campus_id = ?
 AND p.status = 'active'
+AND p.program_id <> ?
 
 ORDER BY p.program_name ASC
 ";
@@ -150,10 +157,12 @@ ORDER BY p.program_name ASC
 
 $stmtProg = $conn->prepare($programSql);
 if (!$stmtProg) {
-    die("SQL Error (programSql): " . $conn->error);
+    error_log("SQL Error (programSql): " . $conn->error);
+    header('Location: index.php?msg=server_error');
+    exit;
 }
 
-$stmtProg->bind_param("i", $campusId);
+$stmtProg->bind_param("ii", $campusId, $assignedProgramId);
 $stmtProg->execute();
 $programs = $stmtProg->get_result();
 ?>

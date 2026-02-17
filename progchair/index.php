@@ -3,7 +3,8 @@
   session_start();
 
 
-ini_set('display_errors', 1);
+$APP_DEBUG = getenv('APP_DEBUG') === '1';
+ini_set('display_errors', $APP_DEBUG ? '1' : '0');
 error_reporting(E_ALL);
 
 /**
@@ -24,12 +25,23 @@ $programSql = "
         p.program_code,
         p.program_name,
         p.major,
-        pc.cutoff_score
+        pc.cutoff_score,
+        COALESCE(sc.scored_students_count, 0) AS scored_students_count
     FROM tbl_program p
     INNER JOIN tbl_college c 
         ON p.college_id = c.college_id
     LEFT JOIN tbl_program_cutoff pc
         ON p.program_id = pc.program_id
+    LEFT JOIN (
+        SELECT
+            first_choice AS program_id,
+            COUNT(*) AS scored_students_count
+        FROM tbl_student_interview
+        WHERE final_score IS NOT NULL
+          AND status = 'active'
+        GROUP BY first_choice
+    ) sc
+        ON p.program_id = sc.program_id
     WHERE c.campus_id = ?
       AND p.status = 'active'
     ORDER BY 
@@ -279,6 +291,7 @@ if ($activeBatchId) {
     <link rel="stylesheet" href="../assets/css/demo.css" />
     <link rel="stylesheet" href="../assets/vendor/libs/perfect-scrollbar/perfect-scrollbar.css" />
     <link rel="stylesheet" href="../assets/vendor/libs/apex-charts/apex-charts.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" />
     <script src="../assets/vendor/js/helpers.js"></script>
     <script src="../assets/js/config.js"></script>
 <style>
@@ -303,6 +316,80 @@ if ($activeBatchId) {
 .student-card:hover {
   transform: scale(1.015);
   box-shadow: 0 8px 18px rgba(0, 0, 0, 0.08);
+}
+
+.program-choice-selection .select2-selection__rendered {
+  text-transform: uppercase;
+}
+
+.program-choice-dropdown .select2-results__option {
+  text-transform: uppercase;
+}
+
+.select2-container--default .select2-selection--single {
+  height: calc(2.25rem + 2px);
+  border: 1px solid #d9dee3;
+}
+
+.select2-container--default .select2-selection--single .select2-selection__rendered {
+  line-height: calc(2.25rem + 2px);
+  padding-left: 0.9rem;
+}
+
+.select2-container--default .select2-selection--single .select2-selection__arrow {
+  height: calc(2.25rem + 2px);
+}
+
+.programs-card {
+  display: flex;
+  flex-direction: column;
+  height: clamp(320px, calc(100vh - 170px), 880px);
+}
+
+.programs-card-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.program-rank-trigger {
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.program-rank-trigger:hover {
+  background-color: #f5f7ff;
+}
+
+.program-rank-trigger:focus {
+  outline: 2px solid #696cff;
+  outline-offset: 2px;
+}
+
+.program-score-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  padding: 0.4rem 0.55rem;
+  min-width: 90px;
+  text-align: center;
+}
+
+.program-meta-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (max-width: 991.98px) {
+  .programs-card {
+    height: auto;
+  }
+
+  .programs-card-body {
+    max-height: 50vh;
+  }
 }
 
 </style>
@@ -428,7 +515,7 @@ if ($activeBatchId) {
 <!-- ================= RIGHT COLUMN ================= -->
 <div class="col-lg-4 col-12">
 
-<div class="card mb-4">
+<div class="card mb-4 programs-card">
 
   <div class="card-header bg-success text-white">
     <h6 class="mb-0">
@@ -436,15 +523,19 @@ if ($activeBatchId) {
     </h6>
   </div>
 
-  <div class="card-body p-3" style="max-height: 510px; overflow-y: auto;">
+  <div class="card-body p-3 programs-card-body">
 
     <?php foreach ($programs as $program): ?>
     <?php 
     $assignedProgramId = $_SESSION['program_id'];
     $isAssigned = ($program['program_id'] == $assignedProgramId);
     ?>
-      <div class="mb-3 pb-3 border-bottom <?= $isAssigned ? 'bg-label-primary rounded px-2 py-2' : '' ?>">
-
+      <div class="mb-3 pb-3 border-bottom program-rank-trigger <?= $isAssigned ? 'bg-label-primary rounded px-2 py-2' : '' ?>"
+           data-program-id="<?= (int)$program['program_id']; ?>"
+           data-program-name="<?= htmlspecialchars(strtoupper($program['program_name'] . (!empty($program['major']) ? ' - ' . $program['major'] : ''))); ?>"
+           tabindex="0"
+           role="button"
+           aria-label="View ranking for <?= htmlspecialchars($program['program_name']); ?>">
 
         <!-- Program Name -->
         <div class="fw-semibold small text-dark">
@@ -471,9 +562,12 @@ if ($activeBatchId) {
           }
         ?>
 
-        <div class="mt-2">
+        <div class="mt-2 program-meta-row">
           <span class="badge <?= $badgeClass ?> small">
             <?= $cutoffText ?>
+          </span>
+          <span class="badge bg-primary program-score-badge">
+            SCORED: <?= (int)($program['scored_students_count'] ?? 0); ?>
           </span>
         </div>
 
@@ -485,6 +579,64 @@ if ($activeBatchId) {
 
 </div>
 
+</div>
+
+<!-- ========================================================= -->
+<!-- PROGRAM RANKING MODAL -->
+<!-- ========================================================= -->
+<div class="modal fade" id="programRankingModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+
+      <div class="modal-header">
+        <div>
+          <h5 class="modal-title mb-1" id="programRankingTitle">Program Ranking</h5>
+          <small class="text-muted" id="programRankingMeta"></small>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+
+      <div class="modal-body">
+        <div class="d-flex justify-content-end gap-2 mb-3">
+          <button type="button" class="btn btn-label-secondary" id="printRankingBtn">
+            <i class="bx bx-printer me-1"></i> Print
+          </button>
+          <a href="#" class="btn btn-success" id="exportRankingBtn">
+            <i class="bx bx-export me-1"></i> Export Excel
+          </a>
+        </div>
+
+        <div id="programRankingLoading" class="text-center py-4 d-none">
+          <div class="spinner-border text-primary" role="status"></div>
+          <div class="small text-muted mt-2">Loading ranking...</div>
+        </div>
+
+        <div id="programRankingEmpty" class="alert alert-warning d-none mb-0">
+          No ranked students found for this program.
+        </div>
+
+        <div class="table-responsive d-none" id="programRankingTableWrap">
+          <table class="table table-bordered table-striped align-middle mb-0" id="programRankingTable">
+            <thead class="table-light">
+              <tr>
+                <th style="width: 80px;">Rank</th>
+                <th style="width: 150px;">Examinee #</th>
+                <th>Student Name</th>
+                <th style="width: 120px;">SAT</th>
+                <th style="width: 130px;">Final Score</th>
+                <th>Encoded By</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
 </div>
 
             <!-- / Content -->
@@ -500,7 +652,10 @@ if ($activeBatchId) {
       <form id="studentInterviewForm" autocomplete="off">
 
         <div class="modal-header">
-          <h5 class="modal-title">Student Details Verification</h5>
+          <div>
+            <h5 class="modal-title mb-1">Student Details Verification</h5>
+            <small class="text-muted">Date/Time: <?= date('F d, Y h:i A'); ?></small>
+          </div>
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
 
@@ -597,17 +752,31 @@ if ($activeBatchId) {
 
 
 
-          <!-- MOBILE -->
-          <div class="mb-3">
-            <label class="form-label">Mobile Number <span class="text-danger">*</span></label>
-            <input type="text" name="mobile_number" class="form-control" required>
+          <!-- MOBILE + SHS TRACK (ONE LINE) -->
+          <div class="row mb-3">
+            <div class="col-md-6 mb-3 mb-md-0">
+              <label class="form-label">Mobile Number <span class="text-danger">*</span></label>
+              <input type="text" name="mobile_number" class="form-control" required>
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label">SHS Track <span class="text-danger">*</span></label>
+              <select name="shs_track_id" class="form-select" required>
+                <option value="">Select Track</option>
+                <?php foreach ($allTracks as $track): ?>
+                  <option value="<?= (int)$track['track_id']; ?>">
+                    <?= htmlspecialchars($track['track_name']); ?>
+                  </option>
+                <?php endforeach; ?>
+              </select>
+            </div>
           </div>
 
           <!-- PROGRAM CHOICES -->
           <?php
           function renderProgramOptions($programs) {
               foreach ($programs as $p) {
-                  $display = $p['program_name'] . (!empty($p['major']) ? ' – ' . $p['major'] : '');
+                  $display = strtoupper($p['program_name'] . (!empty($p['major']) ? ' - ' . $p['major'] : ''));
                   echo '<option value="' . (int)$p['program_id'] . '">' . htmlspecialchars($display) . '</option>';
               }
           }
@@ -615,46 +784,29 @@ if ($activeBatchId) {
 
           <div class="mb-3">
             <label class="form-label">1st Choice <span class="text-danger">*</span></label>
-            <select name="first_choice" class="form-select" required>
-              <option value="">Select Program</option>
+            <select name="first_choice" id="first_choice" class="form-select js-program-choice" required disabled>
+              <option value="">SELECT PROGRAM</option>
               <?php renderProgramOptions($allPrograms); ?>
             </select>
           </div>
 
           <div class="mb-3">
             <label class="form-label">2nd Choice <span class="text-danger">*</span></label>
-            <select name="second_choice" class="form-select" required>
-              <option value="">Select Program</option>
+            <select name="second_choice" class="form-select js-program-choice" required>
+              <option value="">SELECT PROGRAM</option>
               <?php renderProgramOptions($allPrograms); ?>
             </select>
           </div>
 
           <div class="mb-3">
             <label class="form-label">3rd Choice <span class="text-danger">*</span></label>
-            <select name="third_choice" class="form-select" required>
-              <option value="">Select Program</option>
+            <select name="third_choice" class="form-select js-program-choice" required>
+              <option value="">SELECT PROGRAM</option>
               <?php renderProgramOptions($allPrograms); ?>
             </select>
           </div>
 
-          <!-- SHS TRACK -->
-          <div class="mb-3">
-            <label class="form-label">SHS Track <span class="text-danger">*</span></label>
-            <select name="shs_track_id" class="form-select" required>
-              <option value="">Select Track</option>
-              <?php foreach ($allTracks as $track): ?>
-                <option value="<?= (int)$track['track_id']; ?>">
-                  <?= htmlspecialchars($track['track_name']); ?>
-                </option>
-              <?php endforeach; ?>
-            </select>
-          </div>
-
-          <!-- DATETIME -->
-          <div class="mb-0">
-            <label class="form-label">Date/Time</label>
-            <input type="text" class="form-control" value="<?= date('F d, Y h:i A'); ?>" readonly>
-          </div>
+          
 
         </div>
 
@@ -822,6 +974,7 @@ if ($activeBatchId) {
     <!-- Core JS -->
     <!-- build:js assets/vendor/js/core.js -->
     <script src="../assets/vendor/libs/jquery/jquery.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
     <script src="../assets/vendor/libs/popper/popper.js"></script>
     <script src="../assets/vendor/js/bootstrap.js"></script>
     <script src="../assets/vendor/libs/perfect-scrollbar/perfect-scrollbar.js"></script>
@@ -840,6 +993,63 @@ document.addEventListener("DOMContentLoaded", function () {
   let isLoading = false;
   let hasMore = true;
   let currentSearch = '';
+  const assignedProgramId = <?= (int) $assignedProgramId; ?>;
+
+  function initProgramChoiceSelects() {
+    if (typeof $ === 'undefined' || !$.fn || !$.fn.select2) return;
+
+    $('.js-program-choice').select2({
+      width: '100%',
+      placeholder: 'SELECT PROGRAM',
+      dropdownParent: $('#studentModal'),
+      dropdownCssClass: 'program-choice-dropdown',
+      selectionCssClass: 'program-choice-selection'
+    });
+  }
+
+  function setProgramChoiceValue(fieldName, fieldValue) {
+    const el = document.querySelector(`#studentInterviewForm select[name="${fieldName}"]`);
+    if (!el) return;
+
+    el.value = fieldValue || '';
+
+    if (typeof $ !== 'undefined' && $.fn && $.fn.select2) {
+      $(el).trigger('change.select2');
+    } else {
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  }
+
+  function enforceLockedFirstChoice(lockToAssigned = false) {
+    const firstChoiceEl = document.querySelector('#studentInterviewForm select[name="first_choice"]');
+    if (!firstChoiceEl) return;
+
+    if (lockToAssigned && assignedProgramId > 0) {
+      setProgramChoiceValue('first_choice', assignedProgramId);
+    }
+
+    firstChoiceEl.disabled = true;
+
+    if (typeof $ !== 'undefined' && $.fn && $.fn.select2) {
+      $(firstChoiceEl)
+        .prop('disabled', true)
+        .trigger('change.select2');
+    }
+  }
+
+  function resetProgramChoices() {
+    if (typeof $ === 'undefined' || !$.fn || !$.fn.select2) return;
+    $('.js-program-choice').val('').trigger('change.select2');
+  }
+
+  function refreshProgramChoiceSelects() {
+    if (typeof $ === 'undefined' || !$.fn || !$.fn.select2) return;
+    $('.js-program-choice').each(function () {
+      $(this).prop('disabled', this.disabled).trigger('change.select2');
+    });
+  }
+
+  initProgramChoiceSelects();
 
 /**
  * ============================================================
@@ -956,6 +1166,26 @@ function createStudentCard(student) {
   // =========================================
   else if (student.can_edit) {
 
+    const transferButtonHtml = student.has_pending_transfer
+      ? `
+        <button
+          type="button"
+          class="btn btn-sm btn-danger px-3 py-1"
+          disabled
+          title="Transfer request is pending approval"
+        >
+          Pending Transfer
+        </button>
+      `
+      : `
+        <a
+          href="transfer_student.php?placement_result_id=${student.placement_result_id}"
+          class="btn btn-sm btn-outline-danger px-3 py-1"
+        >
+          Transfer
+        </a>
+      `;
+
     buttonHtml = `
       <div class="d-flex align-items-center gap-2">
         <button
@@ -972,12 +1202,7 @@ function createStudentCard(student) {
           Manage Details
         </button>
 
-        <a
-          href="transfer_student.php?placement_result_id=${student.placement_result_id}"
-          class="btn btn-sm btn-outline-danger px-3 py-1"
-        >
-          Transfer
-        </a>
+        ${transferButtonHtml}
       </div>
     `;
   }
@@ -1077,6 +1302,178 @@ window.loadStudents = loadStudents;
   // Initial Load
   loadStudents();
 
+// ==============================================
+// Program Ranking Modal (Right Column Programs)
+// ==============================================
+const programRankingModalEl   = document.getElementById('programRankingModal');
+const programRankingTitleEl   = document.getElementById('programRankingTitle');
+const programRankingMetaEl    = document.getElementById('programRankingMeta');
+const programRankingLoadingEl = document.getElementById('programRankingLoading');
+const programRankingEmptyEl   = document.getElementById('programRankingEmpty');
+const programRankingTableWrap = document.getElementById('programRankingTableWrap');
+const programRankingTableBody = document.querySelector('#programRankingTable tbody');
+const exportRankingBtn        = document.getElementById('exportRankingBtn');
+const printRankingBtn         = document.getElementById('printRankingBtn');
+
+let currentRankingProgramId = 0;
+let currentRankingProgramName = '';
+let currentRankingRows = [];
+
+const programRankingModal = programRankingModalEl
+  ? new bootstrap.Modal(programRankingModalEl)
+  : null;
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function renderRankingRows(rows) {
+  if (!programRankingTableBody) return;
+
+  programRankingTableBody.innerHTML = rows.map((row, index) => `
+    <tr>
+      <td class="fw-semibold">${index + 1}</td>
+      <td>${escapeHtml(row.examinee_number || '')}</td>
+      <td class="text-uppercase">${escapeHtml(row.full_name || '')}</td>
+      <td>${escapeHtml(row.sat_score ?? '')}</td>
+      <td class="fw-semibold text-warning">${escapeHtml(row.final_score ?? '')}</td>
+      <td>${escapeHtml(row.encoded_by || 'N/A')}</td>
+    </tr>
+  `).join('');
+}
+
+function setRankingState({ loading = false, empty = false, showTable = false }) {
+  if (programRankingLoadingEl) programRankingLoadingEl.classList.toggle('d-none', !loading);
+  if (programRankingEmptyEl) programRankingEmptyEl.classList.toggle('d-none', !empty);
+  if (programRankingTableWrap) programRankingTableWrap.classList.toggle('d-none', !showTable);
+}
+
+function loadProgramRanking(programId, programName) {
+  if (!programId) return;
+
+  currentRankingProgramId = programId;
+  currentRankingProgramName = programName || 'PROGRAM';
+  currentRankingRows = [];
+
+  if (programRankingTitleEl) {
+    programRankingTitleEl.textContent = `Program Ranking - ${currentRankingProgramName}`;
+  }
+
+  if (programRankingMetaEl) {
+    programRankingMetaEl.textContent = 'Loading...';
+  }
+
+  if (exportRankingBtn) {
+    exportRankingBtn.href = `export_program_ranking.php?program_id=${programId}`;
+  }
+
+  setRankingState({ loading: true, empty: false, showTable: false });
+
+  fetch(`get_program_ranking.php?program_id=${programId}`)
+    .then(res => res.json())
+    .then(data => {
+      if (!data.success) {
+        throw new Error(data.message || 'Failed to load ranking.');
+      }
+
+      currentRankingRows = Array.isArray(data.rows) ? data.rows : [];
+
+      if (programRankingMetaEl) {
+        const total = currentRankingRows.length;
+        programRankingMetaEl.textContent = `${total} ranked student${total === 1 ? '' : 's'} (highest to lowest)`;
+      }
+
+      if (currentRankingRows.length === 0) {
+        setRankingState({ loading: false, empty: true, showTable: false });
+        return;
+      }
+
+      renderRankingRows(currentRankingRows);
+      setRankingState({ loading: false, empty: false, showTable: true });
+    })
+    .catch(err => {
+      console.error(err);
+      setRankingState({ loading: false, empty: true, showTable: false });
+
+      if (programRankingEmptyEl) {
+        programRankingEmptyEl.textContent = err.message || 'Failed to load ranking.';
+      }
+    });
+}
+
+document.querySelectorAll('.program-rank-trigger').forEach((el) => {
+  const openRanking = () => {
+    const programId = Number(el.getAttribute('data-program-id') || 0);
+    const programName = (el.getAttribute('data-program-name') || '').trim();
+
+    if (!programId || !programRankingModal) return;
+
+    if (programRankingEmptyEl) {
+      programRankingEmptyEl.textContent = 'No ranked students found for this program.';
+    }
+
+    programRankingModal.show();
+    loadProgramRanking(programId, programName);
+  };
+
+  el.addEventListener('click', openRanking);
+  el.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      openRanking();
+    }
+  });
+});
+
+if (printRankingBtn) {
+  printRankingBtn.addEventListener('click', function () {
+    if (!currentRankingRows.length) {
+      Swal.fire('No Data', 'No ranked students to print.', 'info');
+      return;
+    }
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      Swal.fire('Blocked', 'Please allow pop-ups to print ranking.', 'warning');
+      return;
+    }
+
+    const now = new Date().toLocaleString();
+    const tableHtml = programRankingTableWrap ? programRankingTableWrap.innerHTML : '';
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>Program Ranking - ${currentRankingProgramName}</title>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 20px; color: #1f2d3d; }
+          h2 { margin: 0 0 6px 0; font-size: 20px; }
+          .meta { margin-bottom: 14px; color: #6c757d; font-size: 13px; }
+          table { width: 100%; border-collapse: collapse; }
+          th, td { border: 1px solid #d9dee3; padding: 8px; font-size: 12px; }
+          th { background: #f5f7fa; text-align: left; }
+        </style>
+      </head>
+      <body>
+        <h2>Program Ranking - ${currentRankingProgramName}</h2>
+        <div class="meta">Generated: ${now}</div>
+        ${tableHtml}
+      </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+  });
+}
+
 
 
 // ==============================================
@@ -1098,6 +1495,7 @@ if (studentModal) {
     // reset first (clears old values)
     document.getElementById('studentInterviewForm').reset();
     document.getElementById('viewOnlyExtra').classList.add('d-none');
+    resetProgramChoices();
 
     // hidden
     document.getElementById('placement_result_id').value = placementId || '';
@@ -1124,6 +1522,8 @@ if (studentModal) {
 
       document.querySelectorAll('#studentInterviewForm input, #studentInterviewForm select')
         .forEach(el => el.disabled = false);
+      refreshProgramChoiceSelects();
+      enforceLockedFirstChoice(true);
 
       document.getElementById('classification').value = 'REGULAR';
       syncEtgUI();
@@ -1147,9 +1547,9 @@ if (studentModal) {
         document.getElementById('classification').value = record.classification;
 
         document.querySelector('[name="mobile_number"]').value = record.mobile_number || '';
-        document.querySelector('[name="first_choice"]').value  = record.first_choice || '';
-        document.querySelector('[name="second_choice"]').value = record.second_choice || '';
-        document.querySelector('[name="third_choice"]').value  = record.third_choice || '';
+        setProgramChoiceValue('first_choice', assignedProgramId > 0 ? assignedProgramId : record.first_choice);
+        setProgramChoiceValue('second_choice', record.second_choice);
+        setProgramChoiceValue('third_choice', record.third_choice);
         document.querySelector('[name="shs_track_id"]').value  = record.shs_track_id || '';
 
         if (record.classification === 'ETG') {
@@ -1169,6 +1569,8 @@ if (data.is_owner) {
 
   document.querySelectorAll('#studentInterviewForm input, #studentInterviewForm select')
     .forEach(el => el.disabled = false);
+  refreshProgramChoiceSelects();
+  enforceLockedFirstChoice(true);
 
   scoreButton.classList.remove('d-none');
 
@@ -1189,6 +1591,7 @@ if (data.is_owner) {
 
   document.querySelectorAll('#studentInterviewForm input, #studentInterviewForm select')
     .forEach(el => el.disabled = true);
+  refreshProgramChoiceSelects();
 
   scoreButton.classList.add('d-none');
 
@@ -1292,9 +1695,9 @@ if (studentViewModal) {
         const p2 = document.querySelector(`[name="second_choice"] option[value="${record.second_choice}"]`);
         const p3 = document.querySelector(`[name="third_choice"] option[value="${record.third_choice}"]`);
 
-        document.getElementById('v_first_choice').innerText  = p1 ? p1.textContent.trim() : '—';
-        document.getElementById('v_second_choice').innerText = p2 ? p2.textContent.trim() : '—';
-        document.getElementById('v_third_choice').innerText  = p3 ? p3.textContent.trim() : '—';
+        document.getElementById('v_first_choice').innerText  = p1 ? p1.textContent.trim().toUpperCase() : '—';
+        document.getElementById('v_second_choice').innerText = p2 ? p2.textContent.trim().toUpperCase() : '—';
+        document.getElementById('v_third_choice').innerText  = p3 ? p3.textContent.trim().toUpperCase() : '—';
 
         // SHS Track label from existing select options
         const t = document.querySelector(`[name="shs_track_id"] option[value="${record.shs_track_id}"]`);
@@ -1412,9 +1815,15 @@ loadStudents(true);
       }).then((result) => {
 
         if (result.isConfirmed) {
+          const interviewId = Number(data.interview_id || 0);
 
-          // redirect to score page (we create later)
-          window.location.href = 'interview_scores.php?interview_id=' + data.interview_id;
+          if (!interviewId) {
+            Swal.fire('Error', 'Saved, but interview ID was not returned.', 'error');
+            return;
+          }
+
+          // Redirect to score entry
+          window.location.href = 'interview_scores.php?interview_id=' + interviewId;
 
         }
 

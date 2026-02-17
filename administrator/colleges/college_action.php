@@ -2,8 +2,17 @@
 require_once '../../config/db.php';
 session_start();
 
+if (!isset($_SESSION['logged_in']) || ($_SESSION['role'] ?? '') !== 'administrator') {
+    header('Location: ../../index.php');
+    exit;
+}
+
+$rawReferer = str_replace(["\r", "\n"], '', $_SERVER['HTTP_REFERER'] ?? '');
+$refererPath = parse_url($rawReferer, PHP_URL_PATH) ?: '';
+$safeRedirect = (strpos($refererPath, '/administrator/colleges/') !== false) ? $rawReferer : 'index.php';
+
 /* ============================================================
-   ADD COLLEGE
+  ADD COLLEGE
 ============================================================ */
 
 if (isset($_POST['add_college'])) {
@@ -46,6 +55,6 @@ if (isset($_POST['toggle_status'])) {
     $stmt->bind_param("si", $new_status, $college_id);
     $stmt->execute();
 
-    header("Location: " . $_SERVER['HTTP_REFERER']);
+    header("Location: " . $safeRedirect);
     exit;
 }

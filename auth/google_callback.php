@@ -7,48 +7,62 @@
  * ============================================================================
  */
 
-ini_set('display_errors', 1);
+require_once __DIR__ . '/../config/env.php';
+
+$APP_DEBUG = getenv('APP_DEBUG') === '1';
+ini_set('display_errors', $APP_DEBUG ? '1' : '0');
 error_reporting(E_ALL);
 
 session_start();
+header('Content-Type: application/json; charset=utf-8');
 
 /* ============================================================================
  * CONFIG
  * ========================================================================== */
-$GOOGLE_CLIENT_ID = '115027937761-p80e2nudpe4ldsg9kbi73qc5o9nhg07p.apps.googleusercontent.com';
+$GOOGLE_CLIENT_ID = getenv('GOOGLE_CLIENT_ID') ?: '';
 
 require_once '../config/db.php';
 
-$LOG_FILE = __DIR__ . '/google_auth.log';
+try {
+    $AUTH_TRACE_ID = bin2hex(random_bytes(8));
+} catch (Exception $e) {
+    $AUTH_TRACE_ID = uniqid('trace_', true);
+}
 
 /* ============================================================================
  * SIMPLE LOGGER
  * ========================================================================== */
-function log_auth($label, $data = null)
+function log_auth($label, $context = [])
 {
-    global $LOG_FILE;
-    $line = '[' . date('Y-m-d H:i:s') . "] {$label}";
-    if ($data !== null) {
-        $line .= ' : ' . json_encode($data);
-    }
-    file_put_contents($LOG_FILE, $line . PHP_EOL, FILE_APPEND);
+    global $AUTH_TRACE_ID;
+    $safeContext = is_array($context) ? $context : [];
+    $safeContext = ['trace_id' => $AUTH_TRACE_ID] + $safeContext;
+    error_log('[google_callback] ' . $label . ' ' . json_encode($safeContext, JSON_UNESCAPED_SLASHES));
+}
+
+function json_response($statusCode, $payload)
+{
+    http_response_code((int) $statusCode);
+    echo json_encode($payload);
+    exit;
+}
+
+if ($GOOGLE_CLIENT_ID === '') {
+    log_auth('Missing GOOGLE_CLIENT_ID configuration');
+    json_response(500, ['success' => false, 'message' => 'Server configuration error']);
 }
 
 /* ============================================================================
  * REQUEST VALIDATION
  * ========================================================================== */
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    http_response_code(405);
-    log_auth('Invalid request method');
-    echo json_encode(['success' => false, 'message' => 'Invalid request']);
-    exit;
+    log_auth('Invalid request method', ['method' => $_SERVER['REQUEST_METHOD'] ?? 'unknown']);
+    json_response(405, ['success' => false, 'message' => 'Invalid request']);
 }
 
 if (empty($_POST['credential'])) {
-    http_response_code(400);
     log_auth('Missing credential');
-    echo json_encode(['success' => false, 'message' => 'Missing credential']);
-    exit;
+    json_response(400, ['success' => false, 'message' => 'Missing credential']);
 }
 
 $credential = $_POST['credential'];
@@ -66,35 +80,50 @@ curl_setopt_array($ch, [
 ]);
 
 $response = curl_exec($ch);
+$httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+$curlError = curl_error($ch);
 curl_close($ch);
 
-if (!$response) {
-    http_response_code(500);
-    log_auth('Google verification failed');
-    echo json_encode(['success' => false, 'message' => 'Google verification failed']);
-    exit;
+if ($response === false || $httpCode !== 200) {
+    log_auth('Google verification failed', ['http_code' => $httpCode, 'curl_error' => $curlError]);
+    json_response(500, ['success' => false, 'message' => 'Google verification failed']);
 }
 
 $token = json_decode($response, true);
-log_auth('Google token verified', $token);
+
+if (!is_array($token) || isset($token['error'])) {
+    log_auth('Invalid token response from Google');
+    json_response(401, ['success' => false, 'message' => 'Invalid Google token']);
+}
 
 /* ============================================================================
  * TOKEN CHECK
  * ========================================================================== */
+$issuer = $token['iss'] ?? '';
+$validIssuer = in_array($issuer, ['accounts.google.com', 'https://accounts.google.com'], true);
+$emailVerifiedRaw = $token['email_verified'] ?? '';
+$isEmailVerified = (
+    $emailVerifiedRaw === true ||
+    $emailVerifiedRaw === 'true' ||
+    $emailVerifiedRaw === 1 ||
+    $emailVerifiedRaw === '1'
+);
+$expiresAt = isset($token['exp']) ? (int) $token['exp'] : 0;
+
 if (
     empty($token['aud']) ||
     $token['aud'] !== $GOOGLE_CLIENT_ID ||
     empty($token['email']) ||
-    ($token['email_verified'] ?? '') !== 'true'
+    !$isEmailVerified ||
+    !$validIssuer ||
+    $expiresAt < time()
 ) {
-    http_response_code(401);
-    log_auth('Invalid Google token');
-    echo json_encode(['success' => false, 'message' => 'Invalid Google token']);
-    exit;
+    log_auth('Invalid Google token', ['iss' => $issuer, 'exp' => $expiresAt]);
+    json_response(401, ['success' => false, 'message' => 'Invalid Google token']);
 }
 
 $email = strtolower(trim($token['email']));
-log_auth('Email verified', $email);
+log_auth('Email verified', ['email_sha1' => sha1($email)]);
 
 /* ============================================================================
  * DATABASE
@@ -107,10 +136,8 @@ try {
         [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]
     );
 } catch (Exception $e) {
-    http_response_code(500);
-    log_auth('DB connection error', $e->getMessage());
-    echo json_encode(['success' => false, 'message' => 'Database error']);
-    exit;
+    log_auth('DB connection error', ['error' => $e->getMessage()]);
+    json_response(500, ['success' => false, 'message' => 'Database error']);
 }
 
 /* ============================================================================
@@ -126,25 +153,23 @@ $stmt->execute(['email' => $email]);
 $account = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if (!$account) {
-    http_response_code(403);
-    log_auth('Account not found', $email);
-    echo json_encode(['success' => false, 'message' => 'Account not authorized']);
-    exit;
+    log_auth('Account not found', ['email_sha1' => sha1($email)]);
+    json_response(403, ['success' => false, 'message' => 'Account not authorized']);
 }
 
 /* ============================================================================
  * SESSION
  * ========================================================================== */
+session_regenerate_id(true);
 $_SESSION['logged_in']  = true;
 $_SESSION['accountid']  = $account['accountid'];
 $_SESSION['fullname']   = $account['acc_fullname'];
 $_SESSION['email']      = $account['email'];
 $_SESSION['role']       = $account['role'];
-// Scope bindings (critical for role-based access)
 $_SESSION['campus_id']  = $account['campus_id'];
 $_SESSION['program_id'] = $account['program_id'];
 
-log_auth('Session created', $_SESSION);
+log_auth('Session created', ['accountid' => (int) $account['accountid'], 'role' => $account['role']]);
 
 /* ============================================================================
  * ROLE ROUTING (RETURN JSON)
@@ -161,21 +186,17 @@ switch ($account['role']) {
     case 'monitoring':
         $redirect = BASE_URL . '/monitoring/index.php';
         break;
+
     default:
-        http_response_code(403);
-        log_auth('Invalid role', $account['role']);
-        echo json_encode([
+        log_auth('Invalid role', ['role' => $account['role']]);
+        json_response(403, [
             'success' => false,
             'message' => 'Invalid role assignment'
         ]);
-        exit;
 }
 
-
-log_auth('Redirecting to', $redirect);
-
-echo json_encode([
+log_auth('Redirecting to role landing page', ['role' => $account['role']]);
+json_response(200, [
     'success' => true,
     'redirect' => $redirect
 ]);
-exit;

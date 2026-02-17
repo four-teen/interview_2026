@@ -4,8 +4,9 @@ session_start();
 
 header('Content-Type: application/json');
 
-// ✅ correct session key
-if (!isset($_SESSION['accountid'])) {
+
+if (!isset($_SESSION['logged_in']) || ($_SESSION['role'] ?? '') !== 'administrator' || !isset($_SESSION['accountid'])) {
+    http_response_code(403);
     echo json_encode([
         'success' => false,
         'message' => 'Unauthorized'

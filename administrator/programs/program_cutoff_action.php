@@ -2,6 +2,11 @@
 require_once '../../config/db.php';
 session_start();
 
+if (!isset($_SESSION['logged_in']) || ($_SESSION['role'] ?? '') !== 'administrator') {
+    header('Location: ../../index.php');
+    exit;
+}
+
 if (isset($_POST['save_cutoff'])) {
 
     $programId   = (int) $_POST['program_id'];

@@ -1,7 +1,14 @@
 <?php
 require_once '../../config/db.php';
+session_start();
 
 header('Content-Type: application/json');
+
+if (!isset($_SESSION['logged_in']) || ($_SESSION['role'] ?? '') !== 'administrator') {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'message' => 'Unauthorized']);
+    exit;
+}
 
 if (!isset($_FILES['csv_file'], $_POST['batch_id'])) {
     http_response_code(400);

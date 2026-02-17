@@ -2,6 +2,15 @@
 require_once '../../config/db.php';
 session_start();
 
+if (!isset($_SESSION['logged_in']) || ($_SESSION['role'] ?? '') !== 'administrator') {
+    header('Location: ../../index.php');
+    exit;
+}
+
+$rawReferer = str_replace(["\r", "\n"], '', $_SERVER['HTTP_REFERER'] ?? '');
+$refererPath = parse_url($rawReferer, PHP_URL_PATH) ?: '';
+$safeRedirect = (strpos($refererPath, '/administrator/programs/') !== false) ? $rawReferer : 'index.php';
+
 /* ADD PROGRAM */
 if (isset($_POST['add_program'])) {
 
@@ -40,6 +49,6 @@ if (isset($_POST['toggle_status'])) {
     $stmt->bind_param("si", $new_status, $program_id);
     $stmt->execute();
 
-    header("Location: " . $_SERVER['HTTP_REFERER']);
+    header("Location: " . $safeRedirect);
     exit;
 }

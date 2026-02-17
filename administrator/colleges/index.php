@@ -2,6 +2,11 @@
 require_once '../../config/db.php';
 session_start();
 
+if (!isset($_SESSION['logged_in']) || ($_SESSION['role'] ?? '') !== 'administrator') {
+    header('Location: ../../index.php');
+    exit;
+}
+
 /**
  * ============================================================
  * COLLEGES MANAGEMENT

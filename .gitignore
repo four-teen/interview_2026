@@ -6,6 +6,11 @@
 # Database config
 config/db.php
 
+# Environment files
+.env
+.env.*
+!.env.example
+
 # Thumbnails
 ._*
 Thumbs.db

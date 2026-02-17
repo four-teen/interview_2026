@@ -6,10 +6,17 @@
 
 require_once '../../config/db.php';
 require_once '../../vendor/autoload.php';
+session_start();
 
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
 header('Content-Type: application/json');
+
+if (!isset($_SESSION['logged_in']) || ($_SESSION['role'] ?? '') !== 'administrator') {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'message' => 'Unauthorized']);
+    exit;
+}
 
 $batch_id = $_POST['batch_id'] ?? '';
 

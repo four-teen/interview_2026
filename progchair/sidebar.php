@@ -70,7 +70,7 @@
 
               <!-- Dashboard -->
               <li class="menu-item active">
-                <a href="../index.php" class="menu-link">
+                <a href="index.php" class="menu-link">
                   <i class="menu-icon tf-icons bx bx-home-circle"></i>
                   <div>Dashboard</div>
                 </a>

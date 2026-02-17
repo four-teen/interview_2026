@@ -7,10 +7,11 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'progchair') {
     exit;
 }
 
-$accountId = $_SESSION['accountid'];
+$accountId = (int) $_SESSION['accountid'];
+$programId = (int) ($_SESSION['program_id'] ?? 0);
 $transferId = isset($_GET['transfer_id']) ? (int)$_GET['transfer_id'] : 0;
 
-if ($transferId <= 0) {
+if ($transferId <= 0 || $programId <= 0) {
     header('Location: pending_transfers.php');
     exit;
 }
@@ -21,11 +22,12 @@ SELECT interview_id, to_program_id
 FROM tbl_student_transfer_history
 WHERE transfer_id = ?
 AND status = 'pending'
+AND to_program_id = ?
 LIMIT 1
 ";
 
 $stmt = $conn->prepare($sql);
-$stmt->bind_param("i", $transferId);
+$stmt->bind_param("ii", $transferId, $programId);
 $stmt->execute();
 $transfer = $stmt->get_result()->fetch_assoc();
 
@@ -37,14 +39,15 @@ if (!$transfer) {
 /* UPDATE INTERVIEW */
 $updateInterview = "
 UPDATE tbl_student_interview
-SET first_choice = ?, program_id = ?
+SET first_choice = ?, program_id = ?, program_chair_id = ?
 WHERE interview_id = ?
 ";
 
 $stmt = $conn->prepare($updateInterview);
-$stmt->bind_param("iii",
+$stmt->bind_param("iiii",
     $transfer['to_program_id'],
     $transfer['to_program_id'],
+    $accountId,
     $transfer['interview_id']
 );
 $stmt->execute();

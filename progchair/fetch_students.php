@@ -21,6 +21,7 @@ if (
     $_SESSION['role'] !== 'progchair' ||
     empty($_SESSION['program_id'])
 ) {
+    http_response_code(403);
     echo json_encode([
         'success' => false,
         'message' => 'Unauthorized'
@@ -44,10 +45,11 @@ $cutoffSql = "
 
 $stmtCutoff = $conn->prepare($cutoffSql);
 if (!$stmtCutoff) {
+    error_log('SQL prepare failed (STEP 1): ' . $conn->error);
+    http_response_code(500);
     echo json_encode([
         'success' => false,
-        'message' => 'SQL prepare failed (STEP 1)',
-        'error'   => $conn->error
+        'message' => 'Failed to load students'
     ]);
     exit;
 }
@@ -133,10 +135,11 @@ $searchLike = '%' . $search . '%';
 
 $stmtCount = $conn->prepare($countSql);
 if (!$stmtCount) {
+    error_log('SQL prepare failed (STEP 5): ' . $conn->error);
+    http_response_code(500);
     echo json_encode([
         'success' => false,
-        'message' => 'SQL prepare failed (STEP 5)',
-        'error'   => $conn->error
+        'message' => 'Failed to load students'
     ]);
     exit;
 }
@@ -172,7 +175,14 @@ $sql = "
         -- TRANSFER FIELDS
         th.transfer_id,
         th.to_program_id,
-        th.status AS transfer_status
+        th.status AS transfer_status,
+        EXISTS (
+            SELECT 1
+            FROM tbl_student_transfer_history th_any
+            WHERE th_any.interview_id = si.interview_id
+              AND th_any.status = 'pending'
+            LIMIT 1
+        ) AS has_pending_transfer
 
     FROM tbl_placement_results pr
 
@@ -182,6 +192,7 @@ $sql = "
     LEFT JOIN tbl_student_transfer_history th
         ON si.interview_id = th.interview_id
         AND th.status = 'pending'
+        AND th.to_program_id = ?
 
     WHERE pr.upload_batch_id = ?
       AND pr.sat_score >= ?
@@ -198,15 +209,17 @@ $sql = "
 
 $stmt = $conn->prepare($sql);
 if (!$stmt) {
+    error_log('SQL prepare failed (STEP 6): ' . $conn->error);
+    http_response_code(500);
     echo json_encode([
         'success' => false,
-        'message' => 'SQL prepare failed (STEP 6)',
-        'error'   => $conn->error
+        'message' => 'Failed to load students'
     ]);
     exit;
 }
 $stmt->bind_param(
-    "sissii",
+    "isissii",
+    $assignedProgramId,
     $activeBatchId,
     $programCutoff,
     $searchLike,
@@ -242,6 +255,9 @@ while ($row = $result->fetch_assoc()) {
         !empty($row['transfer_id']) &&
         $row['transfer_status'] === 'pending'
     );
+
+    // Flag: any pending transfer exists for this interview (for owner UI state)
+    $row['has_pending_transfer'] = ((int) ($row['has_pending_transfer'] ?? 0) === 1);
 
     $students[] = $row;
 }

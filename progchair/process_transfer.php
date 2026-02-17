@@ -22,6 +22,7 @@ if (
 }
 
 $accountId = (int) $_SESSION['accountid'];
+$assignedProgramId = (int) ($_SESSION['program_id'] ?? 0);
 
 $interviewId   = isset($_POST['interview_id'])   ? (int) $_POST['interview_id']   : 0;
 $fromProgramId = isset($_POST['from_program_id']) ? (int) $_POST['from_program_id'] : 0;
@@ -30,6 +31,39 @@ $remarks       = isset($_POST['remarks']) ? trim($_POST['remarks']) : '';
 
 if ($interviewId <= 0 || $toProgramId <= 0) {
     header('Location: index.php?msg=invalid_request');
+    exit;
+}
+
+/* ======================================================
+   VERIFY OWNERSHIP (ONLY ENCODER/OWNER CAN TRANSFER)
+====================================================== */
+$ownerSql = "
+SELECT program_chair_id, program_id
+FROM tbl_student_interview
+WHERE interview_id = ?
+LIMIT 1
+";
+
+$stmtOwner = $conn->prepare($ownerSql);
+if (!$stmtOwner) {
+    error_log("SQL Error (ownerSql): " . $conn->error);
+    header('Location: index.php?msg=server_error');
+    exit;
+}
+
+$stmtOwner->bind_param("i", $interviewId);
+$stmtOwner->execute();
+$ownerRow = $stmtOwner->get_result()->fetch_assoc();
+
+if (!$ownerRow || (int)$ownerRow['program_chair_id'] !== $accountId) {
+    header('Location: index.php?msg=not_owner');
+    exit;
+}
+
+$fromProgramId = (int)$ownerRow['program_id'];
+
+if ($assignedProgramId > 0 && $toProgramId === $assignedProgramId) {
+    header('Location: index.php?msg=same_program');
     exit;
 }
 
@@ -54,7 +88,9 @@ LIMIT 1
 
 $stmtPending = $conn->prepare($pendingSql);
 if (!$stmtPending) {
-    die("SQL Error (pendingSql): " . $conn->error);
+    error_log("SQL Error (pendingSql): " . $conn->error);
+    header('Location: index.php?msg=server_error');
+    exit;
 }
 
 $stmtPending->bind_param("i", $interviewId);
@@ -79,7 +115,9 @@ VALUES (?, ?, ?, ?, ?)
 
 $stmtInsert = $conn->prepare($insertSql);
 if (!$stmtInsert) {
-    die("SQL Error (insertSql): " . $conn->error);
+    error_log("SQL Error (insertSql): " . $conn->error);
+    header('Location: index.php?msg=server_error');
+    exit;
 }
 
 $stmtInsert->bind_param(

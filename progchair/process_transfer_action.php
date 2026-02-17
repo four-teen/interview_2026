@@ -20,7 +20,9 @@ error_reporting(0);
 ============================================================ */
 if (
     !isset($_SESSION['logged_in']) ||
-    $_SESSION['role'] !== 'progchair'
+    $_SESSION['role'] !== 'progchair' ||
+    empty($_SESSION['accountid']) ||
+    empty($_SESSION['program_id'])
 ) {
     echo json_encode([
         'success' => false,
@@ -30,6 +32,7 @@ if (
 }
 
 $accountId = (int) $_SESSION['accountid'];
+$programId = (int) $_SESSION['program_id'];
 
 $transferId = isset($_POST['transfer_id']) ? (int) $_POST['transfer_id'] : 0;
 $action     = isset($_POST['action']) ? $_POST['action'] : '';
@@ -55,9 +58,10 @@ $sql = "
 $stmt = $conn->prepare($sql);
 
 if (!$stmt) {
+    error_log('Prepare failed in process_transfer_action (load transfer): ' . $conn->error);
     echo json_encode([
         'success' => false,
-        'message' => 'Prepare failed: ' . $conn->error
+        'message' => 'Server error'
     ]);
     exit;
 }
@@ -66,9 +70,10 @@ if (!$stmt) {
 $stmt->bind_param("i", $transferId);
 
 if (!$stmt->execute()) {
+    error_log('Execute failed in process_transfer_action (load transfer): ' . $stmt->error);
     echo json_encode([
         'success' => false,
-        'message' => 'Execute failed: ' . $stmt->error
+        'message' => 'Server error'
     ]);
     exit;
 }
@@ -89,6 +94,14 @@ if (!$transfer || $transfer['status'] !== 'pending') {
 
 $interviewId = (int) $transfer['interview_id'];
 $toProgramId = (int) $transfer['to_program_id'];
+
+if ($toProgramId !== $programId) {
+    echo json_encode([
+        'success' => false,
+        'message' => 'You are not allowed to process this transfer'
+    ]);
+    exit;
+}
 
 
 /* ============================================================
@@ -191,11 +204,12 @@ exit;
 } catch (Exception $e) {
 
     $conn->rollback();
+    error_log('Transfer action failed: ' . $e->getMessage());
 
 ob_clean();
 echo json_encode([
     'success' => false,
-    'message' => $e->getMessage()
+    'message' => 'Failed to process transfer action'
 ]);
 exit;
 

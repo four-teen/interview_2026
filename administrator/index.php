@@ -1,15 +1,16 @@
-<?php 
-  require_once '../config/db.php';
-  session_start();
+<?php
+require_once '../config/db.php';
+session_start();
 
-  // i remote it and it works, but i will just leave it here for now
-
-  // header('Content-Type: application/json');
+if (!isset($_SESSION['logged_in']) || ($_SESSION['role'] ?? '') !== 'administrator') {
+    header('Location: ../index.php');
+    exit;
+}
 
 /**
  * ============================================================================
  * root_folder/administrator/index.php
- * PHASE 1 – DASHBOARD GRAPH DATA
+ * PHASE 1 - DASHBOARD GRAPH DATA
  * Qualitative Distribution of Placement Results
  * ============================================================================
  */
@@ -26,7 +27,7 @@ $activeBatchId = null;
 
 /**
  * ============================================================================
- * PHASE 1.5 – CAMPUS LIST (RIGHT SIDE CARDS)
+ * PHASE 1.5 - CAMPUS LIST (RIGHT SIDE CARDS)
  * ============================================================================
  */
 
@@ -53,7 +54,7 @@ if ($batchResult && $batchResult->num_rows > 0) {
     $activeBatchId = $batchResult->fetch_assoc()['upload_batch_id'];
 }
 
-// STEP 2: Initialize qualitative buckets (ENSURE ORDER 1–6)
+// STEP 2: Initialize qualitative buckets (ENSURE ORDER 1-6)
 $qualitativeLabels = [
     1 => 'Outstanding',
     2 => 'Above Average',
@@ -190,7 +191,7 @@ if ($activeBatchId) {
           <div class="col-sm-7">
             <div class="card-body">
               <h5 class="card-title text-primary">
-                Congratulations John! 🎉
+                Congratulations John!
               </h5>
               <p class="mb-4">
                 You have done <span class="fw-bold">72%</span> more sales today.
@@ -248,7 +249,7 @@ if ($activeBatchId) {
                 </span>
 
                 <h3 class="card-title mb-1">
-                  —
+                  -
                 </h3>
 
                 <small class="text-muted">

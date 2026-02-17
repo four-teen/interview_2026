@@ -19,6 +19,7 @@ if (
     $_SESSION['role'] !== 'progchair' ||
     empty($_SESSION['accountid'])
 ) {
+    http_response_code(403);
     echo json_encode([
         'success' => false,
         'message' => 'Unauthorized'
@@ -29,6 +30,15 @@ if (
 $programChairId = (int) $_SESSION['accountid'];
 $campusId       = (int) $_SESSION['campus_id'];
 $programId      = (int) $_SESSION['program_id'];
+
+if ($programId <= 0) {
+    http_response_code(400);
+    echo json_encode([
+        'success' => false,
+        'message' => 'Account program assignment is missing.'
+    ]);
+    exit;
+}
 
 
 // ======================================================
@@ -41,7 +51,7 @@ $examineeNumber     = trim($_POST['examinee_number'] ?? '');
 $classification     = trim($_POST['classification'] ?? '');
 $etgClassId         = $_POST['etg_class_id'] ?? null;
 $mobileNumber       = trim($_POST['mobile_number'] ?? '');
-$firstChoice        = (int) ($_POST['first_choice'] ?? 0);
+$firstChoice        = $programId; // Force first choice to account's assigned program
 $secondChoice       = (int) ($_POST['second_choice'] ?? 0);
 $thirdChoice        = (int) ($_POST['third_choice'] ?? 0);
 $shsTrackId         = (int) ($_POST['shs_track_id'] ?? 0);
@@ -53,7 +63,6 @@ if (
     empty($examineeNumber) ||
     empty($classification) ||
     empty($mobileNumber) ||
-    empty($firstChoice) ||
     empty($secondChoice) ||
     empty($thirdChoice) ||
     empty($shsTrackId)
@@ -102,10 +111,11 @@ if ($interviewId === 0) {
     $stmt = $conn->prepare($sql);
 
     if (!$stmt) {
+        error_log('SQL Prepare Failed (insert interview): ' . $conn->error);
+        http_response_code(500);
         echo json_encode([
             'success' => false,
-            'message' => 'SQL Prepare Failed',
-            'error' => $conn->error
+            'message' => 'Failed to save interview'
         ]);
         exit;
     }
@@ -127,15 +137,18 @@ if ($interviewId === 0) {
     );
 
     if ($stmt->execute()) {
+        $newInterviewId = (int) $conn->insert_id;
         echo json_encode([
             'success' => true,
-            'mode'    => 'insert'
+            'mode'    => 'insert',
+            'interview_id' => $newInterviewId
         ]);
     } else {
+        error_log('Insert interview failed: ' . $stmt->error);
+        http_response_code(500);
         echo json_encode([
             'success' => false,
-            'message' => 'Insert failed',
-            'error'   => $stmt->error
+            'message' => 'Failed to save interview'
         ]);
     }
 
@@ -187,6 +200,16 @@ $updateSql = "
 
 $updateStmt = $conn->prepare($updateSql);
 
+if (!$updateStmt) {
+    error_log('SQL Prepare Failed (update interview): ' . $conn->error);
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'message' => 'Failed to update interview'
+    ]);
+    exit;
+}
+
 $updateStmt->bind_param(
     "sissiiii",
     $classification,
@@ -206,10 +229,11 @@ if ($updateStmt->execute()) {
         'interview_id' => $interviewId
     ]);
 } else {
+    error_log('Update interview failed: ' . $updateStmt->error);
+    http_response_code(500);
     echo json_encode([
         'success' => false,
-        'message' => 'Update failed',
-        'error'   => $updateStmt->error
+        'message' => 'Failed to update interview'
     ]);
 }
 
