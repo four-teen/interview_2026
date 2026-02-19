@@ -472,28 +472,14 @@ if ($activeBatchId) {
 <div class="card mb-4">
   <div class="card-body">
 
-    <!-- SEARCH -->
-<!-- SEARCH + QUALIFIED COUNT -->
+    <!-- QUALIFIED COUNT -->
 <div class="mb-4 d-flex justify-content-between align-items-center">
-
-  <div class="input-group w-75">
-    <span class="input-group-text">
-      <i class="bx bx-search"></i>
-    </span>
-    <input
-      type="text"
-      id="studentSearch"
-      class="form-control"
-      placeholder="Search by name or examinee number..."
-    />
-  </div>
-
+  <small class="text-muted">Use the header search bar to find students.</small>
   <div class="ms-3">
     <span class="badge bg-label-success fs-6" id="qualifiedCountBadge">
       0 Qualified
     </span>
   </div>
-
 </div>
 
 
@@ -986,7 +972,9 @@ if ($activeBatchId) {
 document.addEventListener("DOMContentLoaded", function () {
 
   const container = document.getElementById("studentContainer");
-  const searchInput = document.getElementById("studentSearch");
+  const navbarSearchInput = document.querySelector('#layout-navbar input[aria-label="Search..."]');
+  const legacySearchInput = document.getElementById("studentSearch");
+  const searchInput = navbarSearchInput || legacySearchInput;
   const loadingIndicator = document.getElementById("loadingIndicator");
 
   let page = 1;
@@ -994,6 +982,11 @@ document.addEventListener("DOMContentLoaded", function () {
   let hasMore = true;
   let currentSearch = '';
   const assignedProgramId = <?= (int) $assignedProgramId; ?>;
+
+  if (navbarSearchInput) {
+    navbarSearchInput.placeholder = 'Search by name or examinee number...';
+    navbarSearchInput.setAttribute('aria-label', 'Search by name or examinee number...');
+  }
 
   function initProgramChoiceSelects() {
     if (typeof $ === 'undefined' || !$.fn || !$.fn.select2) return;
@@ -1288,16 +1281,18 @@ window.loadStudents = loadStudents;
 
   // Debounced Search
   let searchTimeout;
-  searchInput.addEventListener("input", function () {
-    clearTimeout(searchTimeout);
+  if (searchInput) {
+    searchInput.addEventListener("input", function () {
+      clearTimeout(searchTimeout);
 
-    searchTimeout = setTimeout(() => {
-      currentSearch = searchInput.value.trim();
-      page = 1;
-      hasMore = true;
-      loadStudents(true);
-    }, 400);
-  });
+      searchTimeout = setTimeout(() => {
+        currentSearch = searchInput.value.trim();
+        page = 1;
+        hasMore = true;
+        loadStudents(true);
+      }, 400);
+    });
+  }
 
   // Initial Load
   loadStudents();

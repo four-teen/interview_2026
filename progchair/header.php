@@ -15,12 +15,13 @@
 
         <div class="navbar-nav-right d-flex align-items-center" id="navbar-collapse">
           <!-- Search -->
-          <div class="navbar-nav align-items-center">
-            <div class="nav-item d-flex align-items-center">
+          <div class="navbar-nav align-items-center flex-grow-1 me-3">
+            <div class="nav-item d-flex align-items-center w-100">
               <i class="bx bx-search fs-4 lh-0"></i>
               <input
                 type="text"
-                class="form-control border-0 shadow-none"
+                class="form-control border-0 shadow-none w-100"
+                style="max-width: 42rem;"
                 placeholder="Search..."
                 aria-label="Search..."
               />
