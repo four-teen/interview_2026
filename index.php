@@ -52,6 +52,24 @@
       href="assets/vendor/css/pages/page-auth.css"
     />
 
+    <style>
+      .google-login-slot {
+        width: 100%;
+      }
+
+      .google-login-slot .g_id_signin,
+      .google-login-slot .g_id_signin > div,
+      .google-login-slot iframe {
+        width: 100% !important;
+        max-width: 100% !important;
+      }
+
+      .google-login-slot .g_id_signin > div,
+      .google-login-slot iframe {
+        display: block;
+        margin: 0 auto;
+      }
+    </style>
     <!-- Helpers -->
     <script src="assets/vendor/js/helpers.js"></script>
     <script src="assets/js/config.js"></script>
@@ -127,7 +145,7 @@
                   data-auto_prompt="false"
                 ></div>
 
-                <div class="d-grid">
+                <div class="d-grid google-login-slot">
                   <div
                     class="g_id_signin"
                     data-type="standard"
@@ -136,7 +154,6 @@
                     data-text="continue_with"
                     data-shape="rectangular"
                     data-logo_alignment="left"
-                    data-width="100%"
                   ></div>
                 </div>
 
