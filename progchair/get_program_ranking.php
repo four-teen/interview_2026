@@ -82,16 +82,31 @@ $rankingSql = "
         pr.sat_score,
         si.final_score,
         si.interview_datetime,
-        a.acc_fullname AS encoded_by
+        a.acc_fullname AS encoded_by,
+        CASE
+            WHEN UPPER(COALESCE(si.classification, 'REGULAR')) = 'ETG'
+                THEN CONCAT('ETG-', COALESCE(NULLIF(TRIM(ec.class_desc), ''), 'UNSPECIFIED'))
+            ELSE 'REGULAR'
+        END AS classification_label,
+        CASE
+            WHEN UPPER(COALESCE(si.classification, 'REGULAR')) = 'ETG' THEN 1
+            ELSE 0
+        END AS classification_group
     FROM tbl_student_interview si
     INNER JOIN tbl_placement_results pr
         ON si.placement_result_id = pr.id
     LEFT JOIN tblaccount a
         ON si.program_chair_id = a.accountid
+    LEFT JOIN tbl_etg_class ec
+        ON si.etg_class_id = ec.etgclassid
     WHERE si.first_choice = ?
       AND si.status = 'active'
       AND si.final_score IS NOT NULL
-    ORDER BY si.final_score DESC, pr.sat_score DESC, pr.full_name ASC
+    ORDER BY
+        classification_group ASC,
+        si.final_score DESC,
+        pr.sat_score DESC,
+        pr.full_name ASC
 ";
 
 $stmtRanking = $conn->prepare($rankingSql);
@@ -115,6 +130,7 @@ while ($row = $resultRanking->fetch_assoc()) {
         'interview_id'      => (int) $row['interview_id'],
         'examinee_number'   => $row['examinee_number'],
         'full_name'         => $row['full_name'],
+        'classification'    => $row['classification_label'],
         'sat_score'         => (int) $row['sat_score'],
         'final_score'       => number_format((float) $row['final_score'], 2),
         'interview_datetime'=> $row['interview_datetime'],

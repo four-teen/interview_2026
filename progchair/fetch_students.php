@@ -96,6 +96,32 @@ if (!$batchResult || $batchResult->num_rows === 0) {
 
 $activeBatchId = $batchResult->fetch_assoc()['upload_batch_id'];
 
+// ======================================================
+// STEP 2B – BATCH-LEVEL TOTALS (for dashboard badge clarity)
+// ======================================================
+
+$uploadedTotal = 0;
+$qualifiedByCutoffTotal = 0;
+
+$batchTotalsSql = "
+    SELECT
+        COUNT(*) AS uploaded_total,
+        SUM(CASE WHEN sat_score >= ? THEN 1 ELSE 0 END) AS qualified_total
+    FROM tbl_placement_results
+    WHERE upload_batch_id = ?
+";
+
+$stmtBatchTotals = $conn->prepare($batchTotalsSql);
+if ($stmtBatchTotals) {
+    $stmtBatchTotals->bind_param("is", $programCutoff, $activeBatchId);
+    $stmtBatchTotals->execute();
+    $batchTotalsRow = $stmtBatchTotals->get_result()->fetch_assoc();
+    if ($batchTotalsRow) {
+        $uploadedTotal = (int) ($batchTotalsRow['uploaded_total'] ?? 0);
+        $qualifiedByCutoffTotal = (int) ($batchTotalsRow['qualified_total'] ?? 0);
+    }
+}
+
 
 // ======================================================
 // STEP 3 – PAGINATION SETTINGS
@@ -111,8 +137,77 @@ $offset = ($page - 1) * $limit;
 // STEP 4 – SEARCH FILTER
 // ======================================================
 
-$search = isset($_GET['search']) ? trim($_GET['search']) : '';
-$searchLike = '%' . $search . '%';
+$search = isset($_GET['search']) ? trim((string) $_GET['search']) : '';
+$searchFilterSql = '';
+$searchParam = '';
+
+if ($search !== '') {
+    if (preg_match('/^[0-9]+$/', $search)) {
+        // Fast path for examinee lookup (uses prefix index scan).
+        $searchFilterSql = " AND pr.examinee_number LIKE ? ";
+        $searchParam = preg_replace('/\s+/', '', $search) . '%';
+    } else {
+        // Names are stored uppercase during intake.
+        $searchFilterSql = " AND pr.full_name LIKE ? ";
+        $searchParam = strtoupper($search) . '%';
+    }
+}
+
+$accountId = (int) ($_SESSION['accountid'] ?? 0);
+$ownerAction = strtolower(trim((string) ($_GET['owner_action'] ?? '')));
+
+$allowedOwnerActions = ['pending', 'unscored', 'needs_review'];
+if (!in_array($ownerAction, $allowedOwnerActions, true)) {
+    $ownerAction = '';
+}
+
+$ownerActionWhere = '';
+if ($ownerAction !== '') {
+    switch ($ownerAction) {
+        case 'pending':
+            if ($assignedProgramId > 0) {
+                $ownerActionWhere = "
+                  AND si.status = 'active'
+                  AND EXISTS (
+                        SELECT 1
+                        FROM tbl_student_transfer_history th_owner
+                        WHERE th_owner.interview_id = si.interview_id
+                          AND th_owner.status = 'pending'
+                          AND th_owner.to_program_id = {$assignedProgramId}
+                        LIMIT 1
+                  )
+                ";
+            }
+            break;
+
+        case 'unscored':
+            if ($accountId > 0) {
+                $ownerActionWhere = "
+                  AND si.program_chair_id = {$accountId}
+                  AND si.status = 'active'
+                  AND si.final_score IS NULL
+                ";
+            }
+            break;
+
+        case 'needs_review':
+            if ($accountId > 0) {
+                $ownerActionWhere = "
+                  AND si.program_chair_id = {$accountId}
+                  AND si.status = 'active'
+                  AND si.final_score IS NOT NULL
+                  AND NOT EXISTS (
+                        SELECT 1
+                        FROM tbl_student_transfer_history th_owner
+                        WHERE th_owner.interview_id = si.interview_id
+                          AND th_owner.status = 'pending'
+                        LIMIT 1
+                  )
+                ";
+            }
+            break;
+    }
+}
 
 
 // ======================================================
@@ -126,10 +221,8 @@ $searchLike = '%' . $search . '%';
             ON pr.examinee_number = si.examinee_number
         WHERE pr.upload_batch_id = ?
           AND pr.sat_score >= ?
-          AND (
-                pr.full_name LIKE ?
-                OR pr.examinee_number LIKE ?
-              )
+          {$searchFilterSql}
+          {$ownerActionWhere}
     ";
 
 
@@ -144,13 +237,20 @@ if (!$stmtCount) {
     exit;
 }
 
-$stmtCount->bind_param(
-    "siss",
-    $activeBatchId,
-    $programCutoff,
-    $searchLike,
-    $searchLike
-);
+if ($searchFilterSql !== '') {
+    $stmtCount->bind_param(
+        "sis",
+        $activeBatchId,
+        $programCutoff,
+        $searchParam
+    );
+} else {
+    $stmtCount->bind_param(
+        "si",
+        $activeBatchId,
+        $programCutoff
+    );
+}
 
 $stmtCount->execute();
 $countResult = $stmtCount->get_result();
@@ -196,10 +296,8 @@ $sql = "
 
     WHERE pr.upload_batch_id = ?
       AND pr.sat_score >= ?
-      AND (
-            pr.full_name LIKE ?
-            OR pr.examinee_number LIKE ?
-          )
+      {$searchFilterSql}
+      {$ownerActionWhere}
 
     ORDER BY pr.sat_score DESC
     LIMIT ? OFFSET ?
@@ -217,16 +315,26 @@ if (!$stmt) {
     ]);
     exit;
 }
-$stmt->bind_param(
-    "isissii",
-    $assignedProgramId,
-    $activeBatchId,
-    $programCutoff,
-    $searchLike,
-    $searchLike,
-    $limit,
-    $offset
-);
+if ($searchFilterSql !== '') {
+    $stmt->bind_param(
+        "isisii",
+        $assignedProgramId,
+        $activeBatchId,
+        $programCutoff,
+        $searchParam,
+        $limit,
+        $offset
+    );
+} else {
+    $stmt->bind_param(
+        "isiii",
+        $assignedProgramId,
+        $activeBatchId,
+        $programCutoff,
+        $limit,
+        $offset
+    );
+}
 
 $stmt->execute();
 $result = $stmt->get_result();
@@ -273,7 +381,9 @@ while ($row = $result->fetch_assoc()) {
 echo json_encode([
     'success' => true,
     'data' => $students,
-    'total' => $totalQualified
+    'total' => $totalQualified,
+    'uploaded_total' => $uploadedTotal,
+    'qualified_total' => $qualifiedByCutoffTotal
 ]);
 
 exit;

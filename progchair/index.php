@@ -601,16 +601,91 @@ if ($activeBatchId) {
           No ranked students found for this program.
         </div>
 
-        <div class="table-responsive d-none" id="programRankingTableWrap">
-          <table class="table table-bordered table-striped align-middle mb-0" id="programRankingTable">
+        <div class="d-none" id="programRankingTableWrap">
+          <div class="mb-4">
+            <h6 class="mb-2 text-uppercase fw-bold text-primary">REGULAR List</h6>
+            <div class="table-responsive">
+              <table class="table table-bordered table-striped align-middle mb-0" id="programRankingRegularTable">
+                <thead class="table-light">
+                  <tr>
+                    <th style="width: 80px;">Rank</th>
+                    <th style="width: 150px;">Examinee #</th>
+                    <th>Student Name</th>
+                    <th style="width: 170px;">Classification</th>
+                    <th style="width: 120px;">SAT</th>
+                    <th style="width: 130px;">Final Score</th>
+                    <th>Encoded By</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div>
+            <h6 class="mb-2 text-uppercase fw-bold text-success">ETG List</h6>
+            <div class="table-responsive">
+              <table class="table table-bordered table-striped align-middle mb-0" id="programRankingEtgTable">
+                <thead class="table-light">
+                  <tr>
+                    <th style="width: 80px;">Rank</th>
+                    <th style="width: 150px;">Examinee #</th>
+                    <th>Student Name</th>
+                    <th style="width: 170px;">Classification</th>
+                    <th style="width: 120px;">SAT</th>
+                    <th style="width: 130px;">Final Score</th>
+                    <th>Encoded By</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========================================================= -->
+<!-- OWNER ACTION DETAILS MODAL -->
+<!-- ========================================================= -->
+<div class="modal fade" id="ownerActionModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div>
+          <h5 class="modal-title mb-1" id="ownerActionTitle">Action Details</h5>
+          <small class="text-muted" id="ownerActionMeta"></small>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+
+      <div class="modal-body">
+        <div id="ownerActionLoading" class="text-center py-4 d-none">
+          <div class="spinner-border text-primary" role="status"></div>
+          <div class="small text-muted mt-2">Loading details...</div>
+        </div>
+
+        <div id="ownerActionEmpty" class="alert alert-warning d-none mb-0">
+          No records found.
+        </div>
+
+        <div class="table-responsive d-none" id="ownerActionTableWrap">
+          <table class="table table-bordered table-striped align-middle mb-0" id="ownerActionTable">
             <thead class="table-light">
               <tr>
-                <th style="width: 80px;">Rank</th>
-                <th style="width: 150px;">Examinee #</th>
+                <th style="width: 70px;">#</th>
+                <th style="width: 140px;">Examinee #</th>
                 <th>Student Name</th>
-                <th style="width: 120px;">SAT</th>
+                <th style="width: 100px;">SAT</th>
+                <th style="width: 160px;">Classification</th>
                 <th style="width: 130px;">Final Score</th>
-                <th>Encoded By</th>
+                <th style="width: 320px;">Details</th>
               </tr>
             </thead>
             <tbody></tbody>
@@ -619,6 +694,9 @@ if ($activeBatchId) {
       </div>
 
       <div class="modal-footer">
+        <a href="#" id="ownerActionOpenPageBtn" class="btn btn-label-secondary d-none">
+          Open Full Page
+        </a>
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
       </div>
     </div>
@@ -982,6 +1060,14 @@ document.addEventListener("DOMContentLoaded", function () {
   let hasMore = true;
   let currentSearch = '';
   const assignedProgramId = <?= (int) $assignedProgramId; ?>;
+  const urlParams = new URLSearchParams(window.location.search);
+  const allowedOwnerActions = new Set(['pending', 'unscored', 'needs_review']);
+  const ownerActionFilter = allowedOwnerActions.has(urlParams.get('owner_action'))
+    ? urlParams.get('owner_action')
+    : '';
+  const openOwnerActionModal = allowedOwnerActions.has(urlParams.get('open_action'))
+    ? urlParams.get('open_action')
+    : '';
 
   if (navbarSearchInput) {
     navbarSearchInput.placeholder = 'Search by name or examinee number...';
@@ -1232,7 +1318,9 @@ function createStudentCard(student) {
     isLoading = true;
     loadingIndicator.classList.remove("d-none");
 
-    fetch(`fetch_students.php?page=${page}&search=${encodeURIComponent(currentSearch)}`)
+    const requestUrl = `fetch_students.php?page=${page}&search=${encodeURIComponent(currentSearch)}${ownerActionFilter ? `&owner_action=${encodeURIComponent(ownerActionFilter)}` : ''}`;
+
+    fetch(requestUrl)
       .then(res => res.json())
         .then(data => {
           if (!data.success) return;
@@ -1244,7 +1332,23 @@ function createStudentCard(student) {
           // ✅ Update Qualified Count Badge
           if (typeof data.total !== 'undefined') {
             const badge = document.getElementById('qualifiedCountBadge');
-            badge.innerText = data.total + ' Qualified';
+            const labelMap = {
+              pending: 'Pending Transfers',
+              unscored: 'Unscored',
+              needs_review: 'Needs Review'
+            };
+
+            if (ownerActionFilter) {
+              badge.innerText = `${data.total} ${labelMap[ownerActionFilter] || 'Records'}`;
+            } else if (currentSearch) {
+              badge.innerText = `${data.total} Matched`;
+            } else {
+              const qualifiedTotal = Number(data.qualified_total || data.total || 0);
+              const uploadedTotal = Number(data.uploaded_total || 0);
+              badge.innerText = uploadedTotal > 0
+                ? `${qualifiedTotal} Qualified / ${uploadedTotal} Uploaded`
+                : `${qualifiedTotal} Qualified`;
+            }
           }
 
           if (data.data.length === 0) {
@@ -1306,7 +1410,8 @@ const programRankingMetaEl    = document.getElementById('programRankingMeta');
 const programRankingLoadingEl = document.getElementById('programRankingLoading');
 const programRankingEmptyEl   = document.getElementById('programRankingEmpty');
 const programRankingTableWrap = document.getElementById('programRankingTableWrap');
-const programRankingTableBody = document.querySelector('#programRankingTable tbody');
+const programRankingRegularBody = document.querySelector('#programRankingRegularTable tbody');
+const programRankingEtgBody     = document.querySelector('#programRankingEtgTable tbody');
 const exportRankingBtn        = document.getElementById('exportRankingBtn');
 const printRankingBtn         = document.getElementById('printRankingBtn');
 
@@ -1327,19 +1432,63 @@ function escapeHtml(value) {
     .replace(/'/g, '&#039;');
 }
 
-function renderRankingRows(rows) {
-  if (!programRankingTableBody) return;
+function toSortableScore(value) {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
 
-  programRankingTableBody.innerHTML = rows.map((row, index) => `
-    <tr>
-      <td class="fw-semibold">${index + 1}</td>
-      <td>${escapeHtml(row.examinee_number || '')}</td>
-      <td class="text-uppercase">${escapeHtml(row.full_name || '')}</td>
-      <td>${escapeHtml(row.sat_score ?? '')}</td>
-      <td class="fw-semibold text-warning">${escapeHtml(row.final_score ?? '')}</td>
-      <td>${escapeHtml(row.encoded_by || 'N/A')}</td>
-    </tr>
-  `).join('');
+function sortRankingRows(rows) {
+  return [...rows].sort((a, b) => {
+    const scoreDiff = toSortableScore(b.final_score) - toSortableScore(a.final_score);
+    if (scoreDiff !== 0) return scoreDiff;
+
+    const satDiff = Number(b.sat_score ?? 0) - Number(a.sat_score ?? 0);
+    if (satDiff !== 0) return satDiff;
+
+    return String(a.full_name || '').localeCompare(String(b.full_name || ''));
+  });
+}
+
+function renderRankingTable(bodyEl, rows, emptyMessage) {
+  if (!bodyEl) return;
+
+  if (!rows.length) {
+    bodyEl.innerHTML = `
+      <tr>
+        <td colspan="7" class="text-center text-muted py-3">${escapeHtml(emptyMessage)}</td>
+      </tr>
+    `;
+    return;
+  }
+
+  bodyEl.innerHTML = rows.map((row, index) => `
+      <tr>
+        <td class="fw-semibold">${index + 1}</td>
+        <td>${escapeHtml(row.examinee_number || '')}</td>
+        <td class="text-uppercase">${escapeHtml(row.full_name || '')}</td>
+        <td class="fw-semibold">${escapeHtml(row.classification || 'REGULAR')}</td>
+        <td>${escapeHtml(row.sat_score ?? '')}</td>
+        <td class="fw-semibold text-warning">${escapeHtml(row.final_score ?? '')}</td>
+        <td>${escapeHtml(row.encoded_by || 'N/A')}</td>
+      </tr>
+    `).join('');
+}
+
+function renderRankingRows(rows) {
+  const regularRows = sortRankingRows(
+    rows.filter(row => String(row.classification || '').toUpperCase() === 'REGULAR')
+  );
+  const etgRows = sortRankingRows(
+    rows.filter(row => String(row.classification || '').toUpperCase() !== 'REGULAR')
+  );
+
+  renderRankingTable(programRankingRegularBody, regularRows, 'No regular ranked students.');
+  renderRankingTable(programRankingEtgBody, etgRows, 'No ETG ranked students.');
+
+  return {
+    regularCount: regularRows.length,
+    etgCount: etgRows.length
+  };
 }
 
 function setRankingState({ loading = false, empty = false, showTable = false }) {
@@ -1378,17 +1527,17 @@ function loadProgramRanking(programId, programName) {
 
       currentRankingRows = Array.isArray(data.rows) ? data.rows : [];
 
-      if (programRankingMetaEl) {
-        const total = currentRankingRows.length;
-        programRankingMetaEl.textContent = `${total} ranked student${total === 1 ? '' : 's'} (highest to lowest)`;
-      }
-
       if (currentRankingRows.length === 0) {
         setRankingState({ loading: false, empty: true, showTable: false });
         return;
       }
 
-      renderRankingRows(currentRankingRows);
+      const grouped = renderRankingRows(currentRankingRows);
+      if (programRankingMetaEl) {
+        const total = currentRankingRows.length;
+        programRankingMetaEl.textContent =
+          `${total} ranked student${total === 1 ? '' : 's'} | REGULAR: ${grouped.regularCount} | ETG: ${grouped.etgCount}`;
+      }
       setRankingState({ loading: false, empty: false, showTable: true });
     })
     .catch(err => {
@@ -1467,6 +1616,164 @@ if (printRankingBtn) {
     printWindow.focus();
     printWindow.print();
   });
+}
+
+// ==============================================
+// Sidebar Action Cards Modal (Pending/Unscored/Needs Review)
+// ==============================================
+const ownerActionModalEl   = document.getElementById('ownerActionModal');
+const ownerActionTitleEl   = document.getElementById('ownerActionTitle');
+const ownerActionMetaEl    = document.getElementById('ownerActionMeta');
+const ownerActionLoadingEl = document.getElementById('ownerActionLoading');
+const ownerActionEmptyEl   = document.getElementById('ownerActionEmpty');
+const ownerActionTableWrap = document.getElementById('ownerActionTableWrap');
+const ownerActionTableBody = document.querySelector('#ownerActionTable tbody');
+const ownerActionOpenPageBtn = document.getElementById('ownerActionOpenPageBtn');
+
+const ownerActionModal = ownerActionModalEl
+  ? new bootstrap.Modal(ownerActionModalEl)
+  : null;
+
+function setOwnerActionState({ loading = false, empty = false, showTable = false }) {
+  if (ownerActionLoadingEl) ownerActionLoadingEl.classList.toggle('d-none', !loading);
+  if (ownerActionEmptyEl) ownerActionEmptyEl.classList.toggle('d-none', !empty);
+  if (ownerActionTableWrap) ownerActionTableWrap.classList.toggle('d-none', !showTable);
+}
+
+function getOwnerActionDetailHtml(action, row) {
+  const details = [];
+
+  if (action === 'pending') {
+    if (row.from_program) details.push(`From Program: ${escapeHtml(row.from_program)}`);
+    if (row.action_datetime) details.push(`Requested: ${escapeHtml(row.action_datetime)}`);
+    if (row.actor_name) details.push(`Requested By: ${escapeHtml(row.actor_name)}`);
+    if (row.remarks) details.push(`Remarks: ${escapeHtml(row.remarks)}`);
+  } else {
+    if (row.action_datetime) {
+      details.push(`Interview Date: ${escapeHtml(row.action_datetime)}`);
+    } else {
+      details.push('Interview Date: Not set');
+    }
+
+    if (action === 'needs_review') {
+      details.push('Status: Ready for review');
+    }
+  }
+
+  return details.length ? details.join('<br>') : '--';
+}
+
+function renderOwnerActionRows(action, rows) {
+  if (!ownerActionTableBody) return;
+
+  ownerActionTableBody.innerHTML = rows.map((row, index) => {
+    const finalScoreDisplay = row.final_score ? `${escapeHtml(row.final_score)}%` : 'N/A';
+
+    return `
+      <tr>
+        <td class="fw-semibold">${index + 1}</td>
+        <td>${escapeHtml(row.examinee_number || '')}</td>
+        <td class="text-uppercase">${escapeHtml(row.full_name || '')}</td>
+        <td>${escapeHtml(row.sat_score ?? '')}</td>
+        <td class="fw-semibold">${escapeHtml(row.classification || 'REGULAR')}</td>
+        <td class="fw-semibold text-warning">${finalScoreDisplay}</td>
+        <td class="small">${getOwnerActionDetailHtml(action, row)}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function configureOwnerActionFooter(action) {
+  if (!ownerActionOpenPageBtn) return;
+
+  ownerActionOpenPageBtn.classList.add('d-none');
+  ownerActionOpenPageBtn.href = '#';
+  ownerActionOpenPageBtn.textContent = 'Open Full Page';
+
+  if (action === 'pending') {
+    ownerActionOpenPageBtn.classList.remove('d-none');
+    ownerActionOpenPageBtn.href = 'pending_transfers.php';
+    ownerActionOpenPageBtn.textContent = 'Open Pending Transfers Page';
+  }
+}
+
+function loadOwnerActionDetails(action) {
+  if (!ownerActionModal || !allowedOwnerActions.has(action)) return;
+
+  const actionTitleMap = {
+    pending: 'Pending Transfers',
+    unscored: 'Unscored',
+    needs_review: 'Needs Review'
+  };
+
+  if (ownerActionTitleEl) {
+    ownerActionTitleEl.textContent = `${actionTitleMap[action] || 'Action'} Details`;
+  }
+  if (ownerActionMetaEl) {
+    ownerActionMetaEl.textContent = 'Loading...';
+  }
+  if (ownerActionEmptyEl) {
+    ownerActionEmptyEl.textContent = 'No records found.';
+  }
+
+  configureOwnerActionFooter(action);
+  setOwnerActionState({ loading: true, empty: false, showTable: false });
+
+  fetch(`get_owner_action_details.php?action=${encodeURIComponent(action)}`)
+    .then((res) => res.json())
+    .then((data) => {
+      if (!data.success) {
+        throw new Error(data.message || 'Failed to load action details.');
+      }
+
+      const rows = Array.isArray(data.rows) ? data.rows : [];
+      if (ownerActionMetaEl) {
+        ownerActionMetaEl.textContent = `${rows.length} record${rows.length === 1 ? '' : 's'} found`;
+      }
+
+      if (!rows.length) {
+        setOwnerActionState({ loading: false, empty: true, showTable: false });
+        return;
+      }
+
+      renderOwnerActionRows(action, rows);
+      setOwnerActionState({ loading: false, empty: false, showTable: true });
+    })
+    .catch((err) => {
+      console.error(err);
+      if (ownerActionEmptyEl) {
+        ownerActionEmptyEl.textContent = err.message || 'Failed to load action details.';
+      }
+      setOwnerActionState({ loading: false, empty: true, showTable: false });
+    });
+}
+
+document.querySelectorAll('.js-owner-action-trigger').forEach((el) => {
+  const action = String(el.getAttribute('data-owner-action') || '').toLowerCase();
+  if (!allowedOwnerActions.has(action)) return;
+
+  el.addEventListener('click', function (event) {
+    if (!ownerActionModal) return;
+
+    const isModifiedClick = event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0;
+    if (isModifiedClick) return;
+
+    event.preventDefault();
+    document.querySelectorAll('.js-owner-action-trigger').forEach((item) => item.classList.remove('active'));
+    el.classList.add('active');
+    ownerActionModal.show();
+    loadOwnerActionDetails(action);
+  });
+});
+
+if (openOwnerActionModal && ownerActionModal) {
+  ownerActionModal.show();
+  loadOwnerActionDetails(openOwnerActionModal);
+
+  urlParams.delete('open_action');
+  const cleanedQuery = urlParams.toString();
+  const cleanedUrl = `${window.location.pathname}${cleanedQuery ? `?${cleanedQuery}` : ''}`;
+  window.history.replaceState({}, '', cleanedUrl);
 }
 
 

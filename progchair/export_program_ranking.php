@@ -62,19 +62,34 @@ $rankingSql = "
     SELECT
         si.examinee_number,
         pr.full_name,
+        CASE
+            WHEN UPPER(COALESCE(si.classification, 'REGULAR')) = 'ETG'
+                THEN CONCAT('ETG-', COALESCE(NULLIF(TRIM(ec.class_desc), ''), 'UNSPECIFIED'))
+            ELSE 'REGULAR'
+        END AS classification_label,
         pr.sat_score,
         si.final_score,
         si.interview_datetime,
-        a.acc_fullname AS encoded_by
+        a.acc_fullname AS encoded_by,
+        CASE
+            WHEN UPPER(COALESCE(si.classification, 'REGULAR')) = 'ETG' THEN 1
+            ELSE 0
+        END AS classification_group
     FROM tbl_student_interview si
     INNER JOIN tbl_placement_results pr
         ON si.placement_result_id = pr.id
     LEFT JOIN tblaccount a
         ON si.program_chair_id = a.accountid
+    LEFT JOIN tbl_etg_class ec
+        ON si.etg_class_id = ec.etgclassid
     WHERE si.first_choice = ?
       AND si.status = 'active'
       AND si.final_score IS NOT NULL
-    ORDER BY si.final_score DESC, pr.sat_score DESC, pr.full_name ASC
+    ORDER BY
+        classification_group ASC,
+        si.final_score DESC,
+        pr.sat_score DESC,
+        pr.full_name ASC
 ";
 
 $stmtRanking = $conn->prepare($rankingSql);
@@ -107,7 +122,7 @@ fputcsv($output, ['Program Ranking']);
 fputcsv($output, ['Program', $programLabel]);
 fputcsv($output, ['Generated', date('Y-m-d H:i:s')]);
 fputcsv($output, []);
-fputcsv($output, ['Rank', 'Examinee #', 'Student Name', 'SAT Score', 'Final Score', 'Encoded By', 'Interview Datetime']);
+fputcsv($output, ['Rank', 'Examinee #', 'Student Name', 'Classification', 'SAT Score', 'Final Score', 'Encoded By', 'Interview Datetime']);
 
 $rank = 1;
 while ($row = $resultRanking->fetch_assoc()) {
@@ -115,6 +130,7 @@ while ($row = $resultRanking->fetch_assoc()) {
         $rank,
         $row['examinee_number'],
         $row['full_name'],
+        $row['classification_label'],
         $row['sat_score'],
         number_format((float) $row['final_score'], 2),
         $row['encoded_by'],

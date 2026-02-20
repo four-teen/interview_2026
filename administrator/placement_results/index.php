@@ -91,8 +91,9 @@ placement_results/index.php
               </h4>
 
               <p class="text-muted">
-                Upload tertiary placement test results from CSV (.csv). All examinee names will be converted to
-                <strong>UPPERCASE</strong>. Existing records will be removed before saving the new dataset.
+                Upload yearly tertiary placement test results from <strong>CSV / Excel</strong> files
+                (<code>.csv</code>, <code>.xls</code>, <code>.xlsx</code>). All examinee names are normalized to
+                <strong>UPPERCASE</strong>, and previous records are replaced for the new cycle.
               </p>
 
               <div class="alert alert-warning">
@@ -110,11 +111,12 @@ placement_results/index.php
                     <div class="card-body">
 
                       <div class="mb-3">
-                        <label class="form-label">CSV File (.csv)</label>
-                        <input type="file" class="form-control" id="csvFile" accept=".csv">
+                        <label class="form-label">Data File (CSV or Excel)</label>
+                        <input type="file" class="form-control" id="uploadFile" accept=".csv,.xls,.xlsx">
                         <div class="form-text">
-                          Required columns (CSV, UTF-8):
-                          Examinee Number, Name of Examinee, Overall SAT, Qualitative Interpretation
+                          Supported templates:
+                          legacy 4-column CSV and the detailed yearly Excel format
+                          (Name of Examinee, Examinee Number, per-subject scores, ESM, Overall Score).
                         </div>
                       </div>
 
@@ -198,90 +200,230 @@ placement_results/index.php
 
     <!-- UI ONLY SCRIPT -->
     <script>
-      const csvFile = document.getElementById('csvFile');
+      const uploadFile = document.getElementById('uploadFile');
       const btnStart = document.getElementById('btnStartUpload');
       const btnClear = document.getElementById('btnClear');
       const progressWrap = document.getElementById('uploadProgressWrap');
-
-      csvFile.addEventListener('change', () => {
-        const hasFile = csvFile.files.length > 0;
-        btnStart.disabled = !hasFile;
-        btnClear.disabled = !hasFile;
-      });
-
-      btnClear.addEventListener('click', () => {
-        csvFile.value = '';
-        btnStart.disabled = true;
-        btnClear.disabled = true;
-        progressWrap.classList.add('d-none');
-      });
+      const progressBar = document.getElementById('progressBar');
+      const progressPercent = document.getElementById('progressPercent');
+      const progressMeta = document.getElementById('progressMeta');
+      const progressStatus = document.getElementById('progressStatus');
 
       let batchId = null;
       let offset = 0;
+      let isUploading = false;
+      let stagnantCycles = 0;
+      let lastProcessed = 0;
       const chunkSize = 250;
 
-      $('#btnStartUpload').on('click', function () {
+      function setButtonsState() {
+        const hasFile = uploadFile.files.length > 0;
+        btnStart.disabled = isUploading || !hasFile;
+        btnClear.disabled = isUploading || !hasFile;
+      }
 
-        const fileInput = document.getElementById('csvFile');
-        if (!fileInput.files.length) return;
+      function renderProgress(progressData) {
+        const percentage = Math.max(0, Math.min(100, Number(progressData.percentage || 0)));
+        const processed = Number(progressData.processed || 0);
+        const total = Number(progressData.total || 0);
 
-        $('#uploadProgressWrap').removeClass('d-none');
-        $('#progressStatus').text('Creating upload batch...');
+        progressBar.style.width = `${percentage}%`;
+        progressPercent.textContent = `${percentage}%`;
+        progressMeta.textContent = `Processed: ${processed} / ${total}`;
+      }
 
-        // 1. create batch
-        $.post('start_upload.php', function (res) {
+      function failUpload(message) {
+        isUploading = false;
+        progressStatus.textContent = 'Upload failed';
+        setButtonsState();
+        alert(message || 'Upload failed.');
+      }
 
-          if (!res.success) {
-            alert('Upload failed: ' + res.message);
-            return;
-          }
+      function extractErrorMessage(xhr, fallbackMessage) {
+        if (xhr && xhr.responseJSON && xhr.responseJSON.message) {
+          return xhr.responseJSON.message;
+        }
 
-          batchId = res.batch_id;
+        const raw = (xhr && xhr.responseText) ? String(xhr.responseText).trim() : '';
+        if (raw) {
+          try {
+            const parsed = JSON.parse(raw);
+            if (parsed && parsed.message) return parsed.message;
+          } catch (jsonErr) {}
 
-          let formData = new FormData();
-          formData.append('csv_file', fileInput.files[0]);
-          formData.append('batch_id', batchId);
+          const htmlToText = document.createElement('div');
+          htmlToText.innerHTML = raw;
+          const plain = (htmlToText.textContent || htmlToText.innerText || raw).replace(/\s+/g, ' ').trim();
+          return plain.length > 240 ? plain.substring(0, 240) + '...' : plain;
+        }
 
-          $.ajax({
-            url: 'upload_csv.php',
-            type: 'POST',
-            data: formData,
-            processData: false,
-            contentType: false,
-            success: function () {
-              $('#progressStatus').text('Processing records...');
-              processNextChunk();
+        return fallbackMessage;
+      }
+
+      function finishUpload(progressData) {
+        isUploading = false;
+        const total = Number((progressData && progressData.total) || 0);
+        const processed = Number((progressData && progressData.processed) || 0);
+        const finalTotal = total > 0 ? total : processed;
+        renderProgress({
+          percentage: 100,
+          processed: finalTotal > 0 ? finalTotal : processed,
+          total: finalTotal
+        });
+        progressStatus.textContent = 'Upload completed';
+        setButtonsState();
+      }
+
+      function pollProgressAndContinue() {
+        $.getJSON('fetch_progress.php', { batch_id: batchId })
+          .done(function (p) {
+            if (!p || !p.success) {
+              failUpload('Failed to fetch upload progress.');
+              return;
             }
-          });
 
-        }, 'json');
-      });
+            renderProgress(p);
+
+            if (p.status === 'failed') {
+              failUpload('Upload batch is marked as failed. Please retry.');
+              return;
+            }
+
+            if (p.status === 'completed' || Number(p.percentage) >= 100) {
+              finishUpload(p);
+              return;
+            }
+
+            const processedNow = Number(p.processed || 0);
+            if (processedNow <= lastProcessed) {
+              stagnantCycles += 1;
+            } else {
+              stagnantCycles = 0;
+              lastProcessed = processedNow;
+            }
+
+            if (stagnantCycles >= 10) {
+              failUpload('Upload progress stalled. Please retry the upload.');
+              return;
+            }
+
+            setTimeout(processNextChunk, 80);
+          })
+          .fail(function () {
+            failUpload('Unable to poll upload progress.');
+          });
+      }
 
       function processNextChunk() {
+        if (!isUploading || !batchId) return;
 
-        $.post('process_chunk.php', {
-          batch_id: batchId,
-          offset: offset
-        }, function (res) {
-
-          offset += chunkSize;
-
-          // poll progress
-          $.getJSON('fetch_progress.php', { batch_id: batchId }, function (p) {
-
-            $('#progressBar').css('width', p.percentage + '%');
-            $('#progressPercent').text(p.percentage + '%');
-            $('#progressMeta').text(`Processed: ${p.processed} / ${p.total}`);
-
-            if (p.percentage < 100) {
-              processNextChunk();
-            } else {
-              $('#progressStatus').text('Upload completed');
+        $.ajax({
+          url: 'process_chunk.php',
+          type: 'POST',
+          dataType: 'json',
+          data: {
+            batch_id: batchId,
+            offset: offset
+          }
+        })
+          .done(function (res) {
+            if (!res || !res.success) {
+              failUpload((res && res.message) || 'Chunk processing failed.');
+              return;
             }
-          });
 
-        }, 'json');
+            if (typeof res.next_offset !== 'undefined') {
+              offset = Number(res.next_offset) || (offset + chunkSize);
+            } else {
+              offset += chunkSize;
+            }
+
+            pollProgressAndContinue();
+          })
+          .fail(function (xhr) {
+            const message = extractErrorMessage(xhr, 'Failed to process upload chunk.');
+            failUpload(message);
+          });
       }
+
+      uploadFile.addEventListener('change', setButtonsState);
+
+      btnClear.addEventListener('click', () => {
+        if (isUploading) return;
+        uploadFile.value = '';
+        progressWrap.classList.add('d-none');
+        setButtonsState();
+      });
+
+      $('#btnStartUpload').on('click', function () {
+        if (isUploading) return;
+        if (!uploadFile.files.length) return;
+
+        const selectedFile = uploadFile.files[0];
+        const allowedExt = ['csv', 'xls', 'xlsx'];
+        const ext = (selectedFile.name.split('.').pop() || '').toLowerCase();
+        if (!allowedExt.includes(ext)) {
+          alert('Unsupported file type. Please upload CSV, XLS, or XLSX.');
+          return;
+        }
+
+        batchId = null;
+        offset = 0;
+        isUploading = true;
+        stagnantCycles = 0;
+        lastProcessed = 0;
+
+        progressWrap.classList.remove('d-none');
+        renderProgress({ percentage: 0, processed: 0, total: 0 });
+        progressStatus.textContent = 'Creating upload batch...';
+        setButtonsState();
+
+        $.ajax({
+          url: 'start_upload.php',
+          type: 'POST',
+          dataType: 'json'
+        })
+          .done(function (res) {
+            if (!res || !res.success) {
+              failUpload('Upload failed: ' + ((res && res.message) || 'Unable to create batch.'));
+              return;
+            }
+
+            batchId = res.batch_id;
+
+            const formData = new FormData();
+            formData.append('data_file', selectedFile);
+            formData.append('batch_id', batchId);
+
+            $.ajax({
+              url: 'upload_csv.php',
+              type: 'POST',
+              dataType: 'json',
+              data: formData,
+              processData: false,
+              contentType: false
+            })
+              .done(function (parseRes) {
+                if (!parseRes || !parseRes.success) {
+                  failUpload((parseRes && parseRes.message) || 'Upload file parsing failed.');
+                  return;
+                }
+
+                progressStatus.textContent = 'Processing records...';
+                processNextChunk();
+              })
+              .fail(function (xhr) {
+                const message = extractErrorMessage(xhr, 'Upload file parsing failed.');
+                failUpload(message);
+              });
+          })
+          .fail(function (xhr) {
+            const message = extractErrorMessage(xhr, 'Failed to start upload batch.');
+            failUpload(message);
+          });
+      });
+
+      setButtonsState();
     </script>
 
   </body>

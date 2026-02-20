@@ -39,19 +39,39 @@ if (!$data) {
     exit;
 }
 
-$processed =
-    $data['inserted_rows'] +
-    $data['duplicate_rows'] +
-    $data['error_rows'];
+$totalRows = (int) ($data['total_rows'] ?? 0);
+$insertedRows = (int) ($data['inserted_rows'] ?? 0);
+$duplicateRows = (int) ($data['duplicate_rows'] ?? 0);
+$errorRows = (int) ($data['error_rows'] ?? 0);
+$status = (string) ($data['status'] ?? 'processing');
 
-$percentage = ($data['total_rows'] > 0)
-    ? round(($processed / $data['total_rows']) * 100)
+$processed = $insertedRows + $duplicateRows + $errorRows;
+if ($totalRows > 0 && $processed > $totalRows) {
+    $processed = $totalRows;
+}
+
+$percentage = ($totalRows > 0)
+    ? (int) round(($processed / $totalRows) * 100)
     : 0;
 
+if ($status === 'completed') {
+    $percentage = 100;
+    if ($totalRows > 0) {
+        $processed = $totalRows;
+    }
+}
+
+if ($percentage > 100) {
+    $percentage = 100;
+}
+
 echo json_encode([
-    'success'    => true,
-    'status'    => $data['status'],
-    'percentage'=> $percentage,
+    'success' => true,
+    'status' => $status,
+    'percentage' => $percentage,
     'processed' => $processed,
-    'total'     => $data['total_rows']
+    'total' => $totalRows,
+    'inserted' => $insertedRows,
+    'duplicates' => $duplicateRows,
+    'errors' => $errorRows
 ]);

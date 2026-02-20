@@ -64,62 +64,215 @@
             </a>
           </div>
 
+          <?php
+            $sidebarCurrentPage = basename($_SERVER['PHP_SELF'] ?? '');
+            $sidebarOwnerAction = strtolower(trim((string)($_GET['owner_action'] ?? ($_GET['open_action'] ?? ''))));
+            $allowedSidebarActions = ['pending', 'unscored', 'needs_review'];
+            if (!in_array($sidebarOwnerAction, $allowedSidebarActions, true)) {
+                $sidebarOwnerAction = '';
+            }
+
+            $sidebarCounts = [
+                'pending' => 0,
+                'unscored' => 0,
+                'needs_review' => 0,
+                'activity' => 0
+            ];
+
+            $sidebarAccountId = (int) ($_SESSION['accountid'] ?? 0);
+            $sidebarProgramId = (int) ($_SESSION['program_id'] ?? 0);
+            if ($sidebarAccountId > 0 && isset($conn) && ($conn instanceof mysqli)) {
+                $sidebarCountSql = "
+                    SELECT
+                        (
+                            SELECT COUNT(*)
+                            FROM tbl_student_transfer_history t
+                            INNER JOIN tbl_student_interview i_pending
+                                ON i_pending.interview_id = t.interview_id
+                            WHERE t.status = 'pending'
+                              AND t.to_program_id = ?
+                              AND i_pending.status = 'active'
+                        ) AS pending_count,
+                        (
+                            SELECT COUNT(*)
+                            FROM tbl_student_interview i_unscored
+                            WHERE i_unscored.program_chair_id = ?
+                              AND i_unscored.status = 'active'
+                              AND i_unscored.final_score IS NULL
+                        ) AS unscored_count,
+                        (
+                            SELECT COUNT(*)
+                            FROM tbl_student_interview i_review
+                            WHERE i_review.program_chair_id = ?
+                              AND i_review.status = 'active'
+                              AND i_review.final_score IS NOT NULL
+                              AND NOT EXISTS (
+                                  SELECT 1
+                                  FROM tbl_student_transfer_history t2
+                                  WHERE t2.interview_id = i_review.interview_id
+                                    AND t2.status = 'pending'
+                              )
+                        ) AS needs_review_count,
+                        (
+                            SELECT COUNT(*)
+                            FROM tbl_score_audit_logs l
+                            WHERE l.actor_accountid = ?
+                        ) AS activity_count
+                ";
+
+                $sidebarStmt = $conn->prepare($sidebarCountSql);
+                if ($sidebarStmt) {
+                    $sidebarStmt->bind_param("iiii", $sidebarProgramId, $sidebarAccountId, $sidebarAccountId, $sidebarAccountId);
+                    $sidebarStmt->execute();
+                    $sidebarCountRow = $sidebarStmt->get_result()->fetch_assoc();
+                    if ($sidebarCountRow) {
+                        $sidebarCounts['pending'] = (int) ($sidebarCountRow['pending_count'] ?? 0);
+                        $sidebarCounts['unscored'] = (int) ($sidebarCountRow['unscored_count'] ?? 0);
+                        $sidebarCounts['needs_review'] = (int) ($sidebarCountRow['needs_review_count'] ?? 0);
+                        $sidebarCounts['activity'] = (int) ($sidebarCountRow['activity_count'] ?? 0);
+                    }
+                    $sidebarStmt->close();
+                }
+            }
+
+            $isDashboardActive = ($sidebarCurrentPage === 'index.php' && $sidebarOwnerAction === '');
+          ?>
+
+          <style>
+            #layout-menu .sidebar-action-card {
+              display: flex;
+              align-items: center;
+              gap: 0.65rem;
+              padding: 0.72rem 0.78rem;
+              margin: 0.42rem 0.2rem;
+              border: 1px solid #e4e8f0;
+              border-radius: 0.75rem;
+              background: #ffffff;
+              transition: all 0.2s ease;
+            }
+
+            #layout-menu .sidebar-action-card:hover {
+              border-color: #c8d0e0;
+              box-shadow: 0 6px 14px rgba(51, 71, 103, 0.09);
+              transform: translateY(-1px);
+            }
+
+            #layout-menu .sidebar-action-card.active {
+              border-color: #696cff;
+              background: #f6f7ff;
+            }
+
+            #layout-menu .sidebar-action-icon {
+              width: 32px;
+              height: 32px;
+              border-radius: 10px;
+              display: inline-flex;
+              align-items: center;
+              justify-content: center;
+              flex: 0 0 32px;
+              font-size: 1rem;
+            }
+
+            #layout-menu .sidebar-action-content {
+              min-width: 0;
+            }
+
+            #layout-menu .sidebar-action-title {
+              font-size: 0.86rem;
+              font-weight: 600;
+              line-height: 1.05rem;
+              color: #364152;
+            }
+
+            #layout-menu .sidebar-action-sub {
+              display: block;
+              margin-top: 0.14rem;
+              font-size: 0.72rem;
+              color: #8391a7;
+              line-height: 0.92rem;
+            }
+          </style>
+
           <div class="menu-inner-shadow"></div>
 
-            <ul class="menu-inner py-1">
+          <ul class="menu-inner py-1">
+            <li class="menu-item<?= $isDashboardActive ? ' active' : ''; ?>">
+              <a href="index.php" class="menu-link">
+                <i class="menu-icon tf-icons bx bx-home-circle"></i>
+                <div>Dashboard</div>
+              </a>
+            </li>
 
-              <!-- Dashboard -->
-              <li class="menu-item active">
-                <a href="index.php" class="menu-link">
-                  <i class="menu-icon tf-icons bx bx-home-circle"></i>
-                  <div>Dashboard</div>
-                </a>
-              </li>
+            <li class="menu-header small text-uppercase mt-1">
+              <span class="menu-header-text">My Actions</span>
+            </li>
 
-              <li class="menu-header small text-uppercase">
-                <span class="menu-header-text">Interview Settings</span>
-              </li>
+            <li class="menu-item px-2">
+              <a
+                href="index.php?open_action=pending"
+                data-owner-action="pending"
+                class="menu-link sidebar-action-card js-owner-action-trigger<?= ($sidebarCurrentPage === 'index.php' && $sidebarOwnerAction === 'pending') ? ' active' : ''; ?>"
+              >
+                <span class="sidebar-action-icon bg-label-danger">
+                  <i class="bx bx-transfer-alt"></i>
+                </span>
+                <div class="sidebar-action-content">
+                  <div class="sidebar-action-title">Pending Transfers</div>
+                  <small class="sidebar-action-sub">Incoming requests to my program</small>
+                </div>
+                <span class="badge bg-danger rounded-pill ms-auto"><?= (int) $sidebarCounts['pending']; ?></span>
+              </a>
+            </li>
 
-              <li class="menu-item">
-                <a href="javascript:void(0);" class="menu-link">
-                  <i class="menu-icon tf-icons bx bx-list-check"></i>
-                  <div>Scoring Criteria</div>
-                </a>
-              </li>
+            <li class="menu-item px-2">
+              <a
+                href="index.php?open_action=unscored"
+                data-owner-action="unscored"
+                class="menu-link sidebar-action-card js-owner-action-trigger<?= ($sidebarCurrentPage === 'index.php' && $sidebarOwnerAction === 'unscored') ? ' active' : ''; ?>"
+              >
+                <span class="sidebar-action-icon bg-label-warning">
+                  <i class="bx bx-notepad"></i>
+                </span>
+                <div class="sidebar-action-content">
+                  <div class="sidebar-action-title">Unscored</div>
+                  <small class="sidebar-action-sub">Owned interviews waiting for scoring</small>
+                </div>
+                <span class="badge bg-warning rounded-pill ms-auto"><?= (int) $sidebarCounts['unscored']; ?></span>
+              </a>
+            </li>
 
-              <li class="menu-item">
-                <a href="javascript:void(0);" class="menu-link">
-                  <i class="menu-icon tf-icons bx bx-slideshow"></i>
-                  <div>Score Weights</div>
-                </a>
-              </li>
+            <li class="menu-item px-2">
+              <a
+                href="index.php?open_action=needs_review"
+                data-owner-action="needs_review"
+                class="menu-link sidebar-action-card js-owner-action-trigger<?= ($sidebarCurrentPage === 'index.php' && $sidebarOwnerAction === 'needs_review') ? ' active' : ''; ?>"
+              >
+                <span class="sidebar-action-icon bg-label-info">
+                  <i class="bx bx-check-circle"></i>
+                </span>
+                <div class="sidebar-action-content">
+                  <div class="sidebar-action-title">Needs Review</div>
+                  <small class="sidebar-action-sub">Owned scored interviews pending review</small>
+                </div>
+                <span class="badge bg-info rounded-pill ms-auto"><?= (int) $sidebarCounts['needs_review']; ?></span>
+              </a>
+            </li>
 
-              <li class="menu-item">
-                <a href="javascript:void(0);" class="menu-link">
-                  <i class="menu-icon tf-icons bx bx-check-shield"></i>
-                  <div>Passing Rules</div>
-                </a>
-              </li>
-
-              <li class="menu-item">
-                <a href="../administrator/placement_results/index.php" class="menu-link">
-                  <i class="menu-icon tf-icons bx bx-upload"></i>
-                  <div data-i18n="Placement Test Results">Placement Test Results</div>
-                </a>
-              </li>
-              
-
-              <li class="menu-header small text-uppercase">
-                <span class="menu-header-text">System</span>
-              </li>
-
-              <li class="menu-item">
-                <a href="javascript:void(0);" class="menu-link">
-                  <i class="menu-icon tf-icons bx bx-history"></i>
-                  <div>Activity Logs</div>
-                </a>
-              </li>
-
-            </ul>
+            <li class="menu-item px-2 mt-2">
+              <a
+                href="activity_logs.php"
+                class="menu-link sidebar-action-card<?= ($sidebarCurrentPage === 'activity_logs.php') ? ' active' : ''; ?>"
+              >
+                <span class="sidebar-action-icon bg-label-secondary">
+                  <i class="bx bx-history"></i>
+                </span>
+                <div class="sidebar-action-content">
+                  <div class="sidebar-action-title">Activity Logs</div>
+                  <small class="sidebar-action-sub">Scoring actions recorded under my account</small>
+                </div>
+                <span class="badge bg-secondary rounded-pill ms-auto"><?= (int) $sidebarCounts['activity']; ?></span>
+              </a>
+            </li>
+          </ul>
 
         </aside>
