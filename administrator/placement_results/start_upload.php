@@ -1,5 +1,6 @@
 <?php
 require_once '../../config/db.php';
+require_once '../../config/student_credentials.php';
 session_start();
 
 header('Content-Type: application/json');
@@ -120,6 +121,9 @@ try {
     execute_or_throw($conn, "DELETE FROM tbl_interview_scores", 'Failed clearing interview scores');
     execute_or_throw($conn, "DELETE FROM tbl_student_transfer_history", 'Failed clearing transfer history');
     execute_or_throw($conn, "DELETE FROM tbl_student_interview", 'Failed clearing student interviews');
+    if (ensure_student_credentials_table($conn)) {
+        execute_or_throw($conn, "DELETE FROM tbl_student_credentials", 'Failed clearing student credentials');
+    }
     execute_or_throw($conn, "DELETE FROM tbl_placement_results", 'Failed clearing placement results');
     execute_or_throw($conn, "DELETE FROM tbl_placement_upload_batches", 'Failed clearing upload batches');
 

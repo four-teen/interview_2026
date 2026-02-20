@@ -32,10 +32,15 @@ $programSql = "
     SELECT
         p.program_id,
         p.program_name,
-        p.major
+        p.major,
+        pc.absorptive_capacity,
+        pc.regular_percentage,
+        pc.etg_percentage
     FROM tbl_program p
     INNER JOIN tbl_college c
         ON p.college_id = c.college_id
+    LEFT JOIN tbl_program_cutoff pc
+        ON pc.program_id = p.program_id
     WHERE p.program_id = ?
       AND c.campus_id = ?
       AND p.status = 'active'
@@ -82,7 +87,7 @@ $rankingSql = "
         ON si.program_chair_id = a.accountid
     LEFT JOIN tbl_etg_class ec
         ON si.etg_class_id = ec.etgclassid
-    WHERE si.first_choice = ?
+    WHERE COALESCE(NULLIF(si.program_id, 0), NULLIF(si.first_choice, 0)) = ?
       AND si.status = 'active'
       AND si.final_score IS NOT NULL
     ORDER BY
@@ -103,6 +108,55 @@ $stmtRanking->bind_param("i", $programId);
 $stmtRanking->execute();
 $resultRanking = $stmtRanking->get_result();
 
+$allRegularRows = [];
+$allEtgRows = [];
+while ($row = $resultRanking->fetch_assoc()) {
+    if ((int) ($row['classification_group'] ?? 0) === 1) {
+        $allEtgRows[] = $row;
+    } else {
+        $allRegularRows[] = $row;
+    }
+}
+
+$quotaEnabled = false;
+$absorptiveCapacity = null;
+$regularPercentage = null;
+$etgPercentage = null;
+$regularSlots = null;
+$etgSlots = null;
+
+if (
+    $program['absorptive_capacity'] !== null &&
+    $program['regular_percentage'] !== null &&
+    $program['etg_percentage'] !== null
+) {
+    $absorptiveCapacity = max(0, (int) $program['absorptive_capacity']);
+    $regularPercentage = round((float) $program['regular_percentage'], 2);
+    $etgPercentage = round((float) $program['etg_percentage'], 2);
+
+    if (
+        $regularPercentage >= 0 &&
+        $regularPercentage <= 100 &&
+        $etgPercentage >= 0 &&
+        $etgPercentage <= 100 &&
+        abs(($regularPercentage + $etgPercentage) - 100) <= 0.01
+    ) {
+        $quotaEnabled = true;
+        $regularSlots = (int) round($absorptiveCapacity * ($regularPercentage / 100));
+        $etgSlots = max(0, $absorptiveCapacity - $regularSlots);
+    }
+}
+
+if ($quotaEnabled) {
+    $regularRows = array_slice($allRegularRows, 0, $regularSlots);
+    $etgRows = array_slice($allEtgRows, 0, $etgSlots);
+} else {
+    $regularRows = $allRegularRows;
+    $etgRows = $allEtgRows;
+}
+
+$exportRows = array_merge($regularRows, $etgRows);
+
 $programLabel = strtoupper($program['program_name'] . (!empty($program['major']) ? ' - ' . $program['major'] : ''));
 $safeName = preg_replace('/[^A-Za-z0-9]+/', '_', $programLabel);
 $safeName = trim($safeName, '_');
@@ -121,11 +175,22 @@ $output = fopen('php://output', 'w');
 fputcsv($output, ['Program Ranking']);
 fputcsv($output, ['Program', $programLabel]);
 fputcsv($output, ['Generated', date('Y-m-d H:i:s')]);
+if ($quotaEnabled) {
+    $quotaSummary = sprintf(
+        'Capacity: %d | Regular: %.2f%% (%d) | ETG: %.2f%% (%d)',
+        (int) $absorptiveCapacity,
+        (float) $regularPercentage,
+        (int) $regularSlots,
+        (float) $etgPercentage,
+        (int) $etgSlots
+    );
+    fputcsv($output, ['Quota', $quotaSummary]);
+}
 fputcsv($output, []);
 fputcsv($output, ['Rank', 'Examinee #', 'Student Name', 'Classification', 'SAT Score', 'Final Score', 'Encoded By', 'Interview Datetime']);
 
 $rank = 1;
-while ($row = $resultRanking->fetch_assoc()) {
+foreach ($exportRows as $row) {
     fputcsv($output, [
         $rank,
         $row['examinee_number'],

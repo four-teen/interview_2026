@@ -64,112 +64,197 @@
             </a>
           </div>
 
+          <?php
+            $sidebarCurrentPage = basename($_SERVER['PHP_SELF'] ?? '');
+            $sidebarSection = basename(dirname($_SERVER['PHP_SELF'] ?? ''));
+            $sidebarHrefPrefix = ($sidebarSection === 'administrator') ? '' : '../';
+            $sidebarActiveKey = 'dashboard';
+
+            if ($sidebarSection === 'accounts') {
+                $sidebarActiveKey = 'accounts';
+            } elseif ($sidebarSection === 'campuses') {
+                $sidebarActiveKey = 'campuses';
+            } elseif ($sidebarSection === 'colleges') {
+                $sidebarActiveKey = 'colleges';
+            } elseif ($sidebarSection === 'programs') {
+                $sidebarActiveKey = 'programs';
+            } elseif ($sidebarSection === 'dbmanagement') {
+                $sidebarActiveKey = 'dbmanagement';
+            } elseif ($sidebarSection === 'placement_results') {
+                $sidebarActiveKey = 'placement_results';
+            } elseif ($sidebarCurrentPage === 'index.php') {
+                $sidebarActiveKey = 'dashboard';
+            }
+          ?>
+
+          <style>
+            #layout-menu .sidebar-action-card {
+              display: flex;
+              align-items: center;
+              gap: 0.65rem;
+              padding: 0.72rem 0.78rem;
+              margin: 0.42rem 0.2rem;
+              border: 1px solid #e4e8f0;
+              border-radius: 0.75rem;
+              background: #ffffff;
+              transition: all 0.2s ease;
+            }
+
+            #layout-menu .sidebar-action-card:hover {
+              border-color: #c8d0e0;
+              box-shadow: 0 6px 14px rgba(51, 71, 103, 0.09);
+              transform: translateY(-1px);
+            }
+
+            #layout-menu .sidebar-action-card.active {
+              border-color: #696cff;
+              background: #f6f7ff;
+            }
+
+            #layout-menu .sidebar-action-icon {
+              width: 32px;
+              height: 32px;
+              border-radius: 10px;
+              display: inline-flex;
+              align-items: center;
+              justify-content: center;
+              flex: 0 0 32px;
+              font-size: 1rem;
+            }
+
+            #layout-menu .sidebar-action-content {
+              min-width: 0;
+            }
+
+            #layout-menu .sidebar-action-title {
+              font-size: 0.86rem;
+              font-weight: 600;
+              line-height: 1.05rem;
+              color: #364152;
+            }
+
+            #layout-menu .sidebar-action-sub {
+              display: block;
+              margin-top: 0.14rem;
+              font-size: 0.72rem;
+              color: #8391a7;
+              line-height: 0.92rem;
+            }
+          </style>
+
           <div class="menu-inner-shadow"></div>
 
-            <ul class="menu-inner py-1">
+          <ul class="menu-inner py-1">
+            <li class="menu-header small text-uppercase mt-1">
+              <span class="menu-header-text">Overview</span>
+            </li>
+            <li class="menu-item px-2">
+              <a
+                href="<?= $sidebarHrefPrefix; ?>index.php"
+                class="menu-link sidebar-action-card<?= $sidebarActiveKey === 'dashboard' ? ' active' : ''; ?>"
+              >
+                <span class="sidebar-action-icon bg-label-primary">
+                  <i class="bx bx-home-circle"></i>
+                </span>
+                <div class="sidebar-action-content">
+                  <div class="sidebar-action-title">Dashboard</div>
+                  <small class="sidebar-action-sub">System-wide interview analytics</small>
+                </div>
+              </a>
+            </li>
 
-              <!-- Dashboard -->
-              <li class="menu-item active">
-                <a href="../index.php" class="menu-link">
-                  <i class="menu-icon tf-icons bx bx-home-circle"></i>
-                  <div>Dashboard</div>
-                </a>
-              </li>
+            <li class="menu-header small text-uppercase mt-2">
+              <span class="menu-header-text">Management</span>
+            </li>
+            <li class="menu-item px-2">
+              <a
+                href="<?= $sidebarHrefPrefix; ?>accounts/index.php"
+                class="menu-link sidebar-action-card<?= $sidebarActiveKey === 'accounts' ? ' active' : ''; ?>"
+              >
+                <span class="sidebar-action-icon bg-label-info">
+                  <i class="bx bx-user"></i>
+                </span>
+                <div class="sidebar-action-content">
+                  <div class="sidebar-action-title">User Accounts</div>
+                  <small class="sidebar-action-sub">Manage administrators and chairs</small>
+                </div>
+              </a>
+            </li>
 
-              <li class="menu-header small text-uppercase">
-                <span class="menu-header-text">Administration</span>
-              </li>
+            <li class="menu-item px-2">
+              <a
+                href="<?= $sidebarHrefPrefix; ?>campuses/index.php"
+                class="menu-link sidebar-action-card<?= $sidebarActiveKey === 'campuses' ? ' active' : ''; ?>"
+              >
+                <span class="sidebar-action-icon bg-label-success">
+                  <i class="bx bx-buildings"></i>
+                </span>
+                <div class="sidebar-action-content">
+                  <div class="sidebar-action-title">Campuses</div>
+                  <small class="sidebar-action-sub">Maintain campus records</small>
+                </div>
+              </a>
+            </li>
 
-              <li class="menu-item">
-                <a href="../accounts/index.php" class="menu-link">
-                  <i class="menu-icon tf-icons bx bx-user"></i>
-                  <div>User Accounts</div>
-                </a>
-              </li>
+            <li class="menu-item px-2">
+              <a
+                href="<?= $sidebarHrefPrefix; ?>colleges/index.php"
+                class="menu-link sidebar-action-card<?= $sidebarActiveKey === 'colleges' ? ' active' : ''; ?>"
+              >
+                <span class="sidebar-action-icon bg-label-warning">
+                  <i class="bx bx-library"></i>
+                </span>
+                <div class="sidebar-action-content">
+                  <div class="sidebar-action-title">Colleges</div>
+                  <small class="sidebar-action-sub">Organize college structures</small>
+                </div>
+              </a>
+            </li>
 
-              <li class="menu-item">
-                <a href="javascript:void(0);" class="menu-link">
-                  <i class="menu-icon tf-icons bx bx-shield-quarter"></i>
-                  <div>Roles & Access</div>
-                </a>
-              </li>
+            <li class="menu-item px-2">
+              <a
+                href="<?= $sidebarHrefPrefix; ?>programs/index.php"
+                class="menu-link sidebar-action-card<?= $sidebarActiveKey === 'programs' ? ' active' : ''; ?>"
+              >
+                <span class="sidebar-action-icon bg-label-secondary">
+                  <i class="bx bx-book-content"></i>
+                </span>
+                <div class="sidebar-action-content">
+                  <div class="sidebar-action-title">Programs</div>
+                  <small class="sidebar-action-sub">Configure degree offerings</small>
+                </div>
+              </a>
+            </li>
 
-              <li class="menu-header small text-uppercase">
-                <span class="menu-header-text">Institution Setup</span>
-              </li>
+            <li class="menu-item px-2">
+              <a
+                href="<?= $sidebarHrefPrefix; ?>dbmanagement/index.php"
+                class="menu-link sidebar-action-card<?= $sidebarActiveKey === 'dbmanagement' ? ' active' : ''; ?>"
+              >
+                <span class="sidebar-action-icon bg-label-danger">
+                  <i class="bx bx-data"></i>
+                </span>
+                <div class="sidebar-action-content">
+                  <div class="sidebar-action-title">DB Management</div>
+                  <small class="sidebar-action-sub">Review and clear table records</small>
+                </div>
+              </a>
+            </li>
 
-              <li class="menu-item">
-                <a href="javascript:void(0);" class="menu-link">
-                  <i class="menu-icon tf-icons bx bx-buildings"></i>
-                  <div>Campuses</div>
-                </a>
-              </li>
-
-              <li class="menu-item">
-                <a href="javascript:void(0);" class="menu-link">
-                  <i class="menu-icon tf-icons bx bx-library"></i>
-                  <div>Colleges</div>
-                </a>
-              </li>
-
-              <li class="menu-item">
-                <a href="javascript:void(0);" class="menu-link">
-                  <i class="menu-icon tf-icons bx bx-book-content"></i>
-                  <div>Programs</div>
-                </a>
-              </li>
-
-              <li class="menu-header small text-uppercase">
-                <span class="menu-header-text">Interview Settings</span>
-              </li>
-
-              <li class="menu-item">
-                <a href="javascript:void(0);" class="menu-link">
-                  <i class="menu-icon tf-icons bx bx-list-check"></i>
-                  <div>Scoring Criteria</div>
-                </a>
-              </li>
-
-              <li class="menu-item">
-                <a href="javascript:void(0);" class="menu-link">
-                  <i class="menu-icon tf-icons bx bx-slideshow"></i>
-                  <div>Score Weights</div>
-                </a>
-              </li>
-
-              <li class="menu-item">
-                <a href="javascript:void(0);" class="menu-link">
-                  <i class="menu-icon tf-icons bx bx-check-shield"></i>
-                  <div>Passing Rules</div>
-                </a>
-              </li>
-
-              <li class="menu-item">
-                <a href="../administrator/placement_results/index.php" class="menu-link">
-                  <i class="menu-icon tf-icons bx bx-upload"></i>
-                  <div data-i18n="Placement Test Results">Placement Test Results</div>
-                </a>
-              </li>
-              
-
-              <li class="menu-header small text-uppercase">
-                <span class="menu-header-text">System</span>
-              </li>
-
-              <li class="menu-item">
-                <a href="javascript:void(0);" class="menu-link">
-                  <i class="menu-icon tf-icons bx bx-history"></i>
-                  <div>Activity Logs</div>
-                </a>
-              </li>
-
-              <li class="menu-item">
-                <a href="javascript:void(0);" class="menu-link">
-                  <i class="menu-icon tf-icons bx bx-cog"></i>
-                  <div>System Settings</div>
-                </a>
-              </li>
-
-            </ul>
+            <li class="menu-item px-2">
+              <a
+                href="<?= $sidebarHrefPrefix; ?>placement_results/index.php"
+                class="menu-link sidebar-action-card<?= $sidebarActiveKey === 'placement_results' ? ' active' : ''; ?>"
+              >
+                <span class="sidebar-action-icon bg-label-primary">
+                  <i class="bx bx-upload"></i>
+                </span>
+                <div class="sidebar-action-content">
+                  <div class="sidebar-action-title">Placement Results</div>
+                  <small class="sidebar-action-sub">Upload and validate test data</small>
+                </div>
+              </a>
+            </li>
+          </ul>
 
         </aside>

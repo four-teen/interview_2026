@@ -7,6 +7,7 @@
  */
 
 require_once '../config/db.php';
+require_once '../config/student_credentials.php';
 session_start();
 
 header('Content-Type: application/json');
@@ -136,15 +137,41 @@ if ($interviewId === 0) {
         $shsTrackId
     );
 
-    if ($stmt->execute()) {
+    try {
+        $conn->begin_transaction();
+
+        if (!$stmt->execute()) {
+            throw new RuntimeException('Insert interview failed: ' . $stmt->error);
+        }
+
         $newInterviewId = (int) $conn->insert_id;
+
+        $credentialResult = provision_student_credentials(
+            $conn,
+            $placementResultId,
+            $newInterviewId,
+            $examineeNumber,
+            true
+        );
+
+        if (!$credentialResult['success']) {
+            throw new RuntimeException((string) ($credentialResult['message'] ?? 'Failed to provision student credentials.'));
+        }
+
+        $conn->commit();
+
         echo json_encode([
             'success' => true,
-            'mode'    => 'insert',
-            'interview_id' => $newInterviewId
+            'mode' => 'insert',
+            'interview_id' => $newInterviewId,
+            'student_credentials' => [
+                'username' => $examineeNumber,
+                'temporary_password' => (string) ($credentialResult['temporary_code'] ?? '')
+            ]
         ]);
-    } else {
-        error_log('Insert interview failed: ' . $stmt->error);
+    } catch (Throwable $e) {
+        $conn->rollback();
+        error_log($e->getMessage());
         http_response_code(500);
         echo json_encode([
             'success' => false,
@@ -222,14 +249,44 @@ $updateStmt->bind_param(
     $interviewId
 );
 
-if ($updateStmt->execute()) {
-    echo json_encode([
+try {
+    $conn->begin_transaction();
+
+    if (!$updateStmt->execute()) {
+        throw new RuntimeException('Update interview failed: ' . $updateStmt->error);
+    }
+
+    $credentialResult = provision_student_credentials(
+        $conn,
+        $placementResultId,
+        $interviewId,
+        $examineeNumber,
+        false
+    );
+
+    if (!$credentialResult['success']) {
+        throw new RuntimeException((string) ($credentialResult['message'] ?? 'Failed to sync student credentials.'));
+    }
+
+    $conn->commit();
+
+    $response = [
         'success' => true,
-        'mode'    => 'update',
+        'mode' => 'update',
         'interview_id' => $interviewId
-    ]);
-} else {
-    error_log('Update interview failed: ' . $updateStmt->error);
+    ];
+
+    if (!empty($credentialResult['temporary_code'])) {
+        $response['student_credentials'] = [
+            'username' => $examineeNumber,
+            'temporary_password' => (string) $credentialResult['temporary_code']
+        ];
+    }
+
+    echo json_encode($response);
+} catch (Throwable $e) {
+    $conn->rollback();
+    error_log($e->getMessage());
     http_response_code(500);
     echo json_encode([
         'success' => false,

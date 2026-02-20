@@ -2,6 +2,31 @@
       if (!defined('BASE_URL')) {
           require_once __DIR__ . '/../config/config.php';
       }
+
+      if (session_status() !== PHP_SESSION_ACTIVE) {
+          session_start();
+      }
+
+      $sessionFullname = trim((string) ($_SESSION['fullname'] ?? 'Program Chair'));
+      $sessionAccountId = trim((string) ($_SESSION['accountid'] ?? ''));
+
+      $pcFullnameDisplay = trim((string) ($pc_fullname ?? $sessionFullname));
+      if ($pcFullnameDisplay === '') {
+          $pcFullnameDisplay = 'Program Chair';
+      }
+
+      $roleRaw = trim((string) ($pc_role ?? ($_SESSION['role'] ?? 'progchair')));
+      $normalizedRole = strtolower(str_replace(['-', '_', ' '], '', $roleRaw));
+      $roleMap = [
+          'progchair' => 'Program Chair',
+          'programchair' => 'Program Chair',
+          'administrator' => 'Administrator',
+          'student' => 'Student'
+      ];
+      $pcRoleDisplay = $roleMap[$normalizedRole] ?? ucwords(str_replace(['_', '-'], ' ', strtolower($roleRaw)));
+      if ($pcRoleDisplay === '') {
+          $pcRoleDisplay = 'Program Chair';
+      }
       ?>
 
       <nav
@@ -32,7 +57,7 @@
           <ul class="navbar-nav flex-row align-items-center ms-auto">
             <!-- Place this tag where you want the button to render. -->
             <li class="nav-item lh-1 me-3">
-<?= htmlspecialchars($_SESSION['fullname']); ?> (<?= htmlspecialchars($_SESSION['accountid']); ?>)
+<?= htmlspecialchars($sessionFullname); ?><?= $sessionAccountId !== '' ? ' (' . htmlspecialchars($sessionAccountId) . ')' : ''; ?>
 
             </li>
 
@@ -52,43 +77,18 @@
                           <img src="<?= BASE_URL ?>/assets/img/avatars/1.png" alt class="w-px-40 h-auto rounded-circle" />
                         </div>
                       </div>
-<div class="flex-grow-1">
-  <span class="fw-semibold d-block">
-    <?= htmlspecialchars($pc_fullname); ?>
-  </span>
-  <small class="text-muted">
-    <?= htmlspecialchars($pc_role); ?>
-  </small>
-</div>
+                      <div class="flex-grow-1">
+                        <span class="fw-semibold d-block">
+                          <?= htmlspecialchars($pcFullnameDisplay); ?>
+                        </span>
+                        <small class="text-muted">
+                          <?= htmlspecialchars($pcRoleDisplay); ?>
+                        </small>
+                      </div>
 
                     </div>
                   </a>
                 </li>
-                <li>
-                  <div class="dropdown-divider"></div>
-                </li>
-                <li>
-                  <a class="dropdown-item" href="#">
-                    <i class="bx bx-user me-2"></i>
-                    <span class="align-middle">My Profile</span>
-                  </a>
-                </li>
-                <li>
-                  <a class="dropdown-item" href="#">
-                    <i class="bx bx-cog me-2"></i>
-                    <span class="align-middle">Settings</span>
-                  </a>
-                </li>
-                <li>
-                  <a class="dropdown-item" href="#">
-                    <span class="d-flex align-items-center align-middle">
-                      <i class="flex-shrink-0 bx bx-credit-card me-2"></i>
-                      <span class="flex-grow-1 align-middle">Billing</span>
-                      <span class="flex-shrink-0 badge badge-center rounded-pill bg-danger w-px-20 h-px-20">4</span>
-                    </span>
-                  </a>
-                </li>
-                <li>
                   <div class="dropdown-divider"></div>
                 </li>
                 <li>

@@ -26,6 +26,9 @@ $programSql = "
         p.program_name,
         p.major,
         pc.cutoff_score,
+        pc.absorptive_capacity,
+        pc.regular_percentage,
+        pc.etg_percentage,
         COALESCE(sc.scored_students_count, 0) AS scored_students_count
     FROM tbl_program p
     INNER JOIN tbl_college c 
@@ -34,12 +37,13 @@ $programSql = "
         ON p.program_id = pc.program_id
     LEFT JOIN (
         SELECT
-            first_choice AS program_id,
+            COALESCE(NULLIF(program_id, 0), NULLIF(first_choice, 0)) AS program_id,
             COUNT(*) AS scored_students_count
         FROM tbl_student_interview
         WHERE final_score IS NOT NULL
           AND status = 'active'
-        GROUP BY first_choice
+          AND COALESCE(NULLIF(program_id, 0), NULLIF(first_choice, 0)) IS NOT NULL
+        GROUP BY COALESCE(NULLIF(program_id, 0), NULLIF(first_choice, 0))
     ) sc
         ON p.program_id = sc.program_id
     WHERE c.campus_id = ?
@@ -513,8 +517,22 @@ if ($activeBatchId) {
 
     <?php foreach ($programs as $program): ?>
     <?php 
-    $assignedProgramId = $_SESSION['program_id'];
     $isAssigned = ($program['program_id'] == $assignedProgramId);
+
+    $hasCapacityConfig = $program['absorptive_capacity'] !== null
+      && $program['regular_percentage'] !== null
+      && $program['etg_percentage'] !== null;
+
+    $absorptiveCapacity = $hasCapacityConfig ? (int)$program['absorptive_capacity'] : 0;
+    $regularPercentage = $hasCapacityConfig ? (float)$program['regular_percentage'] : 0.0;
+    $etgPercentage = $hasCapacityConfig ? (float)$program['etg_percentage'] : 0.0;
+
+    $regularSlots = $hasCapacityConfig
+      ? (int) round($absorptiveCapacity * ($regularPercentage / 100))
+      : 0;
+    $etgSlots = $hasCapacityConfig
+      ? max(0, $absorptiveCapacity - $regularSlots)
+      : 0;
     ?>
       <div class="mb-3 pb-3 border-bottom program-rank-trigger <?= $isAssigned ? 'bg-label-primary rounded px-2 py-2' : '' ?>"
            data-program-id="<?= (int)$program['program_id']; ?>"
@@ -556,6 +574,20 @@ if ($activeBatchId) {
             SCORED: <?= (int)($program['scored_students_count'] ?? 0); ?>
           </span>
         </div>
+
+        <?php if ($isAssigned): ?>
+          <?php if ($hasCapacityConfig): ?>
+            <div class="small mt-2 text-dark">
+              CAPACITY: <?= $absorptiveCapacity; ?> |
+              REGULAR: <?= number_format($regularPercentage, 2); ?>% (<?= $regularSlots; ?>) |
+              ETG: <?= number_format($etgPercentage, 2); ?>% (<?= $etgSlots; ?>)
+            </div>
+          <?php else: ?>
+            <div class="small mt-2 text-danger">
+              CAPACITY: NOT SET
+            </div>
+          <?php endif; ?>
+        <?php endif; ?>
 
       </div>
 
@@ -1418,6 +1450,7 @@ const printRankingBtn         = document.getElementById('printRankingBtn');
 let currentRankingProgramId = 0;
 let currentRankingProgramName = '';
 let currentRankingRows = [];
+let currentRankingQuota = null;
 
 const programRankingModal = programRankingModalEl
   ? new bootstrap.Modal(programRankingModalEl)
@@ -1491,6 +1524,24 @@ function renderRankingRows(rows) {
   };
 }
 
+function buildRankingMeta(grouped, quota) {
+  const regularCount = Number(grouped?.regularCount ?? 0);
+  const etgCount = Number(grouped?.etgCount ?? 0);
+  const total = regularCount + etgCount;
+
+  if (!quota || quota.enabled !== true) {
+    return `${total} ranked student${total === 1 ? '' : 's'} | REGULAR: ${regularCount} | ETG: ${etgCount}`;
+  }
+
+  const capacity = Number(quota.absorptive_capacity ?? 0);
+  const regularSlots = Number(quota.regular_slots ?? 0);
+  const etgSlots = Number(quota.etg_slots ?? 0);
+  const regularPct = Number(quota.regular_percentage ?? 0).toFixed(2);
+  const etgPct = Number(quota.etg_percentage ?? 0).toFixed(2);
+
+  return `Shown ${total}/${capacity} | REGULAR: ${regularCount}/${regularSlots} (${regularPct}%) | ETG: ${etgCount}/${etgSlots} (${etgPct}%)`;
+}
+
 function setRankingState({ loading = false, empty = false, showTable = false }) {
   if (programRankingLoadingEl) programRankingLoadingEl.classList.toggle('d-none', !loading);
   if (programRankingEmptyEl) programRankingEmptyEl.classList.toggle('d-none', !empty);
@@ -1503,6 +1554,7 @@ function loadProgramRanking(programId, programName) {
   currentRankingProgramId = programId;
   currentRankingProgramName = programName || 'PROGRAM';
   currentRankingRows = [];
+  currentRankingQuota = null;
 
   if (programRankingTitleEl) {
     programRankingTitleEl.textContent = `Program Ranking - ${currentRankingProgramName}`;
@@ -1526,17 +1578,33 @@ function loadProgramRanking(programId, programName) {
       }
 
       currentRankingRows = Array.isArray(data.rows) ? data.rows : [];
+      currentRankingQuota = data && typeof data.quota === 'object' ? data.quota : null;
+
+      const groupedCounts = {
+        regularCount: currentRankingRows.filter(row => String(row.classification || '').toUpperCase() === 'REGULAR').length,
+        etgCount: currentRankingRows.filter(row => String(row.classification || '').toUpperCase() !== 'REGULAR').length
+      };
+
+      if (programRankingMetaEl) {
+        programRankingMetaEl.textContent = buildRankingMeta(groupedCounts, currentRankingQuota);
+      }
 
       if (currentRankingRows.length === 0) {
+        if (programRankingEmptyEl && currentRankingQuota && currentRankingQuota.enabled === true) {
+          const capacity = Number(currentRankingQuota.absorptive_capacity ?? 0);
+          if (capacity <= 0) {
+            programRankingEmptyEl.textContent = 'No ranking shown because absorptive capacity is set to 0.';
+          } else {
+            programRankingEmptyEl.textContent = 'No ranked students matched the allocated Regular/ETG slots.';
+          }
+        }
         setRankingState({ loading: false, empty: true, showTable: false });
         return;
       }
 
       const grouped = renderRankingRows(currentRankingRows);
       if (programRankingMetaEl) {
-        const total = currentRankingRows.length;
-        programRankingMetaEl.textContent =
-          `${total} ranked student${total === 1 ? '' : 's'} | REGULAR: ${grouped.regularCount} | ETG: ${grouped.etgCount}`;
+        programRankingMetaEl.textContent = buildRankingMeta(grouped, currentRankingQuota);
       }
       setRankingState({ loading: false, empty: false, showTable: true });
     })
@@ -1588,6 +1656,7 @@ if (printRankingBtn) {
     }
 
     const now = new Date().toLocaleString();
+    const metaText = programRankingMetaEl ? programRankingMetaEl.textContent : '';
     const tableHtml = programRankingTableWrap ? programRankingTableWrap.innerHTML : '';
 
     printWindow.document.write(`
@@ -1608,6 +1677,7 @@ if (printRankingBtn) {
       <body>
         <h2>Program Ranking - ${currentRankingProgramName}</h2>
         <div class="meta">Generated: ${now}</div>
+        <div class="meta">${escapeHtml(metaText)}</div>
         ${tableHtml}
       </body>
       </html>
@@ -2106,11 +2176,26 @@ page = 1;
 hasMore = true;
 loadStudents(true);
 
+      const studentCred = data.student_credentials || null;
+      let credentialNotice = '';
+      if (studentCred && studentCred.username && studentCred.temporary_password) {
+        const safeUsername = escapeHtml(studentCred.username);
+        const safeTempPassword = escapeHtml(studentCred.temporary_password);
+        credentialNotice = `
+          <div class="alert alert-warning text-start mt-3 mb-0 py-2 px-3">
+            <div class="fw-semibold mb-1">Student Portal Credentials</div>
+            <div><strong>Username:</strong> ${safeUsername}</div>
+            <div><strong>Temporary Password:</strong> ${safeTempPassword}</div>
+            <small class="text-muted">The student must change this password on first login.</small>
+          </div>
+        `;
+      }
+
       // Ask next action
       Swal.fire({
         icon: 'success',
         title: 'Saved Successfully',
-        text: 'Do you want to enter scores now?',
+        html: `<div>Do you want to enter scores now?</div>${credentialNotice}`,
         showCancelButton: true,
         confirmButtonText: 'Yes, Enter Scores',
         cancelButtonText: 'Return to List'

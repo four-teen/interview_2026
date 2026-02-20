@@ -1,3 +1,25 @@
+<?php
+require_once __DIR__ . '/config/env.php';
+require_once __DIR__ . '/config/session_security.php';
+
+secure_session_start();
+
+$googleClientId = getenv('GOOGLE_CLIENT_ID') ?: '115027937761-p80e2nudpe4ldsg9kbi73qc5o9nhg07p.apps.googleusercontent.com';
+
+try {
+    $googleLoginNonce = bin2hex(random_bytes(16));
+    $googleLoginCsrf = bin2hex(random_bytes(32));
+    $studentLoginCsrf = bin2hex(random_bytes(32));
+} catch (Exception $e) {
+    $googleLoginNonce = sha1(uniqid('nonce_', true));
+    $googleLoginCsrf = sha1(uniqid('gcsrf_', true));
+    $studentLoginCsrf = sha1(uniqid('scsrf_', true));
+}
+
+$_SESSION['google_login_nonce'] = $googleLoginNonce;
+$_SESSION['google_login_csrf'] = $googleLoginCsrf;
+$_SESSION['student_login_csrf'] = $studentLoginCsrf;
+?>
 <!DOCTYPE html>
 <html
   lang="en"
@@ -53,21 +75,184 @@
     />
 
     <style>
+      :root {
+        --login-bg: linear-gradient(135deg, #f3f6fb 0%, #f8fafc 45%, #edf7f1 100%);
+        --login-card-border: #d9e2ef;
+        --login-card-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+        --login-title: #1f3552;
+        --login-subtitle: #526a86;
+        --login-note-bg: #edf5ff;
+        --login-note-border: #cbdff8;
+        --login-note-text: #1f4e7a;
+      }
+
+      body {
+        background: var(--login-bg);
+      }
+
+      .authentication-wrapper {
+        min-height: 100vh;
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+        display: flex;
+        align-items: center;
+      }
+
+      .authentication-inner {
+        width: 100%;
+        max-width: 560px;
+        position: relative;
+        padding-top: 2.1rem;
+      }
+
+      .login-page-logo-wrap {
+        position: absolute;
+        top: 0;
+        left: 50%;
+        transform: translate(-50%, -12%);
+        display: flex;
+        justify-content: center;
+        margin-bottom: 0;
+        z-index: 5;
+        pointer-events: none;
+      }
+
+      .login-page-logo {
+        width: 34%;
+        max-width: 170px;
+        min-width: 100px;
+        height: auto;
+        object-fit: contain;
+        background: #f3f6fb;
+        border: 8px solid #f3f6fb;
+        border-radius: 50%;
+        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+      }
+
+      .login-card {
+        margin-top: 1rem;
+        border: 1px solid var(--login-card-border);
+        border-radius: 16px;
+        box-shadow: var(--login-card-shadow);
+      }
+
+      .login-brand-icon {
+        width: 44px;
+        height: 44px;
+        border-radius: 12px;
+        background: #edf4ff;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .login-brand-text {
+        color: #1e324d;
+        letter-spacing: 0.2px;
+      }
+
+      .login-title {
+        color: var(--login-title);
+        font-weight: 700;
+      }
+
+      .login-subtitle {
+        color: var(--login-subtitle);
+      }
+
+      .login-alert {
+        border-radius: 12px;
+        border: 1px solid var(--login-note-border);
+        font-size: 0.95rem;
+      }
+
+      .login-alert.alert-info {
+        background: var(--login-note-bg);
+        color: var(--login-note-text);
+      }
+
+      .login-alert.alert-warning {
+        background: #fff4e8;
+        border-color: #ffd6aa;
+        color: #8a4a07;
+      }
+
+      .login-divider {
+        text-align: center;
+        margin: 1rem 0 0.9rem;
+      }
+
+      .login-divider span {
+        display: inline-block;
+        font-size: 0.8rem;
+        color: #6b7f98;
+        text-transform: uppercase;
+        letter-spacing: 0.7px;
+      }
+
+      .login-footnote {
+        color: #5f7088;
+      }
+
+      .student-login-panel {
+        margin-top: 1.1rem;
+        border-top: 1px solid #e6edf7;
+        padding-top: 1rem;
+      }
+
+      .student-login-toggle {
+        border-radius: 10px;
+        border-color: #cdd8e9;
+        color: #325172;
+      }
+
+      .student-login-toggle:hover {
+        border-color: #9fb3cf;
+        color: #27415d;
+      }
+
+      .student-login-form {
+        margin-top: 0.85rem;
+      }
+
+      .student-login-form .form-control {
+        border-radius: 10px;
+      }
+
+      .student-login-form .btn {
+        border-radius: 10px;
+      }
+
       .google-login-slot {
+        display: flex;
+        justify-content: center;
+        align-items: center;
         width: 100%;
       }
 
-      .google-login-slot .g_id_signin,
-      .google-login-slot .g_id_signin > div,
-      .google-login-slot iframe {
-        width: 100% !important;
-        max-width: 100% !important;
+      .google-login-slot .g_id_signin {
+        display: inline-flex;
+        justify-content: center;
       }
 
       .google-login-slot .g_id_signin > div,
       .google-login-slot iframe {
         display: block;
-        margin: 0 auto;
+        margin: 0 auto !important;
+        max-width: 100%;
+      }
+
+      @media (max-width: 575.98px) {
+        .authentication-inner {
+          max-width: 100%;
+          padding-top: 1.8rem;
+        }
+
+        .login-page-logo {
+          width: 40%;
+          min-width: 86px;
+          max-width: 132px;
+        }
       }
     </style>
     <!-- Helpers -->
@@ -97,40 +282,40 @@
     <div class="container-xxl">
       <div class="authentication-wrapper authentication-basic container-p-y">
         <div class="authentication-inner">
+          <div class="login-page-logo-wrap">
+            <img src="assets/img/logo.png" alt="SKSU Logo" class="login-page-logo" />
+          </div>
 
           <!-- Login Card -->
-          <div class="card">
-            <div class="card-body">
+          <div class="card login-card">
+            <div class="card-body p-4 p-md-5">
 
               <!-- Branding -->
               <div class="app-brand justify-content-center mb-3">
                 <a href="#" class="app-brand-link gap-2">
-                  <span class="app-brand-logo demo">
-                    <i class="bx bx-buildings bx-md text-primary"></i>
-                  </span>
-                  <span class="app-brand-text demo text-body fw-bolder">
+                  <span class="app-brand-text demo fw-bolder login-brand-text">
                     SKSU Interview
                   </span>
                 </a>
               </div>
 
-              <h4 class="mb-2 text-center">
+              <h5 class="mb-2 text-center login-title">
                 Centralized Interview System
-              </h4>
-              <p class="mb-3 text-center">
-                For Tertiary Placement Test Passers<br />
+              </h5>
+              <p class="mb-3 text-center login-subtitle">
+                Official portal for tertiary placement interview processing.<br />
                 <small class="text-muted">
-                  Sultan Kudarat State University · 7 Campuses
+                  Sultan Kudarat State University - 7 Campuses
                 </small>
               </p>
 
               <!-- Notice -->
 <?php if (!empty($statusMsg)): ?>
-  <div class="alert alert-warning small" role="alert">
+  <div class="alert alert-warning small login-alert" role="alert">
     <?= htmlspecialchars($statusMsg); ?>
   </div>
 <?php else: ?>
-  <div class="alert alert-info small" role="alert">
+  <div class="alert alert-info small login-alert" role="alert">
     Only official SKSU organizational Google accounts are allowed to
     access this system.
   </div>
@@ -138,14 +323,18 @@
 
               <!-- Google Login -->
               <div class="mb-3">
+                <div class="login-divider">
+                  <span>Authorized Google Sign-In</span>
+                </div>
                 <div
                   id="g_id_onload"
-                  data-client_id="115027937761-p80e2nudpe4ldsg9kbi73qc5o9nhg07p.apps.googleusercontent.com"
+                  data-client_id="<?= htmlspecialchars((string) $googleClientId, ENT_QUOTES); ?>"
                   data-callback="handleGoogleCredential"
+                  data-nonce="<?= htmlspecialchars((string) $googleLoginNonce, ENT_QUOTES); ?>"
                   data-auto_prompt="false"
                 ></div>
 
-                <div class="d-grid google-login-slot">
+                <div class="google-login-slot">
                   <div
                     class="g_id_signin"
                     data-type="standard"
@@ -163,67 +352,52 @@
                 ></div>
               </div>
 
-              <p class="text-center small mb-0">
+              <div class="student-login-panel">
+                <div class="login-divider mt-0">
+                  <span>Student Portal Access</span>
+                </div>
+
+                <button
+                  type="button"
+                  id="studentLoginToggle"
+                  class="btn btn-outline-secondary w-100 student-login-toggle"
+                >
+                  Student Login
+                </button>
+
+                <form id="studentLoginForm" class="student-login-form d-none">
+                  <div class="mb-2">
+                    <input
+                      type="text"
+                      id="studentExamineeNumber"
+                      class="form-control"
+                      placeholder="Examinee Number"
+                      autocomplete="username"
+                      required
+                    />
+                  </div>
+                  <div class="mb-2">
+                    <input
+                      type="password"
+                      id="studentPassword"
+                      class="form-control"
+                      placeholder="Temporary / Current Password"
+                      autocomplete="current-password"
+                      required
+                    />
+                  </div>
+                  <button type="submit" class="btn btn-primary w-100">
+                    Login as Student
+                  </button>
+                  <div id="studentLoginMsg" class="small text-center mt-2 text-muted"></div>
+                </form>
+              </div>
+
+              <p class="text-center small mb-0 login-footnote">
                 Login will be validated against the university account registry.
               </p>
             </div>
           </div>
-
-          <!-- What to Expect -->
-          <div class="card mt-4">
-            <div class="card-body">
-              <h6 class="mb-3">
-                What to expect after login
-              </h6>
-
-              <div class="row g-3">
-                <div class="col-6">
-                  <div class="border rounded p-3 text-center">
-                    <div class="text-muted small">
-                      Campuses Covered
-                    </div>
-                    <div class="fs-4 fw-bold">
-                      7
-                    </div>
-                  </div>
-                </div>
-
-                <div class="col-6">
-                  <div class="border rounded p-3 text-center">
-                    <div class="text-muted small">
-                      Interview Rule
-                    </div>
-                    <div class="fs-6 fw-bold">
-                      One-time only
-                    </div>
-                  </div>
-                </div>
-
-                <div class="col-6">
-                  <div class="border rounded p-3 text-center">
-                    <div class="text-muted small">
-                      Monitoring
-                    </div>
-                    <div class="fs-6 fw-bold">
-                      Cross-campus
-                    </div>
-                  </div>
-                </div>
-
-                <div class="col-6">
-                  <div class="border rounded p-3 text-center">
-                    <div class="text-muted small">
-                      Remedy
-                    </div>
-                    <div class="fs-6 fw-bold">
-                      Score transfer
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-          <!-- /What to Expect -->
 
         </div>
       </div>
@@ -239,6 +413,9 @@
 
     <!-- Login Logic -->
 <script>
+const googleLoginCsrfToken = <?= json_encode((string) $googleLoginCsrf); ?>;
+const studentLoginCsrfToken = <?= json_encode((string) $studentLoginCsrf); ?>;
+
 function handleGoogleCredential(response) {
   const msg = document.getElementById("loginMsg");
 
@@ -251,7 +428,8 @@ function handleGoogleCredential(response) {
       'Content-Type': 'application/x-www-form-urlencoded'
     },
     body: new URLSearchParams({
-      credential: response.credential
+      credential: response.credential,
+      csrf_token: googleLoginCsrfToken
     })
   })
   .then(res => res.json())
@@ -266,6 +444,68 @@ function handleGoogleCredential(response) {
     console.error(err);
     msg.className = "mt-3 small text-center text-danger";
     msg.textContent = "Authentication failed. Please contact the system administrator.";
+  });
+}
+
+const studentLoginToggle = document.getElementById("studentLoginToggle");
+const studentLoginForm = document.getElementById("studentLoginForm");
+const studentLoginMsg = document.getElementById("studentLoginMsg");
+
+if (studentLoginToggle && studentLoginForm) {
+  studentLoginToggle.addEventListener("click", function () {
+    studentLoginForm.classList.toggle("d-none");
+    if (!studentLoginForm.classList.contains("d-none")) {
+      const examineeInput = document.getElementById("studentExamineeNumber");
+      if (examineeInput) examineeInput.focus();
+    }
+  });
+}
+
+if (studentLoginForm) {
+  studentLoginForm.addEventListener("submit", function (event) {
+    event.preventDefault();
+
+    const examineeNumber = String(document.getElementById("studentExamineeNumber")?.value || "").trim();
+    const password = String(document.getElementById("studentPassword")?.value || "");
+
+    if (!examineeNumber || !password) {
+      if (studentLoginMsg) {
+        studentLoginMsg.className = "small text-center mt-2 text-danger";
+        studentLoginMsg.textContent = "Please provide examinee number and password.";
+      }
+      return;
+    }
+
+    if (studentLoginMsg) {
+      studentLoginMsg.className = "small text-center mt-2 text-success";
+      studentLoginMsg.textContent = "Signing in...";
+    }
+
+    fetch("auth/student_login.php", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: new URLSearchParams({
+        examinee_number: examineeNumber,
+        password: password,
+        csrf_token: studentLoginCsrfToken
+      })
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (!data.success) {
+          throw new Error(data.message || "Student login failed.");
+        }
+        window.location.href = data.redirect;
+      })
+      .catch((error) => {
+        console.error(error);
+        if (studentLoginMsg) {
+          studentLoginMsg.className = "small text-center mt-2 text-danger";
+          studentLoginMsg.textContent = error.message || "Student login failed.";
+        }
+      });
   });
 }
 </script>

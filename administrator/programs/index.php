@@ -72,7 +72,10 @@ $sql = "
         p.*,
         col.college_name,
         c.campus_name,
-        pc.cutoff_score
+        pc.cutoff_score,
+        pc.absorptive_capacity,
+        pc.regular_percentage,
+        pc.etg_percentage
     FROM tbl_program p
     JOIN tbl_college col 
         ON col.college_id = p.college_id
@@ -206,6 +209,24 @@ while ($row = $result->fetch_assoc()) {
 
 <?php foreach ($programs as $program): ?>
 
+<?php
+$hasCutoff = $program['cutoff_score'] !== null;
+$hasCapacityConfig = $program['absorptive_capacity'] !== null
+    && $program['regular_percentage'] !== null
+    && $program['etg_percentage'] !== null;
+
+$absorptiveCapacity = $hasCapacityConfig ? (int)$program['absorptive_capacity'] : 0;
+$regularPercentage  = $hasCapacityConfig ? (float)$program['regular_percentage'] : 0.0;
+$etgPercentage      = $hasCapacityConfig ? (float)$program['etg_percentage'] : 0.0;
+
+$regularSlots = $hasCapacityConfig
+    ? (int) round($absorptiveCapacity * ($regularPercentage / 100))
+    : 0;
+$etgSlots = $hasCapacityConfig
+    ? max(0, $absorptiveCapacity - $regularSlots)
+    : 0;
+?>
+
 <div class="col-12 mb-3">
 <div class="card border shadow-sm">
 <div class="card-body">
@@ -223,13 +244,19 @@ while ($row = $result->fetch_assoc()) {
     <h5 class="mb-1 fw-semibold">
         <?= htmlspecialchars($program['program_name']); ?>
 
-        <?php if ($program['cutoff_score'] !== null): ?>
+        <?php if ($hasCutoff): ?>
             <span class="badge bg-label-primary ms-2">
                 Cut-Off: <?= (int)$program['cutoff_score']; ?>
             </span>
         <?php else: ?>
             <span class="badge bg-secondary ms-2">
                 No Cut-Off
+            </span>
+        <?php endif; ?>
+
+        <?php if ($hasCapacityConfig): ?>
+            <span class="badge bg-label-info ms-2">
+                Capacity: <?= $absorptiveCapacity; ?>
             </span>
         <?php endif; ?>
 
@@ -245,6 +272,13 @@ while ($row = $result->fetch_assoc()) {
         <span class="badge bg-secondary">INACTIVE</span>
     <?php endif; ?>
 
+    <?php if ($hasCapacityConfig): ?>
+        <div class="small text-muted mt-1">
+            Regular: <?= number_format($regularPercentage, 2); ?>% (<?= $regularSlots; ?>) |
+            ETG: <?= number_format($etgPercentage, 2); ?>% (<?= $etgSlots; ?>)
+        </div>
+    <?php endif; ?>
+
 </div>
 
 <div class="d-flex gap-2">
@@ -253,7 +287,10 @@ while ($row = $result->fetch_assoc()) {
             class="btn btn-sm btn-info cutoff-btn"
             data-id="<?= $program['program_id']; ?>"
             data-name="<?= htmlspecialchars($program['program_name']); ?>"
-            data-cutoff="<?= $program['cutoff_score']; ?>">
+            data-cutoff="<?= $program['cutoff_score']; ?>"
+            data-capacity="<?= $program['absorptive_capacity']; ?>"
+            data-regular-pct="<?= $program['regular_percentage']; ?>"
+            data-etg-pct="<?= $program['etg_percentage']; ?>">
         Cut-Off
     </button>
 
@@ -389,7 +426,7 @@ while ($row = $result->fetch_assoc()) {
             <form method="POST" action="program_cutoff_action.php">
 
                 <div class="modal-header">
-                    <h5 class="modal-title">Set Program Cut-Off</h5>
+                    <h5 class="modal-title">Set Program Cut-Off and Capacity</h5>
                     <button type="button"
                             class="btn-close"
                             data-bs-dismiss="modal"></button>
@@ -415,9 +452,53 @@ while ($row = $result->fetch_assoc()) {
                                name="cutoff_score"
                                id="cutoffScore"
                                class="form-control"
+                               min="0"
                                required>
                     </div>
 
+                    <div class="mb-3">
+                        <label class="form-label">Absorptive Capacity</label>
+                        <input type="number"
+                               name="absorptive_capacity"
+                               id="absorptiveCapacity"
+                               class="form-control"
+                               min="0"
+                               required>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">% Regular</label>
+                            <input type="number"
+                                   name="regular_percentage"
+                                   id="regularPercentage"
+                                   class="form-control"
+                                   min="0"
+                                   max="100"
+                                   step="0.01"
+                                   required>
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">% ETG</label>
+                            <input type="number"
+                                   name="etg_percentage"
+                                   id="etgPercentage"
+                                   class="form-control"
+                                   min="0"
+                                   max="100"
+                                   step="0.01"
+                                   required>
+                        </div>
+                    </div>
+
+                    <div class="form-text" id="capacityPreview">
+                        Percentages must total 100.00%.
+                    </div>
+
+                    <div class="small text-muted" id="capacitySlotPreview">
+                        Slots -> Regular: 0 | ETG: 0
+                    </div>
                 </div>
 
                 <div class="modal-footer">
@@ -440,16 +521,54 @@ while ($row = $result->fetch_assoc()) {
 <script src="../../assets/vendor/js/bootstrap.js"></script>
 
 <script>
+const cutoffInput = document.getElementById('cutoffScore');
+const capacityInput = document.getElementById('absorptiveCapacity');
+const regularPercentageInput = document.getElementById('regularPercentage');
+const etgPercentageInput = document.getElementById('etgPercentage');
+const capacityPreview = document.getElementById('capacityPreview');
+const capacitySlotPreview = document.getElementById('capacitySlotPreview');
+
+function parseNumericValue(value, fallback) {
+    const parsed = parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function updateCapacityPreview() {
+    const capacity = Math.max(0, Math.floor(parseNumericValue(capacityInput.value, 0)));
+    const regularPct = parseNumericValue(regularPercentageInput.value, 0);
+    const etgPct = parseNumericValue(etgPercentageInput.value, 0);
+    const totalPct = regularPct + etgPct;
+    const isValidTotal = Math.abs(totalPct - 100) < 0.01;
+
+    const regularSlots = Math.round(capacity * (regularPct / 100));
+    const etgSlots = Math.max(0, capacity - regularSlots);
+
+    capacityPreview.textContent = `Regular + ETG = ${totalPct.toFixed(2)}%`;
+    capacityPreview.classList.toggle('text-success', isValidTotal);
+    capacityPreview.classList.toggle('text-danger', !isValidTotal);
+
+    capacitySlotPreview.textContent = `Slots -> Regular: ${regularSlots} | ETG: ${etgSlots}`;
+
+    const validationMessage = isValidTotal
+        ? ''
+        : 'Regular and ETG percentages must total 100%.';
+
+    regularPercentageInput.setCustomValidity(validationMessage);
+    etgPercentageInput.setCustomValidity(validationMessage);
+}
+
 document.querySelectorAll('.cutoff-btn').forEach(function(btn) {
 
     btn.addEventListener('click', function() {
 
         document.getElementById('cutoffProgramId').value = this.dataset.id;
         document.getElementById('cutoffProgramName').value = this.dataset.name;
-document.getElementById('cutoffScore').value =
-    this.dataset.cutoff !== undefined && this.dataset.cutoff !== null
-        ? this.dataset.cutoff
-        : 0;
+        cutoffInput.value = this.dataset.cutoff !== '' ? this.dataset.cutoff : 0;
+        capacityInput.value = this.dataset.capacity !== '' ? this.dataset.capacity : 0;
+        regularPercentageInput.value = this.dataset.regularPct !== '' ? this.dataset.regularPct : 75;
+        etgPercentageInput.value = this.dataset.etgPct !== '' ? this.dataset.etgPct : 25;
+
+        updateCapacityPreview();
 
         var modal = new bootstrap.Modal(
             document.getElementById('cutoffModal')
@@ -457,6 +576,10 @@ document.getElementById('cutoffScore').value =
         modal.show();
     });
 
+});
+
+[capacityInput, regularPercentageInput, etgPercentageInput].forEach(function(input) {
+    input.addEventListener('input', updateCapacityPreview);
 });
 </script>
 
