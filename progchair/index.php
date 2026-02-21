@@ -17,6 +17,36 @@ error_reporting(E_ALL);
 $assignedCampusId  = $_SESSION['campus_id'];
 $assignedProgramId = $_SESSION['program_id'];
 
+function table_column_exists(mysqli $conn, string $table, string $column): bool
+{
+    $sql = "
+        SELECT COUNT(*) AS column_count
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = ?
+          AND COLUMN_NAME = ?
+        LIMIT 1
+    ";
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return false;
+    }
+
+    $stmt->bind_param('ss', $table, $column);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $row = $result ? $result->fetch_assoc() : null;
+    $exists = (int) ($row['column_count'] ?? 0) > 0;
+    $stmt->close();
+
+    return $exists;
+}
+
+$hasEndorsementCapacityColumn = table_column_exists($conn, 'tbl_program_cutoff', 'endorsement_capacity');
+$endorsementCapacitySelect = $hasEndorsementCapacityColumn
+    ? 'COALESCE(pc.endorsement_capacity, 0) AS endorsement_capacity'
+    : '0 AS endorsement_capacity';
+
 $programs = [];
 
 $programSql = "
@@ -29,6 +59,7 @@ $programSql = "
         pc.absorptive_capacity,
         pc.regular_percentage,
         pc.etg_percentage,
+        {$endorsementCapacitySelect},
         COALESCE(sc.scored_students_count, 0) AS scored_students_count
     FROM tbl_program p
     INNER JOIN tbl_college c 
@@ -386,6 +417,26 @@ if ($activeBatchId) {
   gap: 8px;
 }
 
+.program-cutoff-value {
+  color: #1f6b33;
+  font-weight: 800;
+  letter-spacing: 0.15px;
+}
+
+.ranking-ec-row {
+  background-color: #fff8e1 !important;
+}
+
+.ranking-ec-badge {
+  background: #ffedd5;
+  color: #b45309;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+}
+
 @media (max-width: 991.98px) {
   .programs-card {
     height: auto;
@@ -526,12 +577,14 @@ if ($activeBatchId) {
     $absorptiveCapacity = $hasCapacityConfig ? (int)$program['absorptive_capacity'] : 0;
     $regularPercentage = $hasCapacityConfig ? (float)$program['regular_percentage'] : 0.0;
     $etgPercentage = $hasCapacityConfig ? (float)$program['etg_percentage'] : 0.0;
+    $endorsementCapacity = $hasCapacityConfig ? max(0, (int)($program['endorsement_capacity'] ?? 0)) : 0;
+    $distributableCapacity = $hasCapacityConfig ? max(0, $absorptiveCapacity - $endorsementCapacity) : 0;
 
     $regularSlots = $hasCapacityConfig
-      ? (int) round($absorptiveCapacity * ($regularPercentage / 100))
+      ? (int) round($distributableCapacity * ($regularPercentage / 100))
       : 0;
     $etgSlots = $hasCapacityConfig
-      ? max(0, $absorptiveCapacity - $regularSlots)
+      ? max(0, $distributableCapacity - $regularSlots)
       : 0;
     ?>
       <div class="mb-3 pb-3 border-bottom program-rank-trigger <?= $isAssigned ? 'bg-label-primary rounded px-2 py-2' : '' ?>"
@@ -562,7 +615,7 @@ if ($activeBatchId) {
               $cutoffText = 'CUT-OFF: NOT SET';
           } else {
               $badgeClass = 'bg-label-success';  // green
-              $cutoffText = 'CUT-OFF: ' . $cutoff;
+              $cutoffText = 'CUT-OFF: <span class="program-cutoff-value">' . (int)$cutoff . '</span>';
           }
         ?>
 
@@ -579,8 +632,9 @@ if ($activeBatchId) {
           <?php if ($hasCapacityConfig): ?>
             <div class="small mt-2 text-dark">
               CAPACITY: <?= $absorptiveCapacity; ?> |
-              REGULAR: <?= number_format($regularPercentage, 2); ?>% (<?= $regularSlots; ?>) |
-              ETG: <?= number_format($etgPercentage, 2); ?>% (<?= $etgSlots; ?>)
+              EC: <?= $endorsementCapacity; ?> |
+              REGULAR: <?= $regularSlots; ?> |
+              ETG: <?= $etgSlots; ?>
             </div>
           <?php else: ?>
             <div class="small mt-2 text-danger">
@@ -635,7 +689,12 @@ if ($activeBatchId) {
 
         <div class="d-none" id="programRankingTableWrap">
           <div class="mb-4">
-            <h6 class="mb-2 text-uppercase fw-bold text-primary">REGULAR List</h6>
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <h6 class="mb-0 text-uppercase fw-bold text-primary">REGULAR + EC List</h6>
+              <button type="button" class="btn btn-sm btn-label-primary" id="addEcRegularBtn">
+                + EC (Regular)
+              </button>
+            </div>
             <div class="table-responsive">
               <table class="table table-bordered table-striped align-middle mb-0" id="programRankingRegularTable">
                 <thead class="table-light">
@@ -655,7 +714,12 @@ if ($activeBatchId) {
           </div>
 
           <div>
-            <h6 class="mb-2 text-uppercase fw-bold text-success">ETG List</h6>
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <h6 class="mb-0 text-uppercase fw-bold text-success">ETG List</h6>
+              <button type="button" class="btn btn-sm btn-label-success" id="addEcEtgBtn">
+                + EC (ETG)
+              </button>
+            </div>
             <div class="table-responsive">
               <table class="table table-bordered table-striped align-middle mb-0" id="programRankingEtgTable">
                 <thead class="table-light">
@@ -1446,6 +1510,8 @@ const programRankingRegularBody = document.querySelector('#programRankingRegular
 const programRankingEtgBody     = document.querySelector('#programRankingEtgTable tbody');
 const exportRankingBtn        = document.getElementById('exportRankingBtn');
 const printRankingBtn         = document.getElementById('printRankingBtn');
+const addEcRegularBtn         = document.getElementById('addEcRegularBtn');
+const addEcEtgBtn             = document.getElementById('addEcEtgBtn');
 
 let currentRankingProgramId = 0;
 let currentRankingProgramName = '';
@@ -1482,6 +1548,69 @@ function sortRankingRows(rows) {
   });
 }
 
+function isRegularClassification(row) {
+  return String(row?.classification || '').toUpperCase() === 'REGULAR';
+}
+
+function getCutoffValue(quota) {
+  if (!quota || quota.cutoff_score === null || quota.cutoff_score === undefined) {
+    return null;
+  }
+
+  const cutoff = Number(quota.cutoff_score);
+  return Number.isFinite(cutoff) ? cutoff : null;
+}
+
+function getEcEligibleRows(sourceType) {
+  const targetType = String(sourceType || '').toUpperCase();
+  const cutoff = getCutoffValue(currentRankingQuota);
+  const ecCapacity = Number(currentRankingQuota?.endorsement_capacity ?? 0);
+  const ecSelected = Number(currentRankingQuota?.endorsement_selected ?? 0);
+  const ecRemaining = Math.max(0, ecCapacity - ecSelected);
+
+  if (ecCapacity <= 0 || ecRemaining <= 0) {
+    return [];
+  }
+
+  return currentRankingRows.filter((row) => {
+    if (row?.is_endorsement) return false;
+
+    const isRegular = isRegularClassification(row);
+    const isTarget = targetType === 'REGULAR' ? isRegular : !isRegular;
+    if (!isTarget) return false;
+
+    const sat = Number(row?.sat_score ?? 0);
+    if (cutoff !== null && sat < cutoff) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
+function buildRankingRowHtml(row, rankDisplay, { isEndorsement = false } = {}) {
+  const rowClass = isEndorsement ? 'ranking-ec-row' : '';
+  const classificationText = isEndorsement
+    ? `EC - ${escapeHtml(row.classification || 'REGULAR')}`
+    : escapeHtml(row.classification || 'REGULAR');
+
+  const rankHtml = isEndorsement
+    ? `<span class="ranking-ec-badge">EC ${rankDisplay}</span>`
+    : `<span class="fw-semibold">${rankDisplay}</span>`;
+
+  return `
+    <tr class="${rowClass}">
+      <td>${rankHtml}</td>
+      <td>${escapeHtml(row.examinee_number || '')}</td>
+      <td class="text-uppercase">${escapeHtml(row.full_name || '')}</td>
+      <td class="fw-semibold">${classificationText}</td>
+      <td>${escapeHtml(row.sat_score ?? '')}</td>
+      <td class="fw-semibold text-warning">${escapeHtml(row.final_score ?? '')}</td>
+      <td>${escapeHtml(row.encoded_by || 'N/A')}</td>
+    </tr>
+  `;
+}
+
 function renderRankingTable(bodyEl, rows, emptyMessage) {
   if (!bodyEl) return;
 
@@ -1494,58 +1623,191 @@ function renderRankingTable(bodyEl, rows, emptyMessage) {
     return;
   }
 
-  bodyEl.innerHTML = rows.map((row, index) => `
+  bodyEl.innerHTML = rows.map((row, index) => buildRankingRowHtml(row, index + 1)).join('');
+}
+
+function renderRegularWithEcTable(regularRows, endorsementRows) {
+  if (!programRankingRegularBody) return;
+
+  if (!regularRows.length && !endorsementRows.length) {
+    programRankingRegularBody.innerHTML = `
       <tr>
-        <td class="fw-semibold">${index + 1}</td>
-        <td>${escapeHtml(row.examinee_number || '')}</td>
-        <td class="text-uppercase">${escapeHtml(row.full_name || '')}</td>
-        <td class="fw-semibold">${escapeHtml(row.classification || 'REGULAR')}</td>
-        <td>${escapeHtml(row.sat_score ?? '')}</td>
-        <td class="fw-semibold text-warning">${escapeHtml(row.final_score ?? '')}</td>
-        <td>${escapeHtml(row.encoded_by || 'N/A')}</td>
+        <td colspan="7" class="text-center text-muted py-3">No regular or EC students.</td>
       </tr>
-    `).join('');
+    `;
+    return;
+  }
+
+  let html = '';
+  if (regularRows.length) {
+    html += regularRows.map((row, index) => buildRankingRowHtml(row, index + 1)).join('');
+  }
+
+  if (endorsementRows.length) {
+    html += `
+      <tr class="table-warning">
+        <td colspan="7" class="fw-semibold text-uppercase small">EC Students (Pinned below regular)</td>
+      </tr>
+    `;
+    html += endorsementRows
+      .map((row, index) => buildRankingRowHtml(row, index + 1, { isEndorsement: true }))
+      .join('');
+  }
+
+  programRankingRegularBody.innerHTML = html;
+}
+
+function refreshEcButtons() {
+  const regularEligible = getEcEligibleRows('REGULAR');
+  const etgEligible = getEcEligibleRows('ETG');
+  const ecCapacity = Number(currentRankingQuota?.endorsement_capacity ?? 0);
+  const ecSelected = Number(currentRankingQuota?.endorsement_selected ?? 0);
+  const ecRemaining = Math.max(0, ecCapacity - ecSelected);
+
+  if (addEcRegularBtn) {
+    addEcRegularBtn.disabled = regularEligible.length === 0;
+    addEcRegularBtn.title = addEcRegularBtn.disabled
+      ? (ecCapacity <= 0
+          ? 'EC capacity is 0.'
+          : (ecRemaining <= 0
+              ? 'EC is full.'
+              : 'No Regular students meet SAT cutoff.'))
+      : `Add EC from ${regularEligible.length} eligible Regular student(s).`;
+  }
+
+  if (addEcEtgBtn) {
+    addEcEtgBtn.disabled = etgEligible.length === 0;
+    addEcEtgBtn.title = addEcEtgBtn.disabled
+      ? (ecCapacity <= 0
+          ? 'EC capacity is 0.'
+          : (ecRemaining <= 0
+              ? 'EC is full.'
+              : 'No ETG students meet SAT cutoff.'))
+      : `Add EC from ${etgEligible.length} eligible ETG student(s).`;
+  }
 }
 
 function renderRankingRows(rows) {
   const regularRows = sortRankingRows(
-    rows.filter(row => String(row.classification || '').toUpperCase() === 'REGULAR')
-  );
-  const etgRows = sortRankingRows(
-    rows.filter(row => String(row.classification || '').toUpperCase() !== 'REGULAR')
+    rows.filter(row => isRegularClassification(row) && !row.is_endorsement)
   );
 
-  renderRankingTable(programRankingRegularBody, regularRows, 'No regular ranked students.');
+  const endorsementRows = [...rows.filter(row => Boolean(row.is_endorsement))]
+    .sort((a, b) => {
+      const timeA = new Date(a.endorsement_order || 0).getTime();
+      const timeB = new Date(b.endorsement_order || 0).getTime();
+      if (timeA !== timeB) return timeA - timeB;
+      return String(a.full_name || '').localeCompare(String(b.full_name || ''));
+    });
+
+  const etgRows = sortRankingRows(
+    rows.filter(row => !isRegularClassification(row) && !row.is_endorsement)
+  );
+
+  renderRegularWithEcTable(regularRows, endorsementRows);
   renderRankingTable(programRankingEtgBody, etgRows, 'No ETG ranked students.');
+  refreshEcButtons();
 
   return {
     regularCount: regularRows.length,
+    endorsementCount: endorsementRows.length,
     etgCount: etgRows.length
   };
 }
 
 function buildRankingMeta(grouped, quota) {
   const regularCount = Number(grouped?.regularCount ?? 0);
+  const endorsementCount = Number(grouped?.endorsementCount ?? 0);
   const etgCount = Number(grouped?.etgCount ?? 0);
-  const total = regularCount + etgCount;
+  const total = regularCount + endorsementCount + etgCount;
 
   if (!quota || quota.enabled !== true) {
-    return `${total} ranked student${total === 1 ? '' : 's'} | REGULAR: ${regularCount} | ETG: ${etgCount}`;
+    return `${total} ranked student${total === 1 ? '' : 's'} | REGULAR: ${regularCount} | EC: ${endorsementCount} | ETG: ${etgCount}`;
   }
 
   const capacity = Number(quota.absorptive_capacity ?? 0);
   const regularSlots = Number(quota.regular_slots ?? 0);
   const etgSlots = Number(quota.etg_slots ?? 0);
-  const regularPct = Number(quota.regular_percentage ?? 0).toFixed(2);
-  const etgPct = Number(quota.etg_percentage ?? 0).toFixed(2);
+  const ecSlots = Number(quota.endorsement_capacity ?? 0);
 
-  return `Shown ${total}/${capacity} | REGULAR: ${regularCount}/${regularSlots} (${regularPct}%) | ETG: ${etgCount}/${etgSlots} (${etgPct}%)`;
+  return `Shown ${total}/${capacity} | REGULAR: ${regularCount}/${regularSlots} | EC: ${endorsementCount}/${ecSlots} | ETG: ${etgCount}/${etgSlots}`;
 }
 
 function setRankingState({ loading = false, empty = false, showTable = false }) {
   if (programRankingLoadingEl) programRankingLoadingEl.classList.toggle('d-none', !loading);
   if (programRankingEmptyEl) programRankingEmptyEl.classList.toggle('d-none', !empty);
   if (programRankingTableWrap) programRankingTableWrap.classList.toggle('d-none', !showTable);
+}
+
+function toggleEndorsement(interviewId, action) {
+  if (!currentRankingProgramId || !interviewId) return Promise.resolve();
+
+  const formData = new URLSearchParams();
+  formData.set('program_id', String(currentRankingProgramId));
+  formData.set('interview_id', String(interviewId));
+  formData.set('action', String(action || '').toUpperCase());
+
+  return fetch('toggle_program_endorsement.php', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
+    },
+    body: formData.toString()
+  })
+    .then(res => res.json())
+    .then(data => {
+      if (!data || !data.success) {
+        throw new Error((data && data.message) || 'Failed to update EC list.');
+      }
+      return data;
+    });
+}
+
+function openAddEcPicker(sourceType) {
+  const targetType = String(sourceType || '').toUpperCase();
+  const candidates = getEcEligibleRows(targetType);
+
+  if (!candidates.length) {
+    const typeLabel = targetType === 'REGULAR' ? 'Regular' : 'ETG';
+    Swal.fire('No Eligible Students', `No ${typeLabel} students are eligible for EC.`, 'info');
+    return;
+  }
+
+  const inputOptions = {};
+  candidates.forEach((row) => {
+    const interviewId = Number(row?.interview_id || 0);
+    if (!interviewId) return;
+    const label = `${row.examinee_number || ''} - ${(row.full_name || '').toUpperCase()} | SAT: ${row.sat_score ?? ''} | SCORE: ${row.final_score ?? ''}`;
+    inputOptions[String(interviewId)] = label;
+  });
+
+  Swal.fire({
+    title: targetType === 'REGULAR' ? 'Add EC from Regular List' : 'Add EC from ETG List',
+    input: 'select',
+    inputOptions,
+    inputPlaceholder: 'Select student',
+    showCancelButton: true,
+    confirmButtonText: 'Add EC',
+    cancelButtonText: 'Cancel',
+    inputValidator: (value) => {
+      if (!value) return 'Please select a student.';
+      return null;
+    }
+  }).then((result) => {
+    if (!result.isConfirmed || !result.value) return;
+
+    const interviewId = Number(result.value || 0);
+    if (!interviewId) return;
+
+    toggleEndorsement(interviewId, 'ADD')
+      .then((data) => {
+        Swal.fire('Added', data.message || 'Student added to EC list.', 'success');
+        loadProgramRanking(currentRankingProgramId, currentRankingProgramName);
+      })
+      .catch((err) => {
+        Swal.fire('Error', err.message || 'Failed to add EC.', 'error');
+      });
+  });
 }
 
 function loadProgramRanking(programId, programName) {
@@ -1564,6 +1826,9 @@ function loadProgramRanking(programId, programName) {
     programRankingMetaEl.textContent = 'Loading...';
   }
 
+  if (addEcRegularBtn) addEcRegularBtn.disabled = true;
+  if (addEcEtgBtn) addEcEtgBtn.disabled = true;
+
   if (exportRankingBtn) {
     exportRankingBtn.href = `export_program_ranking.php?program_id=${programId}`;
   }
@@ -1581,8 +1846,9 @@ function loadProgramRanking(programId, programName) {
       currentRankingQuota = data && typeof data.quota === 'object' ? data.quota : null;
 
       const groupedCounts = {
-        regularCount: currentRankingRows.filter(row => String(row.classification || '').toUpperCase() === 'REGULAR').length,
-        etgCount: currentRankingRows.filter(row => String(row.classification || '').toUpperCase() !== 'REGULAR').length
+        regularCount: currentRankingRows.filter(row => String(row.classification || '').toUpperCase() === 'REGULAR' && !row.is_endorsement).length,
+        endorsementCount: currentRankingRows.filter(row => Boolean(row.is_endorsement)).length,
+        etgCount: currentRankingRows.filter(row => String(row.classification || '').toUpperCase() !== 'REGULAR' && !row.is_endorsement).length
       };
 
       if (programRankingMetaEl) {
@@ -1595,9 +1861,10 @@ function loadProgramRanking(programId, programName) {
           if (capacity <= 0) {
             programRankingEmptyEl.textContent = 'No ranking shown because absorptive capacity is set to 0.';
           } else {
-            programRankingEmptyEl.textContent = 'No ranked students matched the allocated Regular/ETG slots.';
+            programRankingEmptyEl.textContent = 'No ranked students matched the configured Regular/EC/ETG slots.';
           }
         }
+        refreshEcButtons();
         setRankingState({ loading: false, empty: true, showTable: false });
         return;
       }
@@ -1615,6 +1882,9 @@ function loadProgramRanking(programId, programName) {
       if (programRankingEmptyEl) {
         programRankingEmptyEl.textContent = err.message || 'Failed to load ranking.';
       }
+
+      if (addEcRegularBtn) addEcRegularBtn.disabled = true;
+      if (addEcEtgBtn) addEcEtgBtn.disabled = true;
     });
 }
 
@@ -1641,6 +1911,14 @@ document.querySelectorAll('.program-rank-trigger').forEach((el) => {
     }
   });
 });
+
+if (addEcRegularBtn) {
+  addEcRegularBtn.addEventListener('click', () => openAddEcPicker('REGULAR'));
+}
+
+if (addEcEtgBtn) {
+  addEcEtgBtn.addEventListener('click', () => openAddEcPicker('ETG'));
+}
 
 if (printRankingBtn) {
   printRankingBtn.addEventListener('click', function () {

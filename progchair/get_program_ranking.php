@@ -7,6 +7,7 @@
  */
 
 require_once '../config/db.php';
+require_once 'endorsement_helpers.php';
 session_start();
 
 header('Content-Type: application/json');
@@ -42,9 +43,11 @@ $programSql = "
         p.program_id,
         p.program_name,
         p.major,
+        pc.cutoff_score,
         pc.absorptive_capacity,
         pc.regular_percentage,
-        pc.etg_percentage
+        pc.etg_percentage,
+        COALESCE(pc.endorsement_capacity, 0) AS endorsement_capacity
     FROM tbl_program p
     INNER JOIN tbl_college c
         ON p.college_id = c.college_id
@@ -131,6 +134,7 @@ $resultRanking = $stmtRanking->get_result();
 
 $allRegularRows = [];
 $allEtgRows = [];
+$allRowsByInterviewId = [];
 while ($row = $resultRanking->fetch_assoc()) {
     $mappedRow = [
         'interview_id'      => (int) $row['interview_id'],
@@ -143,6 +147,8 @@ while ($row = $resultRanking->fetch_assoc()) {
         'encoded_by'        => $row['encoded_by']
     ];
 
+    $allRowsByInterviewId[$mappedRow['interview_id']] = $mappedRow;
+
     if ((int) ($row['classification_group'] ?? 0) === 1) {
         $allEtgRows[] = $mappedRow;
     } else {
@@ -154,8 +160,10 @@ $quotaEnabled = false;
 $absorptiveCapacity = null;
 $regularPercentage = null;
 $etgPercentage = null;
+$endorsementCapacity = max(0, (int) ($program['endorsement_capacity'] ?? 0));
 $regularSlots = null;
 $etgSlots = null;
+$baseCapacity = null;
 
 if (
     $program['absorptive_capacity'] !== null &&
@@ -165,6 +173,7 @@ if (
     $absorptiveCapacity = max(0, (int) $program['absorptive_capacity']);
     $regularPercentage = round((float) $program['regular_percentage'], 2);
     $etgPercentage = round((float) $program['etg_percentage'], 2);
+    $baseCapacity = max(0, $absorptiveCapacity - $endorsementCapacity);
 
     if (
         $regularPercentage >= 0 &&
@@ -174,20 +183,56 @@ if (
         abs(($regularPercentage + $etgPercentage) - 100) <= 0.01
     ) {
         $quotaEnabled = true;
-        $regularSlots = (int) round($absorptiveCapacity * ($regularPercentage / 100));
-        $etgSlots = max(0, $absorptiveCapacity - $regularSlots);
+        $regularSlots = (int) round($baseCapacity * ($regularPercentage / 100));
+        $etgSlots = max(0, $baseCapacity - $regularSlots);
     }
 }
 
-if ($quotaEnabled) {
-    $regularRows = array_slice($allRegularRows, 0, $regularSlots);
-    $etgRows = array_slice($allEtgRows, 0, $etgSlots);
-} else {
-    $regularRows = $allRegularRows;
-    $etgRows = $allEtgRows;
+// Endorsement rows are persisted and should remain listed below regular rows.
+$endorsementRowsRaw = load_program_endorsements($conn, $programId);
+$endorsementRows = [];
+$endorsementIds = [];
+foreach ($endorsementRowsRaw as $endorsementRow) {
+    $eid = (int) ($endorsementRow['interview_id'] ?? 0);
+    if ($eid <= 0 || !isset($allRowsByInterviewId[$eid])) {
+        continue;
+    }
+
+    $mapped = $allRowsByInterviewId[$eid];
+    $mapped['is_endorsement'] = true;
+    $mapped['endorsement_label'] = 'EC';
+    $mapped['endorsement_order'] = (string) ($endorsementRow['endorsed_at'] ?? '');
+    $endorsementRows[] = $mapped;
+    $endorsementIds[$eid] = true;
 }
 
-$rows = array_merge($regularRows, $etgRows);
+// Exclude EC rows from ranked pools. They will be appended after regular rows.
+$filteredRegularRows = array_values(array_filter($allRegularRows, function (array $row) use ($endorsementIds): bool {
+    return !isset($endorsementIds[(int) ($row['interview_id'] ?? 0)]);
+}));
+$filteredEtgRows = array_values(array_filter($allEtgRows, function (array $row) use ($endorsementIds): bool {
+    return !isset($endorsementIds[(int) ($row['interview_id'] ?? 0)]);
+}));
+
+if ($quotaEnabled) {
+    $regularRows = array_slice($filteredRegularRows, 0, $regularSlots);
+    $etgRows = array_slice($filteredEtgRows, 0, $etgSlots);
+} else {
+    $regularRows = $filteredRegularRows;
+    $etgRows = $filteredEtgRows;
+}
+
+foreach ($regularRows as &$regularRow) {
+    $regularRow['is_endorsement'] = false;
+}
+unset($regularRow);
+
+foreach ($etgRows as &$etgRow) {
+    $etgRow['is_endorsement'] = false;
+}
+unset($etgRow);
+
+$rows = array_merge($regularRows, $endorsementRows, $etgRows);
 
 echo json_encode([
     'success' => true,
@@ -197,14 +242,17 @@ echo json_encode([
     ],
     'quota' => [
         'enabled' => $quotaEnabled,
+        'cutoff_score' => $program['cutoff_score'] !== null ? (int) $program['cutoff_score'] : null,
         'absorptive_capacity' => $absorptiveCapacity,
-        'regular_percentage' => $regularPercentage,
-        'etg_percentage' => $etgPercentage,
+        'base_capacity' => $baseCapacity,
+        'endorsement_capacity' => $endorsementCapacity,
+        'endorsement_selected' => count($endorsementRows),
         'regular_slots' => $regularSlots,
         'etg_slots' => $etgSlots,
-        'regular_candidates' => count($allRegularRows),
-        'etg_candidates' => count($allEtgRows),
+        'regular_candidates' => count($filteredRegularRows),
+        'etg_candidates' => count($filteredEtgRows),
         'regular_shown' => count($regularRows),
+        'endorsement_shown' => count($endorsementRows),
         'etg_shown' => count($etgRows)
     ],
     'rows' => $rows

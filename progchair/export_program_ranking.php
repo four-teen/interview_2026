@@ -7,6 +7,7 @@
  */
 
 require_once '../config/db.php';
+require_once 'endorsement_helpers.php';
 session_start();
 
 if (
@@ -33,9 +34,11 @@ $programSql = "
         p.program_id,
         p.program_name,
         p.major,
+        pc.cutoff_score,
         pc.absorptive_capacity,
         pc.regular_percentage,
-        pc.etg_percentage
+        pc.etg_percentage,
+        COALESCE(pc.endorsement_capacity, 0) AS endorsement_capacity
     FROM tbl_program p
     INNER JOIN tbl_college c
         ON p.college_id = c.college_id
@@ -65,6 +68,7 @@ if (!$program) {
 
 $rankingSql = "
     SELECT
+        si.interview_id,
         si.examinee_number,
         pr.full_name,
         CASE
@@ -110,7 +114,9 @@ $resultRanking = $stmtRanking->get_result();
 
 $allRegularRows = [];
 $allEtgRows = [];
+$allRowsByInterviewId = [];
 while ($row = $resultRanking->fetch_assoc()) {
+    $allRowsByInterviewId[(int) ($row['interview_id'] ?? 0)] = $row;
     if ((int) ($row['classification_group'] ?? 0) === 1) {
         $allEtgRows[] = $row;
     } else {
@@ -122,8 +128,10 @@ $quotaEnabled = false;
 $absorptiveCapacity = null;
 $regularPercentage = null;
 $etgPercentage = null;
+$endorsementCapacity = max(0, (int) ($program['endorsement_capacity'] ?? 0));
 $regularSlots = null;
 $etgSlots = null;
+$baseCapacity = null;
 
 if (
     $program['absorptive_capacity'] !== null &&
@@ -133,6 +141,7 @@ if (
     $absorptiveCapacity = max(0, (int) $program['absorptive_capacity']);
     $regularPercentage = round((float) $program['regular_percentage'], 2);
     $etgPercentage = round((float) $program['etg_percentage'], 2);
+    $baseCapacity = max(0, $absorptiveCapacity - $endorsementCapacity);
 
     if (
         $regularPercentage >= 0 &&
@@ -142,20 +151,45 @@ if (
         abs(($regularPercentage + $etgPercentage) - 100) <= 0.01
     ) {
         $quotaEnabled = true;
-        $regularSlots = (int) round($absorptiveCapacity * ($regularPercentage / 100));
-        $etgSlots = max(0, $absorptiveCapacity - $regularSlots);
+        $regularSlots = (int) round($baseCapacity * ($regularPercentage / 100));
+        $etgSlots = max(0, $baseCapacity - $regularSlots);
     }
 }
 
-if ($quotaEnabled) {
-    $regularRows = array_slice($allRegularRows, 0, $regularSlots);
-    $etgRows = array_slice($allEtgRows, 0, $etgSlots);
-} else {
-    $regularRows = $allRegularRows;
-    $etgRows = $allEtgRows;
+// Persisted EC rows
+$endorsementRowsRaw = load_program_endorsements($conn, $programId);
+$endorsementRows = [];
+$endorsementIds = [];
+foreach ($endorsementRowsRaw as $endorsementRow) {
+    $eid = (int) ($endorsementRow['interview_id'] ?? 0);
+    if ($eid <= 0 || !isset($allRowsByInterviewId[$eid])) {
+        continue;
+    }
+
+    $row = $allRowsByInterviewId[$eid];
+    $row['classification_label'] = 'EC - ' . strtoupper((string) ($row['classification_label'] ?? 'REGULAR'));
+    $row['is_endorsement'] = 1;
+    $endorsementRows[] = $row;
+    $endorsementIds[$eid] = true;
 }
 
-$exportRows = array_merge($regularRows, $etgRows);
+$filteredRegularRows = array_values(array_filter($allRegularRows, function (array $row) use ($endorsementIds): bool {
+    return !isset($endorsementIds[(int) ($row['interview_id'] ?? 0)]);
+}));
+
+$filteredEtgRows = array_values(array_filter($allEtgRows, function (array $row) use ($endorsementIds): bool {
+    return !isset($endorsementIds[(int) ($row['interview_id'] ?? 0)]);
+}));
+
+if ($quotaEnabled) {
+    $regularRows = array_slice($filteredRegularRows, 0, $regularSlots);
+    $etgRows = array_slice($filteredEtgRows, 0, $etgSlots);
+} else {
+    $regularRows = $filteredRegularRows;
+    $etgRows = $filteredEtgRows;
+}
+
+$exportRows = array_merge($regularRows, $endorsementRows, $etgRows);
 
 $programLabel = strtoupper($program['program_name'] . (!empty($program['major']) ? ' - ' . $program['major'] : ''));
 $safeName = preg_replace('/[^A-Za-z0-9]+/', '_', $programLabel);
@@ -177,11 +211,14 @@ fputcsv($output, ['Program', $programLabel]);
 fputcsv($output, ['Generated', date('Y-m-d H:i:s')]);
 if ($quotaEnabled) {
     $quotaSummary = sprintf(
-        'Capacity: %d | Regular: %.2f%% (%d) | ETG: %.2f%% (%d)',
+        'Capacity: %d | Base: %d | Regular: %d/%d | EC: %d/%d | ETG: %d/%d',
         (int) $absorptiveCapacity,
-        (float) $regularPercentage,
+        (int) $baseCapacity,
+        count($regularRows),
         (int) $regularSlots,
-        (float) $etgPercentage,
+        count($endorsementRows),
+        (int) $endorsementCapacity,
+        count($etgRows),
         (int) $etgSlots
     );
     fputcsv($output, ['Quota', $quotaSummary]);
