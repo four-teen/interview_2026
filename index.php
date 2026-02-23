@@ -383,6 +383,9 @@ $_SESSION['student_login_csrf'] = $studentLoginCsrf;
                       class="form-control"
                       placeholder="Temporary / Current Password"
                       autocomplete="current-password"
+                      autocapitalize="none"
+                      autocorrect="off"
+                      spellcheck="false"
                       required
                     />
                   </div>

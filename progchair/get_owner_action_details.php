@@ -25,7 +25,6 @@ if (
     exit;
 }
 
-$accountId = (int) $_SESSION['accountid'];
 $programId = (int) $_SESSION['program_id'];
 $action = strtolower(trim((string) ($_GET['action'] ?? '')));
 
@@ -111,7 +110,7 @@ if ($action === 'pending') {
         LEFT JOIN tbl_etg_class ec
             ON si.etg_class_id = ec.etgclassid
         WHERE si.status = 'active'
-          AND si.program_chair_id = ?
+          AND si.first_choice = ?
           AND si.final_score IS NULL
         ORDER BY si.interview_datetime DESC, si.interview_id DESC
         LIMIT 250
@@ -127,7 +126,7 @@ if ($action === 'pending') {
         exit;
     }
 
-    $stmt->bind_param("i", $accountId);
+    $stmt->bind_param("i", $programId);
 } else {
     $sql = "
         SELECT
@@ -150,7 +149,7 @@ if ($action === 'pending') {
         LEFT JOIN tbl_etg_class ec
             ON si.etg_class_id = ec.etgclassid
         WHERE si.status = 'active'
-          AND si.program_chair_id = ?
+          AND si.first_choice = ?
           AND si.final_score IS NOT NULL
           AND NOT EXISTS (
                 SELECT 1
@@ -172,7 +171,7 @@ if ($action === 'pending') {
         exit;
     }
 
-    $stmt->bind_param("i", $accountId);
+    $stmt->bind_param("i", $programId);
 }
 
 $stmt->execute();

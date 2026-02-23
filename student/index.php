@@ -108,6 +108,1262 @@ if ((int) ($student['must_change_password'] ?? 0) === 1) {
     exit;
 }
 
+$transferFlash = null;
+if (isset($_SESSION['student_transfer_flash']) && is_array($_SESSION['student_transfer_flash'])) {
+    $transferFlash = $_SESSION['student_transfer_flash'];
+    unset($_SESSION['student_transfer_flash']);
+}
+
+$profileFlash = null;
+if (isset($_SESSION['student_profile_flash']) && is_array($_SESSION['student_profile_flash'])) {
+    $profileFlash = $_SESSION['student_profile_flash'];
+    unset($_SESSION['student_profile_flash']);
+}
+
+if (empty($_SESSION['student_transfer_csrf'])) {
+    try {
+        $_SESSION['student_transfer_csrf'] = bin2hex(random_bytes(32));
+    } catch (Exception $e) {
+        $_SESSION['student_transfer_csrf'] = sha1(uniqid('student_transfer_csrf_', true));
+    }
+}
+
+if (empty($_SESSION['student_profile_csrf'])) {
+    try {
+        $_SESSION['student_profile_csrf'] = bin2hex(random_bytes(32));
+    } catch (Exception $e) {
+        $_SESSION['student_profile_csrf'] = sha1(uniqid('student_profile_csrf_', true));
+    }
+}
+
+function ensure_student_transfer_history_table($conn)
+{
+    $sql = "
+        CREATE TABLE IF NOT EXISTS tbl_student_transfer_history (
+            transfer_id INT(10) UNSIGNED NOT NULL AUTO_INCREMENT,
+            interview_id INT(10) UNSIGNED NOT NULL,
+            from_program_id INT(10) UNSIGNED NOT NULL,
+            to_program_id INT(10) UNSIGNED NOT NULL,
+            transferred_by INT(10) UNSIGNED NOT NULL,
+            transfer_datetime DATETIME DEFAULT CURRENT_TIMESTAMP,
+            remarks TEXT,
+            status ENUM('pending', 'approved', 'rejected') NOT NULL DEFAULT 'pending',
+            approved_by INT(10) UNSIGNED DEFAULT NULL,
+            approved_datetime DATETIME DEFAULT NULL,
+            PRIMARY KEY (transfer_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ";
+
+    return (bool) $conn->query($sql);
+}
+
+function ensure_student_profile_table($conn)
+{
+    $sql = "
+        CREATE TABLE IF NOT EXISTS tbl_student_profile (
+            profile_id INT(10) UNSIGNED NOT NULL AUTO_INCREMENT,
+            credential_id INT(10) UNSIGNED NOT NULL,
+            examinee_number VARCHAR(50) NOT NULL,
+            birth_date DATE DEFAULT NULL,
+            sex ENUM('Male', 'Female', 'Other') DEFAULT NULL,
+            civil_status ENUM('Single', 'Married', 'Separated', 'Widowed', 'Other') DEFAULT NULL,
+            nationality VARCHAR(100) DEFAULT NULL,
+            religion VARCHAR(120) DEFAULT NULL,
+            secondary_school_name VARCHAR(190) DEFAULT NULL,
+            secondary_school_type ENUM('Private', 'Public') DEFAULT NULL,
+            secondary_address_line1 VARCHAR(255) DEFAULT NULL,
+            secondary_region_code INT(10) UNSIGNED DEFAULT NULL,
+            secondary_province_code INT(10) UNSIGNED DEFAULT NULL,
+            secondary_citymun_code INT(10) UNSIGNED DEFAULT NULL,
+            secondary_barangay_code INT(10) UNSIGNED DEFAULT NULL,
+            secondary_postal_code VARCHAR(20) DEFAULT NULL,
+            address_line1 VARCHAR(255) DEFAULT NULL,
+            region_code INT(10) UNSIGNED DEFAULT NULL,
+            province_code INT(10) UNSIGNED DEFAULT NULL,
+            citymun_code INT(10) UNSIGNED DEFAULT NULL,
+            barangay_code INT(10) UNSIGNED DEFAULT NULL,
+            postal_code VARCHAR(20) DEFAULT NULL,
+            parent_guardian_address_line1 VARCHAR(255) DEFAULT NULL,
+            parent_guardian_region_code INT(10) UNSIGNED DEFAULT NULL,
+            parent_guardian_province_code INT(10) UNSIGNED DEFAULT NULL,
+            parent_guardian_citymun_code INT(10) UNSIGNED DEFAULT NULL,
+            parent_guardian_barangay_code INT(10) UNSIGNED DEFAULT NULL,
+            parent_guardian_postal_code VARCHAR(20) DEFAULT NULL,
+            father_name VARCHAR(190) DEFAULT NULL,
+            father_contact_number VARCHAR(30) DEFAULT NULL,
+            father_occupation VARCHAR(120) DEFAULT NULL,
+            mother_name VARCHAR(190) DEFAULT NULL,
+            mother_contact_number VARCHAR(30) DEFAULT NULL,
+            mother_occupation VARCHAR(120) DEFAULT NULL,
+            guardian_name VARCHAR(190) DEFAULT NULL,
+            guardian_relationship VARCHAR(120) DEFAULT NULL,
+            guardian_contact_number VARCHAR(30) DEFAULT NULL,
+            guardian_occupation VARCHAR(120) DEFAULT NULL,
+            profile_completion_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (profile_id),
+            UNIQUE KEY uq_student_profile_credential (credential_id),
+            UNIQUE KEY uq_student_profile_examinee (examinee_number),
+            KEY idx_student_profile_region (region_code),
+            KEY idx_student_profile_province (province_code),
+            KEY idx_student_profile_citymun (citymun_code),
+            KEY idx_student_profile_barangay (barangay_code),
+            KEY idx_student_profile_secondary_region (secondary_region_code),
+            KEY idx_student_profile_secondary_province (secondary_province_code),
+            KEY idx_student_profile_secondary_citymun (secondary_citymun_code),
+            KEY idx_student_profile_secondary_barangay (secondary_barangay_code),
+            KEY idx_student_profile_parent_guardian_region (parent_guardian_region_code),
+            KEY idx_student_profile_parent_guardian_province (parent_guardian_province_code),
+            KEY idx_student_profile_parent_guardian_citymun (parent_guardian_citymun_code),
+            KEY idx_student_profile_parent_guardian_barangay (parent_guardian_barangay_code),
+            CONSTRAINT fk_student_profile_credential
+                FOREIGN KEY (credential_id) REFERENCES tbl_student_credentials (credential_id)
+                ON UPDATE CASCADE
+                ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ";
+
+    $ok = (bool) $conn->query($sql);
+    if (!$ok) {
+        return false;
+    }
+
+    $columnsToEnsure = [
+        'secondary_address_line1' => "ALTER TABLE tbl_student_profile ADD COLUMN secondary_address_line1 VARCHAR(255) DEFAULT NULL AFTER secondary_school_type",
+        'secondary_region_code' => "ALTER TABLE tbl_student_profile ADD COLUMN secondary_region_code INT(10) UNSIGNED DEFAULT NULL AFTER secondary_address_line1",
+        'secondary_province_code' => "ALTER TABLE tbl_student_profile ADD COLUMN secondary_province_code INT(10) UNSIGNED DEFAULT NULL AFTER secondary_region_code",
+        'secondary_citymun_code' => "ALTER TABLE tbl_student_profile ADD COLUMN secondary_citymun_code INT(10) UNSIGNED DEFAULT NULL AFTER secondary_province_code",
+        'secondary_barangay_code' => "ALTER TABLE tbl_student_profile ADD COLUMN secondary_barangay_code INT(10) UNSIGNED DEFAULT NULL AFTER secondary_citymun_code",
+        'secondary_postal_code' => "ALTER TABLE tbl_student_profile ADD COLUMN secondary_postal_code VARCHAR(20) DEFAULT NULL AFTER secondary_barangay_code",
+        'parent_guardian_address_line1' => "ALTER TABLE tbl_student_profile ADD COLUMN parent_guardian_address_line1 VARCHAR(255) DEFAULT NULL AFTER postal_code",
+        'parent_guardian_region_code' => "ALTER TABLE tbl_student_profile ADD COLUMN parent_guardian_region_code INT(10) UNSIGNED DEFAULT NULL AFTER parent_guardian_address_line1",
+        'parent_guardian_province_code' => "ALTER TABLE tbl_student_profile ADD COLUMN parent_guardian_province_code INT(10) UNSIGNED DEFAULT NULL AFTER parent_guardian_region_code",
+        'parent_guardian_citymun_code' => "ALTER TABLE tbl_student_profile ADD COLUMN parent_guardian_citymun_code INT(10) UNSIGNED DEFAULT NULL AFTER parent_guardian_province_code",
+        'parent_guardian_barangay_code' => "ALTER TABLE tbl_student_profile ADD COLUMN parent_guardian_barangay_code INT(10) UNSIGNED DEFAULT NULL AFTER parent_guardian_citymun_code",
+        'parent_guardian_postal_code' => "ALTER TABLE tbl_student_profile ADD COLUMN parent_guardian_postal_code VARCHAR(20) DEFAULT NULL AFTER parent_guardian_barangay_code",
+    ];
+
+    foreach ($columnsToEnsure as $columnName => $alterSql) {
+        $columnResult = $conn->query("SHOW COLUMNS FROM tbl_student_profile LIKE '" . $conn->real_escape_string($columnName) . "'");
+        if (!$columnResult) {
+            return false;
+        }
+
+        $hasColumn = ($columnResult->num_rows > 0);
+        $columnResult->free();
+        if ($hasColumn) {
+            continue;
+        }
+
+        if (!$conn->query($alterSql)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function normalize_profile_text($value, $maxLength)
+{
+    $value = trim((string) $value);
+    if ($value === '') {
+        return '';
+    }
+
+    if (function_exists('mb_substr')) {
+        return (string) mb_substr($value, 0, (int) $maxLength);
+    }
+
+    return (string) substr($value, 0, (int) $maxLength);
+}
+
+function calculate_student_profile_completion_percent(array $profileData)
+{
+    $requiredTextFields = [
+        'birth_date',
+        'sex',
+        'civil_status',
+        'nationality',
+        'religion',
+        'secondary_school_name',
+        'secondary_school_type',
+        'secondary_postal_code',
+        'address_line1',
+        'postal_code',
+        'guardian_name',
+        'parent_guardian_address_line1',
+        'parent_guardian_postal_code',
+    ];
+    $requiredCodeFields = [
+        'secondary_province_code',
+        'secondary_citymun_code',
+        'region_code',
+        'province_code',
+        'citymun_code',
+        'barangay_code',
+        'parent_guardian_region_code',
+        'parent_guardian_province_code',
+        'parent_guardian_citymun_code',
+        'parent_guardian_barangay_code',
+    ];
+
+    $filledCount = 0;
+    $requiredCount = count($requiredTextFields) + count($requiredCodeFields);
+    if ($requiredCount <= 0) {
+        return 0.0;
+    }
+
+    foreach ($requiredTextFields as $field) {
+        $value = trim((string) ($profileData[$field] ?? ''));
+        if ($value !== '') {
+            $filledCount++;
+        }
+    }
+
+    foreach ($requiredCodeFields as $field) {
+        if ((int) ($profileData[$field] ?? 0) > 0) {
+            $filledCount++;
+        }
+    }
+
+    $percent = ((float) $filledCount / (float) $requiredCount) * 100;
+    $percent = round($percent, 2);
+
+    if ($percent < 0) {
+        $percent = 0.0;
+    }
+    if ($percent > 100) {
+        $percent = 100.0;
+    }
+
+    return $percent;
+}
+
+function send_profile_lookup_json($payload, $statusCode = 200)
+{
+    http_response_code((int) $statusCode);
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+function count_reason_words($text)
+{
+    $text = trim((string) $text);
+    if ($text === '') {
+        return 0;
+    }
+
+    $matches = [];
+    preg_match_all('/\S+/u', $text, $matches);
+    return isset($matches[0]) ? count($matches[0]) : 0;
+}
+
+function build_reordered_program_choices($selectedProgramId, $firstChoiceId, $secondChoiceId, $thirdChoiceId)
+{
+    $selectedProgramId = (int) $selectedProgramId;
+    $ordered = [];
+    if ($selectedProgramId > 0) {
+        $ordered[] = $selectedProgramId;
+    }
+
+    $currentChoices = [
+        (int) $firstChoiceId,
+        (int) $secondChoiceId,
+        (int) $thirdChoiceId,
+    ];
+
+    foreach ($currentChoices as $programId) {
+        if ($programId <= 0) {
+            continue;
+        }
+        if ($programId === $selectedProgramId) {
+            continue;
+        }
+        if (in_array($programId, $ordered, true)) {
+            continue;
+        }
+        $ordered[] = $programId;
+    }
+
+    $ordered = array_slice($ordered, 0, 3);
+    while (count($ordered) < 3) {
+        $ordered[] = 0;
+    }
+
+    return $ordered;
+}
+
+if (!ensure_student_profile_table($conn)) {
+    http_response_code(500);
+    exit('Student profile storage initialization failed.');
+}
+
+$studentProfile = [
+    'birth_date' => '',
+    'sex' => '',
+    'civil_status' => '',
+    'nationality' => '',
+    'religion' => '',
+    'secondary_school_name' => '',
+    'secondary_school_type' => '',
+    'secondary_address_line1' => '',
+    'secondary_region_code' => 0,
+    'secondary_province_code' => 0,
+    'secondary_citymun_code' => 0,
+    'secondary_barangay_code' => 0,
+    'secondary_postal_code' => '',
+    'address_line1' => '',
+    'region_code' => 0,
+    'province_code' => 0,
+    'citymun_code' => 0,
+    'barangay_code' => 0,
+    'postal_code' => '',
+    'parent_guardian_address_line1' => '',
+    'parent_guardian_region_code' => 0,
+    'parent_guardian_province_code' => 0,
+    'parent_guardian_citymun_code' => 0,
+    'parent_guardian_barangay_code' => 0,
+    'parent_guardian_postal_code' => '',
+    'father_name' => '',
+    'father_contact_number' => '',
+    'father_occupation' => '',
+    'mother_name' => '',
+    'mother_contact_number' => '',
+    'mother_occupation' => '',
+    'guardian_name' => '',
+    'guardian_relationship' => '',
+    'guardian_contact_number' => '',
+    'guardian_occupation' => '',
+    'profile_completion_percent' => 0,
+    'region_name' => '',
+    'province_name' => '',
+    'citymun_name' => '',
+    'barangay_name' => '',
+    'secondary_region_name' => '',
+    'secondary_province_name' => '',
+    'secondary_citymun_name' => '',
+    'secondary_barangay_name' => '',
+    'parent_guardian_region_name' => '',
+    'parent_guardian_province_name' => '',
+    'parent_guardian_citymun_name' => '',
+    'parent_guardian_barangay_name' => '',
+];
+
+$profileSql = "
+    SELECT
+        sp.*,
+        rr.regDesc AS region_name,
+        rp.provDesc AS province_name,
+        rc.citymunDesc AS citymun_name,
+        rb.brgyDesc AS barangay_name,
+        rr2.regDesc AS secondary_region_name,
+        rp2.provDesc AS secondary_province_name,
+        rc2.citymunDesc AS secondary_citymun_name,
+        rb2.brgyDesc AS secondary_barangay_name,
+        rr3.regDesc AS parent_guardian_region_name,
+        rp3.provDesc AS parent_guardian_province_name,
+        rc3.citymunDesc AS parent_guardian_citymun_name,
+        rb3.brgyDesc AS parent_guardian_barangay_name
+    FROM tbl_student_profile sp
+    LEFT JOIN refregion rr
+        ON rr.regCode = sp.region_code
+    LEFT JOIN refprovince rp
+        ON rp.provCode = sp.province_code
+    LEFT JOIN refcitymun rc
+        ON rc.citymunCode = sp.citymun_code
+    LEFT JOIN refbrgy rb
+        ON rb.brgyCode = sp.barangay_code
+    LEFT JOIN refregion rr2
+        ON rr2.regCode = sp.secondary_region_code
+    LEFT JOIN refprovince rp2
+        ON rp2.provCode = sp.secondary_province_code
+    LEFT JOIN refcitymun rc2
+        ON rc2.citymunCode = sp.secondary_citymun_code
+    LEFT JOIN refbrgy rb2
+        ON rb2.brgyCode = sp.secondary_barangay_code
+    LEFT JOIN refregion rr3
+        ON rr3.regCode = sp.parent_guardian_region_code
+    LEFT JOIN refprovince rp3
+        ON rp3.provCode = sp.parent_guardian_province_code
+    LEFT JOIN refcitymun rc3
+        ON rc3.citymunCode = sp.parent_guardian_citymun_code
+    LEFT JOIN refbrgy rb3
+        ON rb3.brgyCode = sp.parent_guardian_barangay_code
+    WHERE sp.credential_id = ?
+    LIMIT 1
+";
+
+if ($profileStmt = $conn->prepare($profileSql)) {
+    $profileStmt->bind_param('i', $credentialId);
+    $profileStmt->execute();
+    $profileRow = $profileStmt->get_result()->fetch_assoc();
+    $profileStmt->close();
+
+    if ($profileRow) {
+        $studentProfile = array_merge($studentProfile, $profileRow);
+    }
+}
+
+$studentProfile['region_code'] = (int) ($studentProfile['region_code'] ?? 0);
+$studentProfile['province_code'] = (int) ($studentProfile['province_code'] ?? 0);
+$studentProfile['citymun_code'] = (int) ($studentProfile['citymun_code'] ?? 0);
+$studentProfile['barangay_code'] = (int) ($studentProfile['barangay_code'] ?? 0);
+$studentProfile['secondary_region_code'] = (int) ($studentProfile['secondary_region_code'] ?? 0);
+$studentProfile['secondary_province_code'] = (int) ($studentProfile['secondary_province_code'] ?? 0);
+$studentProfile['secondary_citymun_code'] = (int) ($studentProfile['secondary_citymun_code'] ?? 0);
+$studentProfile['secondary_barangay_code'] = (int) ($studentProfile['secondary_barangay_code'] ?? 0);
+$studentProfile['parent_guardian_region_code'] = (int) ($studentProfile['parent_guardian_region_code'] ?? 0);
+$studentProfile['parent_guardian_province_code'] = (int) ($studentProfile['parent_guardian_province_code'] ?? 0);
+$studentProfile['parent_guardian_citymun_code'] = (int) ($studentProfile['parent_guardian_citymun_code'] ?? 0);
+$studentProfile['parent_guardian_barangay_code'] = (int) ($studentProfile['parent_guardian_barangay_code'] ?? 0);
+$studentProfileCompletionPercent = calculate_student_profile_completion_percent($studentProfile);
+$studentProfile['profile_completion_percent'] = $studentProfileCompletionPercent;
+
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['profile_lookup'])) {
+    $lookupType = strtolower(trim((string) ($_GET['profile_lookup'] ?? '')));
+    $items = [];
+
+    if ($lookupType === 'region') {
+        $regionSql = "SELECT regCode AS code, regDesc AS label FROM refregion ORDER BY regCode ASC";
+        $regionResult = $conn->query($regionSql);
+        if (!$regionResult) {
+            send_profile_lookup_json(['success' => false, 'message' => 'Failed loading regions.'], 500);
+        }
+
+        while ($row = $regionResult->fetch_assoc()) {
+            $items[] = [
+                'code' => (int) ($row['code'] ?? 0),
+                'label' => trim((string) ($row['label'] ?? '')),
+            ];
+        }
+        $regionResult->free();
+        send_profile_lookup_json(['success' => true, 'items' => $items]);
+    }
+
+    if ($lookupType === 'province') {
+        $regionCode = (int) ($_GET['region_code'] ?? 0);
+        if ($regionCode > 0) {
+            $provinceSql = "
+                SELECT provCode AS code, provDesc AS label
+                FROM refprovince
+                WHERE regCode = ?
+                ORDER BY provDesc ASC
+            ";
+            $provinceStmt = $conn->prepare($provinceSql);
+            if (!$provinceStmt) {
+                send_profile_lookup_json(['success' => false, 'message' => 'Failed loading provinces.'], 500);
+            }
+            $provinceStmt->bind_param('i', $regionCode);
+            $provinceStmt->execute();
+            $provinceResult = $provinceStmt->get_result();
+            while ($row = $provinceResult->fetch_assoc()) {
+                $items[] = [
+                    'code' => (int) ($row['code'] ?? 0),
+                    'label' => trim((string) ($row['label'] ?? '')),
+                ];
+            }
+            $provinceStmt->close();
+        } else {
+            $provinceSql = "SELECT provCode AS code, provDesc AS label FROM refprovince ORDER BY provDesc ASC";
+            $provinceResult = $conn->query($provinceSql);
+            if (!$provinceResult) {
+                send_profile_lookup_json(['success' => false, 'message' => 'Failed loading provinces.'], 500);
+            }
+            while ($row = $provinceResult->fetch_assoc()) {
+                $items[] = [
+                    'code' => (int) ($row['code'] ?? 0),
+                    'label' => trim((string) ($row['label'] ?? '')),
+                ];
+            }
+            $provinceResult->free();
+        }
+        send_profile_lookup_json(['success' => true, 'items' => $items]);
+    }
+
+    if ($lookupType === 'citymun') {
+        $provinceCode = (int) ($_GET['province_code'] ?? 0);
+        if ($provinceCode <= 0) {
+            send_profile_lookup_json(['success' => true, 'items' => []]);
+        }
+
+        $citySql = "
+            SELECT citymunCode AS code, citymunDesc AS label
+            FROM refcitymun
+            WHERE provCode = ?
+            ORDER BY citymunDesc ASC
+        ";
+        $cityStmt = $conn->prepare($citySql);
+        if (!$cityStmt) {
+            send_profile_lookup_json(['success' => false, 'message' => 'Failed loading cities/municipalities.'], 500);
+        }
+        $cityStmt->bind_param('i', $provinceCode);
+        $cityStmt->execute();
+        $cityResult = $cityStmt->get_result();
+        while ($row = $cityResult->fetch_assoc()) {
+            $items[] = [
+                'code' => (int) ($row['code'] ?? 0),
+                'label' => trim((string) ($row['label'] ?? '')),
+            ];
+        }
+        $cityStmt->close();
+        send_profile_lookup_json(['success' => true, 'items' => $items]);
+    }
+
+    if ($lookupType === 'barangay') {
+        $citymunCode = (int) ($_GET['citymun_code'] ?? 0);
+        if ($citymunCode <= 0) {
+            send_profile_lookup_json(['success' => true, 'items' => []]);
+        }
+
+        $barangaySql = "
+            SELECT brgyCode AS code, brgyDesc AS label
+            FROM refbrgy
+            WHERE citymunCode = ?
+            ORDER BY brgyDesc ASC
+        ";
+        $barangayStmt = $conn->prepare($barangaySql);
+        if (!$barangayStmt) {
+            send_profile_lookup_json(['success' => false, 'message' => 'Failed loading barangays.'], 500);
+        }
+        $barangayStmt->bind_param('i', $citymunCode);
+        $barangayStmt->execute();
+        $barangayResult = $barangayStmt->get_result();
+        while ($row = $barangayResult->fetch_assoc()) {
+            $items[] = [
+                'code' => (int) ($row['code'] ?? 0),
+                'label' => trim((string) ($row['label'] ?? '')),
+            ];
+        }
+        $barangayStmt->close();
+        send_profile_lookup_json(['success' => true, 'items' => $items]);
+    }
+
+    send_profile_lookup_json(['success' => false, 'message' => 'Invalid lookup type.'], 400);
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') === 'student_profile_save') {
+    $flashType = 'danger';
+    $flashMessage = 'Profile update failed.';
+
+    $postedCsrf = (string) ($_POST['csrf_token'] ?? '');
+    $sessionCsrf = (string) ($_SESSION['student_profile_csrf'] ?? '');
+    if ($postedCsrf === '' || $sessionCsrf === '' || !hash_equals($sessionCsrf, $postedCsrf)) {
+        $flashMessage = 'Invalid profile security token. Refresh the page and try again.';
+    } else {
+        $birthDate = trim((string) ($_POST['birth_date'] ?? ''));
+        $sex = normalize_profile_text($_POST['sex'] ?? '', 10);
+        $civilStatus = normalize_profile_text($_POST['civil_status'] ?? '', 20);
+        $nationality = normalize_profile_text($_POST['nationality'] ?? '', 100);
+        $religion = normalize_profile_text($_POST['religion'] ?? '', 120);
+        $secondarySchoolName = normalize_profile_text($_POST['secondary_school_name'] ?? '', 190);
+        $secondarySchoolType = normalize_profile_text($_POST['secondary_school_type'] ?? '', 20);
+        $secondaryAddressLine1 = normalize_profile_text($_POST['secondary_address_line1'] ?? '', 255);
+        $secondaryRegionCode = (int) ($_POST['secondary_region_code'] ?? 0);
+        $secondaryProvinceCode = (int) ($_POST['secondary_province_code'] ?? 0);
+        $secondaryCitymunCode = (int) ($_POST['secondary_citymun_code'] ?? 0);
+        $secondaryBarangayCode = (int) ($_POST['secondary_barangay_code'] ?? 0);
+        $secondaryPostalCode = normalize_profile_text($_POST['secondary_postal_code'] ?? '', 20);
+        $addressLine1 = normalize_profile_text($_POST['address_line1'] ?? '', 255);
+        $regionCode = (int) ($_POST['region_code'] ?? 0);
+        $provinceCode = (int) ($_POST['province_code'] ?? 0);
+        $citymunCode = (int) ($_POST['citymun_code'] ?? 0);
+        $barangayCode = (int) ($_POST['barangay_code'] ?? 0);
+        $postalCode = normalize_profile_text($_POST['postal_code'] ?? '', 20);
+        $parentGuardianAddressLine1 = normalize_profile_text($_POST['parent_guardian_address_line1'] ?? '', 255);
+        $parentGuardianRegionCode = (int) ($_POST['parent_guardian_region_code'] ?? 0);
+        $parentGuardianProvinceCode = (int) ($_POST['parent_guardian_province_code'] ?? 0);
+        $parentGuardianCitymunCode = (int) ($_POST['parent_guardian_citymun_code'] ?? 0);
+        $parentGuardianBarangayCode = (int) ($_POST['parent_guardian_barangay_code'] ?? 0);
+        $parentGuardianPostalCode = normalize_profile_text($_POST['parent_guardian_postal_code'] ?? '', 20);
+        $fatherName = normalize_profile_text($_POST['father_name'] ?? '', 190);
+        $fatherContactNumber = normalize_profile_text($_POST['father_contact_number'] ?? '', 30);
+        $fatherOccupation = normalize_profile_text($_POST['father_occupation'] ?? '', 120);
+        $motherName = normalize_profile_text($_POST['mother_name'] ?? '', 190);
+        $motherContactNumber = normalize_profile_text($_POST['mother_contact_number'] ?? '', 30);
+        $motherOccupation = normalize_profile_text($_POST['mother_occupation'] ?? '', 120);
+        $guardianName = normalize_profile_text($_POST['guardian_name'] ?? '', 190);
+        $guardianRelationship = normalize_profile_text($_POST['guardian_relationship'] ?? '', 120);
+        $guardianContactNumber = normalize_profile_text($_POST['guardian_contact_number'] ?? '', 30);
+        $guardianOccupation = normalize_profile_text($_POST['guardian_occupation'] ?? '', 120);
+
+        $allowedSex = ['', 'Male', 'Female', 'Other'];
+        $allowedCivilStatus = ['', 'Single', 'Married', 'Separated', 'Widowed', 'Other'];
+        $allowedSchoolType = ['', 'Private', 'Public'];
+        if (!in_array($sex, $allowedSex, true)) {
+            $sex = '';
+        }
+        if (!in_array($civilStatus, $allowedCivilStatus, true)) {
+            $civilStatus = '';
+        }
+        if (!in_array($secondarySchoolType, $allowedSchoolType, true)) {
+            $secondarySchoolType = '';
+        }
+
+        if ($birthDate !== '') {
+            $dateParts = explode('-', $birthDate);
+            $isValidBirthDate = (
+                count($dateParts) === 3 &&
+                preg_match('/^\d{4}-\d{2}-\d{2}$/', $birthDate) &&
+                checkdate((int) $dateParts[1], (int) $dateParts[2], (int) $dateParts[0])
+            );
+            if (!$isValidBirthDate) {
+                $flashMessage = 'Invalid birth date format.';
+            }
+        }
+
+        if ($flashMessage === 'Profile update failed.') {
+            if ($secondaryCitymunCode > 0 && $secondaryProvinceCode <= 0) {
+                $flashMessage = 'Select a secondary school province before selecting a city/municipality.';
+            } elseif ($secondaryBarangayCode > 0 && $secondaryCitymunCode <= 0) {
+                $flashMessage = 'Select a secondary school city/municipality before selecting a barangay.';
+            } elseif ($provinceCode > 0 && $regionCode <= 0) {
+                $flashMessage = 'Select a region before selecting a province.';
+            } elseif ($citymunCode > 0 && $provinceCode <= 0) {
+                $flashMessage = 'Select a province before selecting a city/municipality.';
+            } elseif ($barangayCode > 0 && $citymunCode <= 0) {
+                $flashMessage = 'Select a city/municipality before selecting a barangay.';
+            } elseif ($parentGuardianProvinceCode > 0 && $parentGuardianRegionCode <= 0) {
+                $flashMessage = 'Select a parent/guardian region before selecting a province.';
+            } elseif ($parentGuardianCitymunCode > 0 && $parentGuardianProvinceCode <= 0) {
+                $flashMessage = 'Select a parent/guardian province before selecting a city/municipality.';
+            } elseif ($parentGuardianBarangayCode > 0 && $parentGuardianCitymunCode <= 0) {
+                $flashMessage = 'Select a parent/guardian city/municipality before selecting a barangay.';
+            }
+        }
+
+        if ($flashMessage === 'Profile update failed.' && $secondaryRegionCode > 0 && $secondaryProvinceCode > 0) {
+            $secondaryProvinceMatchSql = "SELECT 1 FROM refprovince WHERE provCode = ? AND regCode = ? LIMIT 1";
+            $secondaryProvinceMatchStmt = $conn->prepare($secondaryProvinceMatchSql);
+            if (!$secondaryProvinceMatchStmt) {
+                $flashMessage = 'Unable to validate secondary school province and region.';
+            } else {
+                $secondaryProvinceMatchStmt->bind_param('ii', $secondaryProvinceCode, $secondaryRegionCode);
+                $secondaryProvinceMatchStmt->execute();
+                $secondaryProvinceMatch = $secondaryProvinceMatchStmt->get_result()->fetch_assoc();
+                $secondaryProvinceMatchStmt->close();
+                if (!$secondaryProvinceMatch) {
+                    $flashMessage = 'Selected secondary school province does not match the selected region.';
+                }
+            }
+        }
+
+        if ($flashMessage === 'Profile update failed.' && $secondaryProvinceCode > 0 && $secondaryCitymunCode > 0) {
+            $secondaryCityMatchSql = "SELECT 1 FROM refcitymun WHERE citymunCode = ? AND provCode = ? LIMIT 1";
+            $secondaryCityMatchStmt = $conn->prepare($secondaryCityMatchSql);
+            if (!$secondaryCityMatchStmt) {
+                $flashMessage = 'Unable to validate secondary school city/municipality.';
+            } else {
+                $secondaryCityMatchStmt->bind_param('ii', $secondaryCitymunCode, $secondaryProvinceCode);
+                $secondaryCityMatchStmt->execute();
+                $secondaryCityMatch = $secondaryCityMatchStmt->get_result()->fetch_assoc();
+                $secondaryCityMatchStmt->close();
+                if (!$secondaryCityMatch) {
+                    $flashMessage = 'Selected secondary school city/municipality does not match the selected province.';
+                }
+            }
+        }
+
+        if ($flashMessage === 'Profile update failed.' && $secondaryCitymunCode > 0 && $secondaryBarangayCode > 0) {
+            $secondaryBarangayMatchSql = "SELECT 1 FROM refbrgy WHERE brgyCode = ? AND citymunCode = ? LIMIT 1";
+            $secondaryBarangayMatchStmt = $conn->prepare($secondaryBarangayMatchSql);
+            if (!$secondaryBarangayMatchStmt) {
+                $flashMessage = 'Unable to validate secondary school barangay.';
+            } else {
+                $secondaryBarangayMatchStmt->bind_param('ii', $secondaryBarangayCode, $secondaryCitymunCode);
+                $secondaryBarangayMatchStmt->execute();
+                $secondaryBarangayMatch = $secondaryBarangayMatchStmt->get_result()->fetch_assoc();
+                $secondaryBarangayMatchStmt->close();
+                if (!$secondaryBarangayMatch) {
+                    $flashMessage = 'Selected secondary school barangay does not match the selected city/municipality.';
+                }
+            }
+        }
+
+        if ($flashMessage === 'Profile update failed.' && $regionCode > 0 && $provinceCode > 0) {
+            $provinceMatchSql = "SELECT 1 FROM refprovince WHERE provCode = ? AND regCode = ? LIMIT 1";
+            $provinceMatchStmt = $conn->prepare($provinceMatchSql);
+            if (!$provinceMatchStmt) {
+                $flashMessage = 'Unable to validate province and region.';
+            } else {
+                $provinceMatchStmt->bind_param('ii', $provinceCode, $regionCode);
+                $provinceMatchStmt->execute();
+                $provinceMatch = $provinceMatchStmt->get_result()->fetch_assoc();
+                $provinceMatchStmt->close();
+                if (!$provinceMatch) {
+                    $flashMessage = 'Selected province does not match the selected region.';
+                }
+            }
+        }
+
+        if ($flashMessage === 'Profile update failed.' && $provinceCode > 0 && $citymunCode > 0) {
+            $cityMatchSql = "SELECT 1 FROM refcitymun WHERE citymunCode = ? AND provCode = ? LIMIT 1";
+            $cityMatchStmt = $conn->prepare($cityMatchSql);
+            if (!$cityMatchStmt) {
+                $flashMessage = 'Unable to validate city/municipality.';
+            } else {
+                $cityMatchStmt->bind_param('ii', $citymunCode, $provinceCode);
+                $cityMatchStmt->execute();
+                $cityMatch = $cityMatchStmt->get_result()->fetch_assoc();
+                $cityMatchStmt->close();
+                if (!$cityMatch) {
+                    $flashMessage = 'Selected city/municipality does not match the selected province.';
+                }
+            }
+        }
+
+        if ($flashMessage === 'Profile update failed.' && $citymunCode > 0 && $barangayCode > 0) {
+            $barangayMatchSql = "SELECT 1 FROM refbrgy WHERE brgyCode = ? AND citymunCode = ? LIMIT 1";
+            $barangayMatchStmt = $conn->prepare($barangayMatchSql);
+            if (!$barangayMatchStmt) {
+                $flashMessage = 'Unable to validate barangay.';
+            } else {
+                $barangayMatchStmt->bind_param('ii', $barangayCode, $citymunCode);
+                $barangayMatchStmt->execute();
+                $barangayMatch = $barangayMatchStmt->get_result()->fetch_assoc();
+                $barangayMatchStmt->close();
+                if (!$barangayMatch) {
+                    $flashMessage = 'Selected barangay does not match the selected city/municipality.';
+                }
+            }
+        }
+
+        if ($flashMessage === 'Profile update failed.' && $parentGuardianRegionCode > 0 && $parentGuardianProvinceCode > 0) {
+            $parentGuardianProvinceMatchSql = "SELECT 1 FROM refprovince WHERE provCode = ? AND regCode = ? LIMIT 1";
+            $parentGuardianProvinceMatchStmt = $conn->prepare($parentGuardianProvinceMatchSql);
+            if (!$parentGuardianProvinceMatchStmt) {
+                $flashMessage = 'Unable to validate parent/guardian province and region.';
+            } else {
+                $parentGuardianProvinceMatchStmt->bind_param('ii', $parentGuardianProvinceCode, $parentGuardianRegionCode);
+                $parentGuardianProvinceMatchStmt->execute();
+                $parentGuardianProvinceMatch = $parentGuardianProvinceMatchStmt->get_result()->fetch_assoc();
+                $parentGuardianProvinceMatchStmt->close();
+                if (!$parentGuardianProvinceMatch) {
+                    $flashMessage = 'Selected parent/guardian province does not match the selected region.';
+                }
+            }
+        }
+
+        if ($flashMessage === 'Profile update failed.' && $parentGuardianProvinceCode > 0 && $parentGuardianCitymunCode > 0) {
+            $parentGuardianCityMatchSql = "SELECT 1 FROM refcitymun WHERE citymunCode = ? AND provCode = ? LIMIT 1";
+            $parentGuardianCityMatchStmt = $conn->prepare($parentGuardianCityMatchSql);
+            if (!$parentGuardianCityMatchStmt) {
+                $flashMessage = 'Unable to validate parent/guardian city/municipality.';
+            } else {
+                $parentGuardianCityMatchStmt->bind_param('ii', $parentGuardianCitymunCode, $parentGuardianProvinceCode);
+                $parentGuardianCityMatchStmt->execute();
+                $parentGuardianCityMatch = $parentGuardianCityMatchStmt->get_result()->fetch_assoc();
+                $parentGuardianCityMatchStmt->close();
+                if (!$parentGuardianCityMatch) {
+                    $flashMessage = 'Selected parent/guardian city/municipality does not match the selected province.';
+                }
+            }
+        }
+
+        if ($flashMessage === 'Profile update failed.' && $parentGuardianCitymunCode > 0 && $parentGuardianBarangayCode > 0) {
+            $parentGuardianBarangayMatchSql = "SELECT 1 FROM refbrgy WHERE brgyCode = ? AND citymunCode = ? LIMIT 1";
+            $parentGuardianBarangayMatchStmt = $conn->prepare($parentGuardianBarangayMatchSql);
+            if (!$parentGuardianBarangayMatchStmt) {
+                $flashMessage = 'Unable to validate parent/guardian barangay.';
+            } else {
+                $parentGuardianBarangayMatchStmt->bind_param('ii', $parentGuardianBarangayCode, $parentGuardianCitymunCode);
+                $parentGuardianBarangayMatchStmt->execute();
+                $parentGuardianBarangayMatch = $parentGuardianBarangayMatchStmt->get_result()->fetch_assoc();
+                $parentGuardianBarangayMatchStmt->close();
+                if (!$parentGuardianBarangayMatch) {
+                    $flashMessage = 'Selected parent/guardian barangay does not match the selected city/municipality.';
+                }
+            }
+        }
+
+        if ($flashMessage === 'Profile update failed.') {
+            $profilePayload = [
+                'birth_date' => $birthDate,
+                'sex' => $sex,
+                'civil_status' => $civilStatus,
+                'nationality' => $nationality,
+                'religion' => $religion,
+                'secondary_school_name' => $secondarySchoolName,
+                'secondary_school_type' => $secondarySchoolType,
+                'secondary_address_line1' => $secondaryAddressLine1,
+                'secondary_region_code' => $secondaryRegionCode,
+                'secondary_province_code' => $secondaryProvinceCode,
+                'secondary_citymun_code' => $secondaryCitymunCode,
+                'secondary_barangay_code' => $secondaryBarangayCode,
+                'secondary_postal_code' => $secondaryPostalCode,
+                'address_line1' => $addressLine1,
+                'region_code' => $regionCode,
+                'province_code' => $provinceCode,
+                'citymun_code' => $citymunCode,
+                'barangay_code' => $barangayCode,
+                'postal_code' => $postalCode,
+                'parent_guardian_address_line1' => $parentGuardianAddressLine1,
+                'parent_guardian_region_code' => $parentGuardianRegionCode,
+                'parent_guardian_province_code' => $parentGuardianProvinceCode,
+                'parent_guardian_citymun_code' => $parentGuardianCitymunCode,
+                'parent_guardian_barangay_code' => $parentGuardianBarangayCode,
+                'parent_guardian_postal_code' => $parentGuardianPostalCode,
+                'father_name' => $fatherName,
+                'father_contact_number' => $fatherContactNumber,
+                'father_occupation' => $fatherOccupation,
+                'mother_name' => $motherName,
+                'mother_contact_number' => $motherContactNumber,
+                'mother_occupation' => $motherOccupation,
+                'guardian_name' => $guardianName,
+                'guardian_relationship' => $guardianRelationship,
+                'guardian_contact_number' => $guardianContactNumber,
+                'guardian_occupation' => $guardianOccupation,
+            ];
+            $completionPercent = calculate_student_profile_completion_percent($profilePayload);
+            $studentExamineeNumber = normalize_profile_text($student['examinee_number'] ?? '', 50);
+
+            $saveProfileSql = "
+                INSERT INTO tbl_student_profile (
+                    credential_id,
+                    examinee_number,
+                    birth_date,
+                    sex,
+                    civil_status,
+                    nationality,
+                    religion,
+                    secondary_school_name,
+                    secondary_school_type,
+                    secondary_address_line1,
+                    secondary_region_code,
+                    secondary_province_code,
+                    secondary_citymun_code,
+                    secondary_barangay_code,
+                    secondary_postal_code,
+                    address_line1,
+                    region_code,
+                    province_code,
+                    citymun_code,
+                    barangay_code,
+                    postal_code,
+                    parent_guardian_address_line1,
+                    parent_guardian_region_code,
+                    parent_guardian_province_code,
+                    parent_guardian_citymun_code,
+                    parent_guardian_barangay_code,
+                    parent_guardian_postal_code,
+                    father_name,
+                    father_contact_number,
+                    father_occupation,
+                    mother_name,
+                    mother_contact_number,
+                    mother_occupation,
+                    guardian_name,
+                    guardian_relationship,
+                    guardian_contact_number,
+                    guardian_occupation,
+                    profile_completion_percent
+                ) VALUES (
+                    ?,
+                    ?,
+                    NULLIF(?, ''),
+                    NULLIF(?, ''),
+                    NULLIF(?, ''),
+                    NULLIF(?, ''),
+                    NULLIF(?, ''),
+                    NULLIF(?, ''),
+                    NULLIF(?, ''),
+                    NULLIF(?, ''),
+                    NULLIF(?, 0),
+                    NULLIF(?, 0),
+                    NULLIF(?, 0),
+                    NULLIF(?, 0),
+                    NULLIF(?, ''),
+                    NULLIF(?, ''),
+                    NULLIF(?, 0),
+                    NULLIF(?, 0),
+                    NULLIF(?, 0),
+                    NULLIF(?, 0),
+                    NULLIF(?, ''),
+                    NULLIF(?, ''),
+                    NULLIF(?, 0),
+                    NULLIF(?, 0),
+                    NULLIF(?, 0),
+                    NULLIF(?, 0),
+                    NULLIF(?, ''),
+                    NULLIF(?, ''),
+                    NULLIF(?, ''),
+                    NULLIF(?, ''),
+                    NULLIF(?, ''),
+                    NULLIF(?, ''),
+                    NULLIF(?, ''),
+                    NULLIF(?, ''),
+                    NULLIF(?, ''),
+                    NULLIF(?, ''),
+                    NULLIF(?, ''),
+                    ?
+                )
+                ON DUPLICATE KEY UPDATE
+                    examinee_number = VALUES(examinee_number),
+                    birth_date = VALUES(birth_date),
+                    sex = VALUES(sex),
+                    civil_status = VALUES(civil_status),
+                    nationality = VALUES(nationality),
+                    religion = VALUES(religion),
+                    secondary_school_name = VALUES(secondary_school_name),
+                    secondary_school_type = VALUES(secondary_school_type),
+                    secondary_address_line1 = VALUES(secondary_address_line1),
+                    secondary_region_code = VALUES(secondary_region_code),
+                    secondary_province_code = VALUES(secondary_province_code),
+                    secondary_citymun_code = VALUES(secondary_citymun_code),
+                    secondary_barangay_code = VALUES(secondary_barangay_code),
+                    secondary_postal_code = VALUES(secondary_postal_code),
+                    address_line1 = VALUES(address_line1),
+                    region_code = VALUES(region_code),
+                    province_code = VALUES(province_code),
+                    citymun_code = VALUES(citymun_code),
+                    barangay_code = VALUES(barangay_code),
+                    postal_code = VALUES(postal_code),
+                    parent_guardian_address_line1 = VALUES(parent_guardian_address_line1),
+                    parent_guardian_region_code = VALUES(parent_guardian_region_code),
+                    parent_guardian_province_code = VALUES(parent_guardian_province_code),
+                    parent_guardian_citymun_code = VALUES(parent_guardian_citymun_code),
+                    parent_guardian_barangay_code = VALUES(parent_guardian_barangay_code),
+                    parent_guardian_postal_code = VALUES(parent_guardian_postal_code),
+                    father_name = VALUES(father_name),
+                    father_contact_number = VALUES(father_contact_number),
+                    father_occupation = VALUES(father_occupation),
+                    mother_name = VALUES(mother_name),
+                    mother_contact_number = VALUES(mother_contact_number),
+                    mother_occupation = VALUES(mother_occupation),
+                    guardian_name = VALUES(guardian_name),
+                    guardian_relationship = VALUES(guardian_relationship),
+                    guardian_contact_number = VALUES(guardian_contact_number),
+                    guardian_occupation = VALUES(guardian_occupation),
+                    profile_completion_percent = VALUES(profile_completion_percent),
+                    updated_at = CURRENT_TIMESTAMP
+            ";
+
+            $saveProfileStmt = $conn->prepare($saveProfileSql);
+            if (!$saveProfileStmt) {
+                $flashMessage = 'Failed to prepare profile save.';
+            } else {
+                $bindTypes = 'i'
+                    . str_repeat('s', 9)
+                    . str_repeat('i', 4)
+                    . str_repeat('s', 2)
+                    . str_repeat('i', 4)
+                    . 's'
+                    . str_repeat('i', 4)
+                    . 's'
+                    . str_repeat('s', 11)
+                    . 'd';
+                $saveProfileStmt->bind_param(
+                    $bindTypes,
+                    $credentialId,
+                    $studentExamineeNumber,
+                    $birthDate,
+                    $sex,
+                    $civilStatus,
+                    $nationality,
+                    $religion,
+                    $secondarySchoolName,
+                    $secondarySchoolType,
+                    $secondaryAddressLine1,
+                    $secondaryRegionCode,
+                    $secondaryProvinceCode,
+                    $secondaryCitymunCode,
+                    $secondaryBarangayCode,
+                    $secondaryPostalCode,
+                    $addressLine1,
+                    $regionCode,
+                    $provinceCode,
+                    $citymunCode,
+                    $barangayCode,
+                    $postalCode,
+                    $parentGuardianAddressLine1,
+                    $parentGuardianRegionCode,
+                    $parentGuardianProvinceCode,
+                    $parentGuardianCitymunCode,
+                    $parentGuardianBarangayCode,
+                    $parentGuardianPostalCode,
+                    $fatherName,
+                    $fatherContactNumber,
+                    $fatherOccupation,
+                    $motherName,
+                    $motherContactNumber,
+                    $motherOccupation,
+                    $guardianName,
+                    $guardianRelationship,
+                    $guardianContactNumber,
+                    $guardianOccupation,
+                    $completionPercent
+                );
+
+                if ($saveProfileStmt->execute()) {
+                    $flashType = 'success';
+                    $flashMessage = 'Profile updated successfully. Completion: ' . number_format($completionPercent, 0) . '%.';
+                } else {
+                    $flashMessage = 'Failed to save profile details.';
+                }
+                $saveProfileStmt->close();
+            }
+        }
+    }
+
+    $_SESSION['student_profile_flash'] = [
+        'type' => $flashType,
+        'message' => $flashMessage,
+    ];
+    header('Location: index.php');
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') === 'student_transfer_submit') {
+    $flashType = 'danger';
+    $flashMessage = 'Transfer request failed.';
+
+    $postedCsrf = (string) ($_POST['csrf_token'] ?? '');
+    $sessionCsrf = (string) ($_SESSION['student_transfer_csrf'] ?? '');
+    $targetProgramId = (int) ($_POST['to_program_id'] ?? 0);
+    $transferReason = trim((string) ($_POST['transfer_reason'] ?? ''));
+    $transferReasonWords = count_reason_words($transferReason);
+    $interviewId = (int) ($student['interview_id'] ?? 0);
+    $currentFirstChoiceId = (int) ($student['first_choice'] ?? 0);
+    $studentSatScoreForTransfer = null;
+    if (isset($student['sat_score']) && $student['sat_score'] !== '' && $student['sat_score'] !== null) {
+        $studentSatScoreForTransfer = (float) $student['sat_score'];
+    }
+
+    if ($postedCsrf === '' || $sessionCsrf === '' || !hash_equals($sessionCsrf, $postedCsrf)) {
+        $flashMessage = 'Invalid security token. Refresh the page and try again.';
+    } elseif ($interviewId <= 0) {
+        $flashMessage = 'Interview record is missing. Transfer cannot be processed.';
+    } elseif ($targetProgramId <= 0) {
+        $flashMessage = 'Please select a valid transfer program.';
+    } elseif ($targetProgramId === $currentFirstChoiceId) {
+        $flashMessage = 'Selected program is already your first choice.';
+    } elseif ($transferReasonWords < 50) {
+        $flashMessage = 'Please provide at least 50 words for your transfer reason.';
+    } elseif (!ensure_student_transfer_history_table($conn)) {
+        $flashMessage = 'Transfer history table initialization failed.';
+    } else {
+        $targetProgramSql = "
+            SELECT
+                p.program_id,
+                pc.cutoff_score,
+                pc.absorptive_capacity,
+                COALESCE(scored.scored_students, 0) AS scored_students
+            FROM tbl_program p
+            LEFT JOIN (
+                SELECT
+                    pcx.program_id,
+                    pcx.cutoff_score,
+                    pcx.absorptive_capacity
+                FROM tbl_program_cutoff pcx
+                INNER JOIN (
+                    SELECT program_id, MAX(cutoff_id) AS max_cutoff_id
+                    FROM tbl_program_cutoff
+                    GROUP BY program_id
+                ) latest_cutoff
+                    ON latest_cutoff.max_cutoff_id = pcx.cutoff_id
+            ) pc
+                ON pc.program_id = p.program_id
+            LEFT JOIN (
+                SELECT
+                    first_choice AS program_id,
+                    COUNT(*) AS scored_students
+                FROM tbl_student_interview
+                WHERE status = 'active'
+                  AND final_score IS NOT NULL
+                GROUP BY first_choice
+            ) scored
+                ON scored.program_id = p.program_id
+            WHERE p.program_id = ?
+              AND p.status = 'active'
+            LIMIT 1
+        ";
+
+        $targetStmt = $conn->prepare($targetProgramSql);
+        $targetProgram = null;
+        if ($targetStmt) {
+            $targetStmt->bind_param('i', $targetProgramId);
+            $targetStmt->execute();
+            $targetProgram = $targetStmt->get_result()->fetch_assoc();
+            $targetStmt->close();
+        }
+
+        if (!$targetProgram) {
+            $flashMessage = 'Selected transfer program is not available.';
+        } else {
+            $targetCapacity = ($targetProgram['absorptive_capacity'] !== null && $targetProgram['absorptive_capacity'] !== '')
+                ? max(0, (int) $targetProgram['absorptive_capacity'])
+                : null;
+            $targetScored = max(0, (int) ($targetProgram['scored_students'] ?? 0));
+            $targetAvailable = ($targetCapacity !== null) ? max(0, $targetCapacity - $targetScored) : 0;
+            $targetCutoff = ($targetProgram['cutoff_score'] !== null && $targetProgram['cutoff_score'] !== '')
+                ? (int) $targetProgram['cutoff_score']
+                : null;
+            $targetOpen = ($targetCapacity !== null && $targetAvailable > 0);
+            $targetSatQualified = ($targetCutoff !== null && $studentSatScoreForTransfer !== null)
+                ? ($studentSatScoreForTransfer >= $targetCutoff)
+                : false;
+
+            if (!$targetOpen) {
+                $flashMessage = 'Selected program has no available slots.';
+            } elseif (!$targetSatQualified) {
+                $flashMessage = 'Your SAT score does not meet the selected program cutoff.';
+            } else {
+                $conn->begin_transaction();
+
+                try {
+                    $reloadSql = "
+                        SELECT interview_id, first_choice, second_choice, third_choice, program_chair_id
+                        FROM tbl_student_interview
+                        WHERE interview_id = ?
+                          AND status = 'active'
+                        LIMIT 1
+                        FOR UPDATE
+                    ";
+                    $reloadStmt = $conn->prepare($reloadSql);
+                    if (!$reloadStmt) {
+                        throw new Exception('Failed to lock interview row.');
+                    }
+
+                    $reloadStmt->bind_param('i', $interviewId);
+                    if (!$reloadStmt->execute()) {
+                        throw new Exception('Failed to load interview row.');
+                    }
+                    $lockedInterview = $reloadStmt->get_result()->fetch_assoc();
+                    $reloadStmt->close();
+
+                    if (!$lockedInterview) {
+                        throw new Exception('Interview record is unavailable.');
+                    }
+
+                    $fromProgramId = (int) ($lockedInterview['first_choice'] ?? 0);
+                    if ($fromProgramId <= 0) {
+                        $fromProgramId = (int) ($student['first_choice'] ?? 0);
+                    }
+                    if ($fromProgramId === $targetProgramId) {
+                        throw new Exception('Selected program is already your first choice.');
+                    }
+
+                    $reorderedChoices = build_reordered_program_choices(
+                        $targetProgramId,
+                        (int) ($lockedInterview['first_choice'] ?? 0),
+                        (int) ($lockedInterview['second_choice'] ?? 0),
+                        (int) ($lockedInterview['third_choice'] ?? 0)
+                    );
+
+                    $newFirstChoice = (int) ($reorderedChoices[0] ?? 0);
+                    $newSecondChoice = (int) ($reorderedChoices[1] ?? 0);
+                    $newThirdChoice = (int) ($reorderedChoices[2] ?? 0);
+                    if ($newFirstChoice <= 0) {
+                        throw new Exception('Unable to compute updated program choices.');
+                    }
+
+                    $targetProgramChairId = (int) ($lockedInterview['program_chair_id'] ?? 0);
+                    $chairSql = "
+                        SELECT accountid
+                        FROM tblaccount
+                        WHERE role = 'progchair'
+                          AND status = 'active'
+                          AND approved = 1
+                          AND program_id = ?
+                        ORDER BY updated_at DESC, accountid DESC
+                        LIMIT 1
+                    ";
+                    $chairStmt = $conn->prepare($chairSql);
+                    if ($chairStmt) {
+                        $chairStmt->bind_param('i', $targetProgramId);
+                        $chairStmt->execute();
+                        $chairRow = $chairStmt->get_result()->fetch_assoc();
+                        if ($chairRow) {
+                            $targetProgramChairId = (int) ($chairRow['accountid'] ?? $targetProgramChairId);
+                        }
+                        $chairStmt->close();
+                    }
+                    if ($targetProgramChairId <= 0) {
+                        $targetProgramChairId = (int) ($lockedInterview['program_chair_id'] ?? 0);
+                    }
+
+                    $updateInterviewSql = "
+                        UPDATE tbl_student_interview
+                        SET first_choice = ?,
+                            second_choice = ?,
+                            third_choice = ?,
+                            program_id = ?,
+                            program_chair_id = ?
+                        WHERE interview_id = ?
+                        LIMIT 1
+                    ";
+                    $updateInterviewStmt = $conn->prepare($updateInterviewSql);
+                    if (!$updateInterviewStmt) {
+                        throw new Exception('Failed to prepare interview update.');
+                    }
+                    $updateInterviewStmt->bind_param(
+                        'iiiiii',
+                        $newFirstChoice,
+                        $newSecondChoice,
+                        $newThirdChoice,
+                        $targetProgramId,
+                        $targetProgramChairId,
+                        $interviewId
+                    );
+                    if (!$updateInterviewStmt->execute()) {
+                        throw new Exception('Failed to update interview choices.');
+                    }
+                    $updateInterviewStmt->close();
+
+                    $transferredBy = max(1, $credentialId);
+                    $approvedBy = $targetProgramChairId > 0 ? $targetProgramChairId : 0;
+                    $insertHistorySql = "
+                        INSERT INTO tbl_student_transfer_history (
+                            interview_id,
+                            from_program_id,
+                            to_program_id,
+                            transferred_by,
+                            transfer_datetime,
+                            remarks,
+                            status,
+                            approved_by,
+                            approved_datetime
+                        ) VALUES (?, ?, ?, ?, NOW(), ?, 'approved', NULLIF(?, 0), NOW())
+                    ";
+                    $insertHistoryStmt = $conn->prepare($insertHistorySql);
+                    if (!$insertHistoryStmt) {
+                        throw new Exception('Failed to prepare transfer history insert.');
+                    }
+                    $insertHistoryStmt->bind_param(
+                        'iiiisi',
+                        $interviewId,
+                        $fromProgramId,
+                        $targetProgramId,
+                        $transferredBy,
+                        $transferReason,
+                        $approvedBy
+                    );
+                    if (!$insertHistoryStmt->execute()) {
+                        throw new Exception('Failed to write transfer history.');
+                    }
+                    $insertHistoryStmt->close();
+
+                    $conn->commit();
+                    $flashType = 'success';
+                    $flashMessage = 'Transfer completed. Your pinned choices were updated.';
+                } catch (Exception $e) {
+                    $conn->rollback();
+                    error_log('Student transfer failed: ' . $e->getMessage());
+                    $flashMessage = 'Transfer could not be completed. Please try again.';
+                }
+            }
+        }
+    }
+
+    $_SESSION['student_transfer_flash'] = [
+        'type' => $flashType,
+        'message' => $flashMessage,
+    ];
+    header('Location: index.php');
+    exit;
+}
+
 function format_program_label($name, $major)
 {
     $name = trim((string) $name);
@@ -458,11 +1714,6 @@ if ($allProgramsStmt = $conn->prepare($allProgramsSql)) {
         $scoredStudents = max(0, (int) ($programRow['scored_students'] ?? 0));
         $availableSlots = ($capacity !== null) ? max(0, $capacity - $scoredStudents) : null;
 
-        $slotStatus = 'No Capacity';
-        if ($capacity !== null) {
-            $slotStatus = ($availableSlots > 0) ? 'Open' : 'Full';
-        }
-
         $quotaConfigured = false;
         $regularSlots = null;
         $etgSlots = null;
@@ -497,13 +1748,16 @@ if ($allProgramsStmt = $conn->prepare($allProgramsSql)) {
             ]);
         }
 
+        $slotStatus = 'Capacity not set';
+        if ($capacity !== null) {
+            $slotStatus = ($availableSlots > 0) ? 'Open' : 'Full';
+        }
+
         $satQualified = ($cutoffScore !== null && $studentSatScore !== null)
             ? ($studentSatScore >= $cutoffScore)
             : false;
-        $rankQualified = ($studentSlotLimit !== null && $studentProjectedRank !== null)
-            ? ($studentProjectedRank <= $studentSlotLimit)
-            : false;
-        $transferOpen = ($slotStatus === 'Open') && $satQualified && $rankQualified;
+        $rankQualified = ($slotStatus === 'Open');
+        $transferOpen = ($slotStatus === 'Open') && $satQualified;
 
         $allPrograms[] = [
             'program_id' => $programId,
@@ -555,13 +1809,14 @@ $buildChoiceSlotDetails = function ($programId, $scoredStudents) use ($programIn
         $capacity = max(0, (int) $programData['absorptive_capacity']);
     }
 
-    $scored = max(0, (int) $scoredStudents);
-    $available = ($capacity !== null) ? max(0, $capacity - $scored) : null;
+    $scored = ($programData !== null && array_key_exists('scored_students', $programData))
+        ? max(0, (int) ($programData['scored_students'] ?? 0))
+        : max(0, (int) $scoredStudents);
+    $available = ($programData !== null && array_key_exists('available_slots', $programData))
+        ? (($programData['available_slots'] !== null) ? max(0, (int) $programData['available_slots']) : null)
+        : (($capacity !== null) ? max(0, $capacity - $scored) : null);
 
-    $slotStatus = 'No Capacity';
-    if ($capacity !== null) {
-        $slotStatus = ($available > 0) ? 'Open' : 'Full';
-    }
+    $slotStatus = (string) ($programData['slot_status'] ?? 'Capacity not set');
 
     $slotBadgeClass = 'bg-label-secondary';
     if ($slotStatus === 'Open') {
@@ -570,25 +1825,18 @@ $buildChoiceSlotDetails = function ($programId, $scoredStudents) use ($programIn
         $slotBadgeClass = 'bg-label-danger';
     }
 
-    $studentSlotLimit = ($programData !== null && array_key_exists('student_slot_limit', $programData) && $programData['student_slot_limit'] !== null)
-        ? max(0, (int) $programData['student_slot_limit'])
-        : null;
-
     $satQualified = (bool) ($programData['sat_qualified'] ?? false);
-    $rankQualified = (bool) ($programData['rank_qualified'] ?? false);
     $transferOpen = (bool) ($programData['transfer_open'] ?? false);
 
     $qualificationNote = 'No transfer evaluation';
     if (!$hasScoredInterview) {
         $qualificationNote = 'Final interview score required';
+    } elseif ($capacity === null) {
+        $qualificationNote = 'Capacity not set';
     } elseif ($cutoffScore === null) {
         $qualificationNote = 'Cutoff SAT not configured';
     } elseif (!$satQualified) {
         $qualificationNote = 'SAT below cutoff';
-    } elseif ($studentSlotLimit === null) {
-        $qualificationNote = 'Allocation not configured';
-    } elseif (!$rankQualified) {
-        $qualificationNote = 'Outside allocated capacity';
     } elseif ($slotStatus !== 'Open') {
         $qualificationNote = 'No open slots available';
     } elseif ($transferOpen) {
@@ -695,6 +1943,33 @@ $studentEmail = trim((string) ($student['active_email'] ?? ($_SESSION['email'] ?
 if ($studentEmail === '') {
     $studentEmail = 'No email on file';
 }
+
+$regionOptions = [];
+$regionListSql = "SELECT regCode, regDesc FROM refregion ORDER BY regCode ASC";
+$regionListResult = $conn->query($regionListSql);
+if ($regionListResult) {
+    while ($regionRow = $regionListResult->fetch_assoc()) {
+        $regionOptions[] = [
+            'code' => (int) ($regionRow['regCode'] ?? 0),
+            'label' => trim((string) ($regionRow['regDesc'] ?? '')),
+        ];
+    }
+    $regionListResult->free();
+}
+
+$profileRegionCode = (int) ($studentProfile['region_code'] ?? 0);
+$profileProvinceCode = (int) ($studentProfile['province_code'] ?? 0);
+$profileCitymunCode = (int) ($studentProfile['citymun_code'] ?? 0);
+$profileBarangayCode = (int) ($studentProfile['barangay_code'] ?? 0);
+$profileSecondaryRegionCode = (int) ($studentProfile['secondary_region_code'] ?? 0);
+$profileSecondaryProvinceCode = (int) ($studentProfile['secondary_province_code'] ?? 0);
+$profileSecondaryCitymunCode = (int) ($studentProfile['secondary_citymun_code'] ?? 0);
+$profileSecondaryBarangayCode = (int) ($studentProfile['secondary_barangay_code'] ?? 0);
+$profileParentGuardianRegionCode = (int) ($studentProfile['parent_guardian_region_code'] ?? 0);
+$profileParentGuardianProvinceCode = (int) ($studentProfile['parent_guardian_province_code'] ?? 0);
+$profileParentGuardianCitymunCode = (int) ($studentProfile['parent_guardian_citymun_code'] ?? 0);
+$profileParentGuardianBarangayCode = (int) ($studentProfile['parent_guardian_barangay_code'] ?? 0);
+$profileCompletionBadge = number_format((float) $studentProfileCompletionPercent, 0) . '% Complete';
 ?>
 <!DOCTYPE html>
 <html
@@ -972,6 +2247,39 @@ if ($studentEmail === '') {
         background: #fff7e8;
       }
 
+      .student-profile-progress-chip {
+        font-size: 0.72rem;
+        letter-spacing: 0.01em;
+        padding: 0.4rem 0.62rem;
+      }
+
+      #studentProfileModal .modal-content {
+        border-radius: 0.88rem;
+      }
+
+      #studentProfileModal .modal-body {
+        max-height: 72vh;
+        overflow-y: auto;
+      }
+
+      #studentProfileModal .student-profile-panel {
+        border: 1px solid #e4e9f2;
+        border-radius: 0.75rem;
+        padding: 1rem;
+        background: #fff;
+      }
+
+      #studentProfileModal .student-profile-section-title {
+        margin-top: 0.3rem;
+        margin-bottom: 0.8rem;
+        padding-bottom: 0.38rem;
+        border-bottom: 1px dashed #d7deea;
+        font-size: 0.82rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #5f6f86;
+      }
+
       @media (min-width: 992px) {
         .student-pinned-wrap {
           position: sticky;
@@ -1096,6 +2404,16 @@ if ($studentEmail === '') {
 
           <div class="content-wrapper">
             <div class="container-xxl flex-grow-1 container-p-y">
+              <?php if (is_array($transferFlash) && !empty($transferFlash['message'])): ?>
+                <?php $transferAlertType = ((string) ($transferFlash['type'] ?? '') === 'success') ? 'success' : 'danger'; ?>
+                <div class="alert alert-<?= htmlspecialchars($transferAlertType); ?>"><?= htmlspecialchars((string) $transferFlash['message']); ?></div>
+              <?php endif; ?>
+
+              <?php if (is_array($profileFlash) && !empty($profileFlash['message'])): ?>
+                <?php $profileAlertType = ((string) ($profileFlash['type'] ?? '') === 'success') ? 'success' : 'danger'; ?>
+                <div class="alert alert-<?= htmlspecialchars($profileAlertType); ?>"><?= htmlspecialchars((string) $profileFlash['message']); ?></div>
+              <?php endif; ?>
+
               <?php if (isset($_GET['password_changed']) && $_GET['password_changed'] === '1'): ?>
                 <?php $emailNotice = (string) ($_GET['email_notice'] ?? ''); ?>
                 <?php if ($emailNotice === 'sent'): ?>
@@ -1118,8 +2436,13 @@ if ($studentEmail === '') {
                           <div class="d-flex flex-wrap gap-2 mb-4">
                             <span class="badge <?= $hasScoredInterview ? 'bg-label-success' : 'bg-label-warning'; ?>">Interview: <?= $hasScoredInterview ? 'Scored' : 'Pending'; ?></span>
                           </div>
-                          <button type="button" class="btn btn-sm btn-primary me-2" disabled>Register Me!</button>
-                          <a href="change_password.php" class="btn btn-sm btn-outline-primary">Change Password</a>
+                          <div class="d-flex flex-wrap align-items-center gap-2">
+                            <button type="button" class="btn btn-sm btn-primary" disabled>Register Me!</button>
+                            <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#studentProfileModal">
+                              Update My Profile
+                            </button>
+                            <span class="badge bg-label-info student-profile-progress-chip"><?= htmlspecialchars($profileCompletionBadge); ?></span>
+                          </div>
                         </div>
                       </div>
                       <div class="col-sm-5 text-center text-sm-left">
@@ -1330,6 +2653,342 @@ if ($studentEmail === '') {
       <div class="layout-overlay layout-menu-toggle"></div>
     </div>
 
+    <div class="modal fade" id="studentProfileModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+          <form method="post" id="studentProfileForm" autocomplete="off">
+            <input type="hidden" name="action" value="student_profile_save" />
+            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars((string) ($_SESSION['student_profile_csrf'] ?? ''), ENT_QUOTES); ?>" />
+
+            <div class="modal-header">
+              <h5 class="modal-title">Update My Profile</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+              <div class="small text-muted mb-3">Current completion: <strong><?= htmlspecialchars($profileCompletionBadge); ?></strong></div>
+
+              <div class="student-profile-panel">
+                <div class="student-profile-section-title">Basic Information</div>
+              <div class="row g-3">
+                <div class="col-md-4">
+                  <label class="form-label">Full Name</label>
+                  <input type="text" class="form-control" value="<?= htmlspecialchars($studentName); ?>" readonly />
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">Examinee Number</label>
+                  <input type="text" class="form-control" value="<?= htmlspecialchars((string) ($student['examinee_number'] ?? '')); ?>" readonly />
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">Current Mobile Number</label>
+                  <input type="text" class="form-control" value="<?= htmlspecialchars((string) ($student['mobile_number'] ?? '')); ?>" readonly />
+                </div>
+
+                <div class="col-md-4">
+                  <label for="profileBirthDate" class="form-label">Birth Date</label>
+                  <input type="date" class="form-control" id="profileBirthDate" name="birth_date" value="<?= htmlspecialchars((string) ($studentProfile['birth_date'] ?? '')); ?>" />
+                </div>
+                <div class="col-md-4">
+                  <label for="profileSex" class="form-label">Sex</label>
+                  <select class="form-select" id="profileSex" name="sex">
+                    <option value="">Select Sex</option>
+                    <option value="Male" <?= ((string) ($studentProfile['sex'] ?? '') === 'Male') ? 'selected' : ''; ?>>Male</option>
+                    <option value="Female" <?= ((string) ($studentProfile['sex'] ?? '') === 'Female') ? 'selected' : ''; ?>>Female</option>
+                    <option value="Other" <?= ((string) ($studentProfile['sex'] ?? '') === 'Other') ? 'selected' : ''; ?>>Other</option>
+                  </select>
+                </div>
+                <div class="col-md-4">
+                  <label for="profileCivilStatus" class="form-label">Civil Status</label>
+                  <select class="form-select" id="profileCivilStatus" name="civil_status">
+                    <option value="">Select Civil Status</option>
+                    <option value="Single" <?= ((string) ($studentProfile['civil_status'] ?? '') === 'Single') ? 'selected' : ''; ?>>Single</option>
+                    <option value="Married" <?= ((string) ($studentProfile['civil_status'] ?? '') === 'Married') ? 'selected' : ''; ?>>Married</option>
+                    <option value="Separated" <?= ((string) ($studentProfile['civil_status'] ?? '') === 'Separated') ? 'selected' : ''; ?>>Separated</option>
+                    <option value="Widowed" <?= ((string) ($studentProfile['civil_status'] ?? '') === 'Widowed') ? 'selected' : ''; ?>>Widowed</option>
+                    <option value="Other" <?= ((string) ($studentProfile['civil_status'] ?? '') === 'Other') ? 'selected' : ''; ?>>Other</option>
+                  </select>
+                </div>
+                <div class="col-md-6">
+                  <label for="profileNationality" class="form-label">Nationality</label>
+                  <input type="text" class="form-control" id="profileNationality" name="nationality" maxlength="100" value="<?= htmlspecialchars((string) ($studentProfile['nationality'] ?? '')); ?>" />
+                </div>
+                <div class="col-md-6">
+                  <label for="profileReligion" class="form-label">Religion</label>
+                  <input type="text" class="form-control" id="profileReligion" name="religion" maxlength="120" value="<?= htmlspecialchars((string) ($studentProfile['religion'] ?? '')); ?>" />
+                </div>
+              </div>
+              </div>
+
+              <div class="student-profile-panel mt-4">
+                <div class="student-profile-section-title">Secondary School Information</div>
+                <div class="row g-3 mb-3">
+                  <div class="col-md-8">
+                    <label for="profileSecondarySchool" class="form-label">Secondary School</label>
+                    <input
+                      type="text"
+                      class="form-control"
+                      id="profileSecondarySchool"
+                      name="secondary_school_name"
+                      maxlength="190"
+                      value="<?= htmlspecialchars((string) ($studentProfile['secondary_school_name'] ?? '')); ?>"
+                    />
+                  </div>
+                  <div class="col-md-4">
+                    <label for="profileSchoolType" class="form-label">School Type</label>
+                    <select class="form-select" id="profileSchoolType" name="secondary_school_type">
+                      <option value="">Select School Type</option>
+                      <option value="Private" <?= ((string) ($studentProfile['secondary_school_type'] ?? '') === 'Private') ? 'selected' : ''; ?>>Private</option>
+                      <option value="Public" <?= ((string) ($studentProfile['secondary_school_type'] ?? '') === 'Public') ? 'selected' : ''; ?>>Public</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="student-profile-section-title">Secondary School Address</div>
+                <input
+                  type="hidden"
+                  id="profileSecondaryAddressLine1"
+                  name="secondary_address_line1"
+                  value="<?= htmlspecialchars((string) ($studentProfile['secondary_address_line1'] ?? '')); ?>"
+                />
+                <select class="d-none" id="profileSecondaryRegion" name="secondary_region_code">
+                  <option value="">Select Region</option>
+                  <?php foreach ($regionOptions as $regionOption): ?>
+                    <option value="<?= htmlspecialchars((string) ($regionOption['code'] ?? 0)); ?>" <?= ((int) ($regionOption['code'] ?? 0) === $profileSecondaryRegionCode) ? 'selected' : ''; ?>>
+                      <?= htmlspecialchars((string) ($regionOption['label'] ?? '')); ?>
+                    </option>
+                  <?php endforeach; ?>
+                </select>
+                <select
+                  class="d-none"
+                  id="profileSecondaryBarangay"
+                  name="secondary_barangay_code"
+                  data-selected="<?= htmlspecialchars((string) $profileSecondaryBarangayCode); ?>"
+                >
+                  <option value="">Select Barangay</option>
+                  <?php if ($profileSecondaryBarangayCode > 0 && trim((string) ($studentProfile['secondary_barangay_name'] ?? '')) !== ''): ?>
+                    <option value="<?= htmlspecialchars((string) $profileSecondaryBarangayCode); ?>" selected><?= htmlspecialchars((string) ($studentProfile['secondary_barangay_name'] ?? '')); ?></option>
+                  <?php endif; ?>
+                </select>
+                <div class="row g-3">
+                  <div class="col-md-4">
+                    <label for="profileSecondaryProvince" class="form-label">Province</label>
+                    <select
+                      class="form-select"
+                      id="profileSecondaryProvince"
+                      name="secondary_province_code"
+                      data-selected="<?= htmlspecialchars((string) $profileSecondaryProvinceCode); ?>"
+                    >
+                      <option value="">Select Province</option>
+                      <?php if ($profileSecondaryProvinceCode > 0 && trim((string) ($studentProfile['secondary_province_name'] ?? '')) !== ''): ?>
+                        <option value="<?= htmlspecialchars((string) $profileSecondaryProvinceCode); ?>" selected><?= htmlspecialchars((string) ($studentProfile['secondary_province_name'] ?? '')); ?></option>
+                      <?php endif; ?>
+                    </select>
+                  </div>
+                  <div class="col-md-4">
+                    <label for="profileSecondaryCityMun" class="form-label">City / Municipality</label>
+                    <select
+                      class="form-select"
+                      id="profileSecondaryCityMun"
+                      name="secondary_citymun_code"
+                      data-selected="<?= htmlspecialchars((string) $profileSecondaryCitymunCode); ?>"
+                    >
+                      <option value="">Select City / Municipality</option>
+                      <?php if ($profileSecondaryCitymunCode > 0 && trim((string) ($studentProfile['secondary_citymun_name'] ?? '')) !== ''): ?>
+                        <option value="<?= htmlspecialchars((string) $profileSecondaryCitymunCode); ?>" selected><?= htmlspecialchars((string) ($studentProfile['secondary_citymun_name'] ?? '')); ?></option>
+                      <?php endif; ?>
+                    </select>
+                  </div>
+                  <div class="col-md-4">
+                    <label for="profileSecondaryPostalCode" class="form-label">Postal Code</label>
+                    <input
+                      type="text"
+                      class="form-control"
+                      id="profileSecondaryPostalCode"
+                      name="secondary_postal_code"
+                      maxlength="20"
+                      value="<?= htmlspecialchars((string) ($studentProfile['secondary_postal_code'] ?? '')); ?>"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div class="student-profile-panel mt-4">
+                <div class="student-profile-section-title">Address Information</div>
+              <div class="row g-3">
+                <div class="col-md-12">
+                  <label for="profileAddressLine1" class="form-label">House No. / Street / Purok</label>
+                  <input type="text" class="form-control" id="profileAddressLine1" name="address_line1" maxlength="255" value="<?= htmlspecialchars((string) ($studentProfile['address_line1'] ?? '')); ?>" />
+                </div>
+                <div class="col-md-3">
+                  <label for="profileRegion" class="form-label">Region</label>
+                  <select class="form-select" id="profileRegion" name="region_code">
+                    <option value="">Select Region</option>
+                    <?php foreach ($regionOptions as $regionOption): ?>
+                      <option value="<?= htmlspecialchars((string) ($regionOption['code'] ?? 0)); ?>" <?= ((int) ($regionOption['code'] ?? 0) === $profileRegionCode) ? 'selected' : ''; ?>>
+                        <?= htmlspecialchars((string) ($regionOption['label'] ?? '')); ?>
+                      </option>
+                    <?php endforeach; ?>
+                  </select>
+                </div>
+                <div class="col-md-3">
+                  <label for="profileProvince" class="form-label">Province</label>
+                  <select
+                    class="form-select"
+                    id="profileProvince"
+                    name="province_code"
+                    data-selected="<?= htmlspecialchars((string) $profileProvinceCode); ?>"
+                  >
+                    <option value="">Select Province</option>
+                    <?php if ($profileProvinceCode > 0 && trim((string) ($studentProfile['province_name'] ?? '')) !== ''): ?>
+                      <option value="<?= htmlspecialchars((string) $profileProvinceCode); ?>" selected><?= htmlspecialchars((string) ($studentProfile['province_name'] ?? '')); ?></option>
+                    <?php endif; ?>
+                  </select>
+                </div>
+                <div class="col-md-3">
+                  <label for="profileCityMun" class="form-label">City / Municipality</label>
+                  <select
+                    class="form-select"
+                    id="profileCityMun"
+                    name="citymun_code"
+                    data-selected="<?= htmlspecialchars((string) $profileCitymunCode); ?>"
+                  >
+                    <option value="">Select City / Municipality</option>
+                    <?php if ($profileCitymunCode > 0 && trim((string) ($studentProfile['citymun_name'] ?? '')) !== ''): ?>
+                      <option value="<?= htmlspecialchars((string) $profileCitymunCode); ?>" selected><?= htmlspecialchars((string) ($studentProfile['citymun_name'] ?? '')); ?></option>
+                    <?php endif; ?>
+                  </select>
+                </div>
+                <div class="col-md-3">
+                  <label for="profileBarangay" class="form-label">Barangay</label>
+                  <select
+                    class="form-select"
+                    id="profileBarangay"
+                    name="barangay_code"
+                    data-selected="<?= htmlspecialchars((string) $profileBarangayCode); ?>"
+                  >
+                    <option value="">Select Barangay</option>
+                    <?php if ($profileBarangayCode > 0 && trim((string) ($studentProfile['barangay_name'] ?? '')) !== ''): ?>
+                      <option value="<?= htmlspecialchars((string) $profileBarangayCode); ?>" selected><?= htmlspecialchars((string) ($studentProfile['barangay_name'] ?? '')); ?></option>
+                    <?php endif; ?>
+                  </select>
+                </div>
+                <div class="col-md-3">
+                  <label for="profilePostalCode" class="form-label">Postal Code</label>
+                  <input type="text" class="form-control" id="profilePostalCode" name="postal_code" maxlength="20" value="<?= htmlspecialchars((string) ($studentProfile['postal_code'] ?? '')); ?>" />
+                </div>
+              </div>
+
+              </div>
+
+              <div class="student-profile-panel mt-4">
+                <div class="student-profile-section-title">Parents / Guardian Information</div>
+                <div class="row g-3">
+                  <div class="col-md-12">
+                    <label for="profileParentGuardianName" class="form-label">Parent / Guardian Name</label>
+                    <input
+                      type="text"
+                      class="form-control"
+                      id="profileParentGuardianName"
+                      name="guardian_name"
+                      maxlength="190"
+                      value="<?= htmlspecialchars((string) ($studentProfile['guardian_name'] ?? '')); ?>"
+                    />
+                  </div>
+                  <div class="col-md-12">
+                    <label for="profileParentGuardianAddressLine1" class="form-label">House No. / Street / Purok</label>
+                    <input
+                      type="text"
+                      class="form-control"
+                      id="profileParentGuardianAddressLine1"
+                      name="parent_guardian_address_line1"
+                      maxlength="255"
+                      value="<?= htmlspecialchars((string) ($studentProfile['parent_guardian_address_line1'] ?? '')); ?>"
+                    />
+                  </div>
+                  <div class="col-md-3">
+                    <label for="profileParentGuardianRegion" class="form-label">Region</label>
+                    <select class="form-select" id="profileParentGuardianRegion" name="parent_guardian_region_code">
+                      <option value="">Select Region</option>
+                      <?php foreach ($regionOptions as $regionOption): ?>
+                        <option value="<?= htmlspecialchars((string) ($regionOption['code'] ?? 0)); ?>" <?= ((int) ($regionOption['code'] ?? 0) === $profileParentGuardianRegionCode) ? 'selected' : ''; ?>>
+                          <?= htmlspecialchars((string) ($regionOption['label'] ?? '')); ?>
+                        </option>
+                      <?php endforeach; ?>
+                    </select>
+                  </div>
+                  <div class="col-md-3">
+                    <label for="profileParentGuardianProvince" class="form-label">Province</label>
+                    <select
+                      class="form-select"
+                      id="profileParentGuardianProvince"
+                      name="parent_guardian_province_code"
+                      data-selected="<?= htmlspecialchars((string) $profileParentGuardianProvinceCode); ?>"
+                    >
+                      <option value="">Select Province</option>
+                      <?php if ($profileParentGuardianProvinceCode > 0 && trim((string) ($studentProfile['parent_guardian_province_name'] ?? '')) !== ''): ?>
+                        <option value="<?= htmlspecialchars((string) $profileParentGuardianProvinceCode); ?>" selected><?= htmlspecialchars((string) ($studentProfile['parent_guardian_province_name'] ?? '')); ?></option>
+                      <?php endif; ?>
+                    </select>
+                  </div>
+                  <div class="col-md-3">
+                    <label for="profileParentGuardianCityMun" class="form-label">City / Municipality</label>
+                    <select
+                      class="form-select"
+                      id="profileParentGuardianCityMun"
+                      name="parent_guardian_citymun_code"
+                      data-selected="<?= htmlspecialchars((string) $profileParentGuardianCitymunCode); ?>"
+                    >
+                      <option value="">Select City / Municipality</option>
+                      <?php if ($profileParentGuardianCitymunCode > 0 && trim((string) ($studentProfile['parent_guardian_citymun_name'] ?? '')) !== ''): ?>
+                        <option value="<?= htmlspecialchars((string) $profileParentGuardianCitymunCode); ?>" selected><?= htmlspecialchars((string) ($studentProfile['parent_guardian_citymun_name'] ?? '')); ?></option>
+                      <?php endif; ?>
+                    </select>
+                  </div>
+                  <div class="col-md-3">
+                    <label for="profileParentGuardianBarangay" class="form-label">Barangay</label>
+                    <select
+                      class="form-select"
+                      id="profileParentGuardianBarangay"
+                      name="parent_guardian_barangay_code"
+                      data-selected="<?= htmlspecialchars((string) $profileParentGuardianBarangayCode); ?>"
+                    >
+                      <option value="">Select Barangay</option>
+                      <?php if ($profileParentGuardianBarangayCode > 0 && trim((string) ($studentProfile['parent_guardian_barangay_name'] ?? '')) !== ''): ?>
+                        <option value="<?= htmlspecialchars((string) $profileParentGuardianBarangayCode); ?>" selected><?= htmlspecialchars((string) ($studentProfile['parent_guardian_barangay_name'] ?? '')); ?></option>
+                      <?php endif; ?>
+                    </select>
+                  </div>
+                  <div class="col-md-3">
+                    <label for="profileParentGuardianPostalCode" class="form-label">Postal Code</label>
+                    <input
+                      type="text"
+                      class="form-control"
+                      id="profileParentGuardianPostalCode"
+                      name="parent_guardian_postal_code"
+                      maxlength="20"
+                      value="<?= htmlspecialchars((string) ($studentProfile['parent_guardian_postal_code'] ?? '')); ?>"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <input type="hidden" name="father_name" value="<?= htmlspecialchars((string) ($studentProfile['father_name'] ?? '')); ?>" />
+              <input type="hidden" name="father_contact_number" value="<?= htmlspecialchars((string) ($studentProfile['father_contact_number'] ?? '')); ?>" />
+              <input type="hidden" name="father_occupation" value="<?= htmlspecialchars((string) ($studentProfile['father_occupation'] ?? '')); ?>" />
+              <input type="hidden" name="mother_name" value="<?= htmlspecialchars((string) ($studentProfile['mother_name'] ?? '')); ?>" />
+              <input type="hidden" name="mother_contact_number" value="<?= htmlspecialchars((string) ($studentProfile['mother_contact_number'] ?? '')); ?>" />
+              <input type="hidden" name="mother_occupation" value="<?= htmlspecialchars((string) ($studentProfile['mother_occupation'] ?? '')); ?>" />
+              <input type="hidden" name="guardian_relationship" value="<?= htmlspecialchars((string) ($studentProfile['guardian_relationship'] ?? '')); ?>" />
+              <input type="hidden" name="guardian_contact_number" value="<?= htmlspecialchars((string) ($studentProfile['guardian_contact_number'] ?? '')); ?>" />
+              <input type="hidden" name="guardian_occupation" value="<?= htmlspecialchars((string) ($studentProfile['guardian_occupation'] ?? '')); ?>" />
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">Close</button>
+              <button type="submit" class="btn btn-primary">Save Profile</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
     <div class="modal fade" id="studentProgramSearchModal" tabindex="-1" aria-hidden="true">
       <div class="modal-dialog modal-xl modal-dialog-scrollable modal-dialog-centered">
         <div class="modal-content">
@@ -1356,32 +3015,52 @@ if ($studentEmail === '') {
     <div class="modal fade" id="studentTransferModal" tabindex="-1" aria-hidden="true">
       <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
-          <div class="modal-header">
-            <h5 class="modal-title">Transfer Here</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-          </div>
-          <div class="modal-body">
-            <div class="alert alert-warning py-2 mb-3">
-              Transfer request submission is not enabled yet. This is a preview modal only.
+          <form method="post" id="studentTransferForm" autocomplete="off">
+            <input type="hidden" name="action" value="student_transfer_submit" />
+            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars((string) ($_SESSION['student_transfer_csrf'] ?? ''), ENT_QUOTES); ?>" />
+            <input type="hidden" name="to_program_id" id="transferModalProgramId" value="" />
+
+            <div class="modal-header">
+              <h5 class="modal-title">Transfer Here</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
-            <div class="small text-muted mb-2">Selected Program</div>
-            <div class="fw-semibold mb-2" id="transferModalProgramLabel">-</div>
-            <div class="small mb-3">
-              <span class="badge bg-label-primary" id="transferModalProgramCode">-</span>
-              <span class="badge bg-label-success ms-1" id="transferModalStatus">-</span>
+            <div class="modal-body">
+              <div class="small text-muted mb-2">Selected Program</div>
+              <div class="fw-semibold mb-2" id="transferModalProgramLabel">-</div>
+              <div class="small mb-3">
+                <span class="badge bg-label-primary" id="transferModalProgramCode">-</span>
+                <span class="badge bg-label-success ms-1" id="transferModalStatus">-</span>
+              </div>
+              <div class="small text-muted mb-2">Program Details</div>
+              <div class="small">
+                <div class="d-flex justify-content-between py-1 border-bottom"><span>Capacity</span><strong id="transferModalCapacity">-</strong></div>
+                <div class="d-flex justify-content-between py-1 border-bottom"><span>Scored</span><strong id="transferModalScored">-</strong></div>
+                <div class="d-flex justify-content-between py-1 border-bottom"><span>Available Slots</span><strong id="transferModalAvailable">-</strong></div>
+                <div class="d-flex justify-content-between py-1 border-bottom"><span>Cutoff SAT</span><strong id="transferModalCutoff">-</strong></div>
+              </div>
+
+              <div class="mt-3">
+                <label for="transferReasonInput" class="form-label">Reason for Transfer</label>
+                <textarea
+                  class="form-control"
+                  id="transferReasonInput"
+                  name="transfer_reason"
+                  rows="4"
+                  placeholder="Provide your reason for transfer (minimum 50 words)."
+                  required
+                ></textarea>
+                <div class="d-flex justify-content-between mt-1">
+                  <small class="text-muted">Minimum 50 words required.</small>
+                  <small id="transferReasonWordCount" class="text-muted">0 / 50 words</small>
+                </div>
+                <div id="transferReasonError" class="small text-danger mt-1 d-none">Please provide at least 50 words before submitting.</div>
+              </div>
             </div>
-            <div class="small text-muted mb-2">Program Details</div>
-            <div class="small">
-              <div class="d-flex justify-content-between py-1 border-bottom"><span>Capacity</span><strong id="transferModalCapacity">-</strong></div>
-              <div class="d-flex justify-content-between py-1 border-bottom"><span>Scored</span><strong id="transferModalScored">-</strong></div>
-              <div class="d-flex justify-content-between py-1 border-bottom"><span>Available Slots</span><strong id="transferModalAvailable">-</strong></div>
-              <div class="d-flex justify-content-between py-1 border-bottom"><span>Cutoff SAT</span><strong id="transferModalCutoff">-</strong></div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">Close</button>
+              <button type="submit" class="btn btn-warning" id="transferModalSubmitBtn" disabled>Transfer Here</button>
             </div>
-          </div>
-          <div class="modal-footer">
-            <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">Close</button>
-            <button type="button" class="btn btn-warning" disabled>Transfer Here</button>
-          </div>
+          </form>
         </div>
       </div>
     </div>
@@ -1435,7 +3114,7 @@ if ($studentEmail === '') {
 
           resultBodyEl.innerHTML = rows.map((row) => {
             let badgeClass = 'bg-label-secondary';
-            const status = String(row.slot_status || 'No Capacity');
+            const status = String(row.slot_status || 'Capacity not set');
             if (status === 'Open') {
               badgeClass = 'bg-label-success';
             } else if (status === 'Full') {
@@ -1496,6 +3175,221 @@ if ($studentEmail === '') {
       })();
 
       (function () {
+        const profileModalEl = document.getElementById('studentProfileModal');
+        if (!profileModalEl) return;
+
+        const toPositiveInt = (value) => {
+          const parsed = Number(value);
+          if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+          return Math.trunc(parsed);
+        };
+
+        const getDataSelected = (element) => toPositiveInt(element ? element.getAttribute('data-selected') : 0);
+
+        const setLoadingOption = (element, message) => {
+          if (!element) return;
+          element.innerHTML = `<option value="">${message}</option>`;
+        };
+
+        const escapeHtml = (value) =>
+          String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+
+        const populateSelect = (element, items, placeholder, selectedValue) => {
+          if (!element) return;
+          const selected = toPositiveInt(selectedValue);
+          let html = `<option value="">${escapeHtml(placeholder)}</option>`;
+          if (Array.isArray(items)) {
+            items.forEach((item) => {
+              const code = toPositiveInt(item.code);
+              const label = String(item.label || '').trim();
+              if (code <= 0 || label === '') return;
+              const isSelected = selected > 0 && code === selected;
+              html += `<option value="${code}"${isSelected ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+            });
+          }
+          element.innerHTML = html;
+        };
+
+        const fetchLookupItems = async (lookupType, key, value) => {
+          const lookupUrl = `index.php?profile_lookup=${encodeURIComponent(lookupType)}&${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+          const response = await fetch(lookupUrl, {
+            method: 'GET',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' },
+            credentials: 'same-origin',
+          });
+          if (!response.ok) {
+            throw new Error(`Lookup request failed (${response.status})`);
+          }
+          const payload = await response.json();
+          if (!payload || payload.success !== true || !Array.isArray(payload.items)) {
+            throw new Error('Lookup payload is invalid');
+          }
+          return payload.items;
+        };
+
+        const createAddressBinding = (config) => {
+          const regionEl = document.getElementById(config.regionId);
+          const provinceEl = document.getElementById(config.provinceId);
+          const citymunEl = document.getElementById(config.citymunId);
+          const barangayEl = document.getElementById(config.barangayId);
+          if (!regionEl || !provinceEl || !citymunEl || !barangayEl) {
+            return null;
+          }
+          const regionRequired = config.regionOptional !== true;
+
+          const resetDependentSelects = () => {
+            populateSelect(provinceEl, [], 'Select Province', 0);
+            populateSelect(citymunEl, [], 'Select City / Municipality', 0);
+            populateSelect(barangayEl, [], 'Select Barangay', 0);
+          };
+
+          const loadProvinces = async (regionCode, selectedProvinceCode) => {
+            const normalizedRegionCode = toPositiveInt(regionCode);
+            if (regionRequired && normalizedRegionCode <= 0) {
+              resetDependentSelects();
+              return;
+            }
+
+            setLoadingOption(provinceEl, 'Loading provinces...');
+            populateSelect(citymunEl, [], 'Select City / Municipality', 0);
+            populateSelect(barangayEl, [], 'Select Barangay', 0);
+
+            try {
+              const items = await fetchLookupItems('province', 'region_code', normalizedRegionCode || 0);
+              populateSelect(provinceEl, items, 'Select Province', selectedProvinceCode);
+            } catch (error) {
+              setLoadingOption(provinceEl, 'Unable to load provinces');
+            }
+          };
+
+          const loadCities = async (provinceCode, selectedCityCode) => {
+            const normalizedProvinceCode = toPositiveInt(provinceCode);
+            if (normalizedProvinceCode <= 0) {
+              populateSelect(citymunEl, [], 'Select City / Municipality', 0);
+              populateSelect(barangayEl, [], 'Select Barangay', 0);
+              return;
+            }
+
+            setLoadingOption(citymunEl, 'Loading cities/municipalities...');
+            populateSelect(barangayEl, [], 'Select Barangay', 0);
+
+            try {
+              const items = await fetchLookupItems('citymun', 'province_code', normalizedProvinceCode);
+              populateSelect(citymunEl, items, 'Select City / Municipality', selectedCityCode);
+            } catch (error) {
+              setLoadingOption(citymunEl, 'Unable to load cities/municipalities');
+            }
+          };
+
+          const loadBarangays = async (citymunCode, selectedBarangayCode) => {
+            const normalizedCityCode = toPositiveInt(citymunCode);
+            if (normalizedCityCode <= 0) {
+              populateSelect(barangayEl, [], 'Select Barangay', 0);
+              return;
+            }
+
+            setLoadingOption(barangayEl, 'Loading barangays...');
+
+            try {
+              const items = await fetchLookupItems('barangay', 'citymun_code', normalizedCityCode);
+              populateSelect(barangayEl, items, 'Select Barangay', selectedBarangayCode);
+            } catch (error) {
+              setLoadingOption(barangayEl, 'Unable to load barangays');
+            }
+          };
+
+          if (regionRequired) {
+            regionEl.addEventListener('change', async function () {
+              const regionCode = toPositiveInt(this.value);
+              provinceEl.setAttribute('data-selected', '');
+              citymunEl.setAttribute('data-selected', '');
+              barangayEl.setAttribute('data-selected', '');
+              await loadProvinces(regionCode, 0);
+            });
+          }
+
+          provinceEl.addEventListener('change', async function () {
+            const provinceCode = toPositiveInt(this.value);
+            citymunEl.setAttribute('data-selected', '');
+            barangayEl.setAttribute('data-selected', '');
+            await loadCities(provinceCode, 0);
+          });
+
+          citymunEl.addEventListener('change', async function () {
+            const cityCode = toPositiveInt(this.value);
+            barangayEl.setAttribute('data-selected', '');
+            await loadBarangays(cityCode, 0);
+          });
+
+          return {
+            initialize: async () => {
+              const selectedRegion = toPositiveInt(regionEl.value) || getDataSelected(regionEl);
+              const selectedProvince = toPositiveInt(provinceEl.value) || getDataSelected(provinceEl);
+              const selectedCity = toPositiveInt(citymunEl.value) || getDataSelected(citymunEl);
+              const selectedBarangay = toPositiveInt(barangayEl.value) || getDataSelected(barangayEl);
+
+              if (regionRequired && selectedRegion <= 0) {
+                resetDependentSelects();
+                return;
+              }
+
+              if (selectedRegion > 0) {
+                regionEl.value = String(selectedRegion);
+              }
+              await loadProvinces(selectedRegion, selectedProvince);
+              if (selectedProvince <= 0) return;
+
+              provinceEl.value = String(selectedProvince);
+              await loadCities(selectedProvince, selectedCity);
+              if (selectedCity <= 0) return;
+
+              citymunEl.value = String(selectedCity);
+              await loadBarangays(selectedCity, selectedBarangay);
+              if (selectedBarangay > 0) {
+                barangayEl.value = String(selectedBarangay);
+              }
+            },
+          };
+        };
+
+        const addressBindings = [
+          createAddressBinding({
+            regionId: 'profileSecondaryRegion',
+            provinceId: 'profileSecondaryProvince',
+            citymunId: 'profileSecondaryCityMun',
+            barangayId: 'profileSecondaryBarangay',
+            regionOptional: true,
+          }),
+          createAddressBinding({
+            regionId: 'profileRegion',
+            provinceId: 'profileProvince',
+            citymunId: 'profileCityMun',
+            barangayId: 'profileBarangay',
+          }),
+          createAddressBinding({
+            regionId: 'profileParentGuardianRegion',
+            provinceId: 'profileParentGuardianProvince',
+            citymunId: 'profileParentGuardianCityMun',
+            barangayId: 'profileParentGuardianBarangay',
+          }),
+        ].filter(Boolean);
+
+        profileModalEl.addEventListener('shown.bs.modal', async function () {
+          for (const binding of addressBindings) {
+            if (!binding || typeof binding.initialize !== 'function') {
+              continue;
+            }
+            await binding.initialize();
+          }
+        });
+      })();
+
+      (function () {
         if (typeof bootstrap === 'undefined') return;
 
         const transferModalEl = document.getElementById('studentTransferModal');
@@ -1503,12 +3397,64 @@ if ($studentEmail === '') {
 
         const transferModal = bootstrap.Modal.getOrCreateInstance(transferModalEl);
         const buttons = document.querySelectorAll('.js-open-transfer-modal');
+        const transferFormEl = document.getElementById('studentTransferForm');
+        const programIdInputEl = document.getElementById('transferModalProgramId');
+        const reasonInputEl = document.getElementById('transferReasonInput');
+        const wordCountEl = document.getElementById('transferReasonWordCount');
+        const reasonErrorEl = document.getElementById('transferReasonError');
+        const submitBtnEl = document.getElementById('transferModalSubmitBtn');
+        const minimumWords = 50;
+        let submitAttempted = false;
 
         const setText = (id, value) => {
           const element = document.getElementById(id);
           if (!element) return;
           element.textContent = String(value ?? '').trim() || '-';
         };
+
+        const countWords = (text) => {
+          const words = String(text || '').trim().match(/\S+/g);
+          return words ? words.length : 0;
+        };
+
+        const updateReasonState = () => {
+          const wordCount = countWords(reasonInputEl ? reasonInputEl.value : '');
+          if (wordCountEl) {
+            wordCountEl.textContent = `${wordCount} / ${minimumWords} words`;
+          }
+
+          const isValidReason = wordCount >= minimumWords;
+          const hasTypedReason = !!(reasonInputEl && reasonInputEl.value.trim().length > 0);
+          const hasProgram = !!(programIdInputEl && Number(programIdInputEl.value) > 0);
+          if (submitBtnEl) {
+            submitBtnEl.disabled = !(isValidReason && hasProgram);
+          }
+
+          if (reasonErrorEl) {
+            reasonErrorEl.classList.toggle('d-none', isValidReason || (!submitAttempted && !hasTypedReason));
+          }
+
+          if (reasonInputEl) {
+            reasonInputEl.classList.toggle('is-invalid', !isValidReason && (submitAttempted || hasTypedReason));
+          }
+        };
+
+        if (reasonInputEl) {
+          reasonInputEl.addEventListener('input', updateReasonState);
+        }
+
+        if (transferFormEl) {
+          transferFormEl.addEventListener('submit', function (event) {
+            const selectedProgramId = Number(programIdInputEl ? programIdInputEl.value : 0);
+            const words = countWords(reasonInputEl ? reasonInputEl.value : '');
+            const isValid = selectedProgramId > 0 && words >= minimumWords;
+            if (!isValid) {
+              submitAttempted = true;
+              event.preventDefault();
+              updateReasonState();
+            }
+          });
+        }
 
         buttons.forEach((button) => {
           button.addEventListener('click', function () {
@@ -1519,6 +3465,14 @@ if ($studentEmail === '') {
             setText('transferModalScored', this.getAttribute('data-scored'));
             setText('transferModalAvailable', this.getAttribute('data-available'));
             setText('transferModalCutoff', this.getAttribute('data-cutoff'));
+            if (programIdInputEl) {
+              programIdInputEl.value = String(this.getAttribute('data-program-id') || '').trim();
+            }
+            if (reasonInputEl) {
+              reasonInputEl.value = '';
+            }
+            submitAttempted = false;
+            updateReasonState();
             transferModal.show();
           });
         });

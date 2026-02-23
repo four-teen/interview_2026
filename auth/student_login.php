@@ -283,6 +283,16 @@ if ($student && is_string($student['password_hash'] ?? null) && trim((string) $s
 }
 
 $passwordValid = password_verify($password, $passwordHash);
+$mustChangePassword = ($student && ((int) ($student['must_change_password'] ?? 1) === 1));
+
+// Temporary credentials are generated uppercase; accept typed lowercase/whitespace variants on first login.
+if (!$passwordValid && $mustChangePassword) {
+    $normalizedTempPassword = strtoupper(trim($password));
+    if ($normalizedTempPassword !== '' && $normalizedTempPassword !== $password) {
+        $passwordValid = password_verify($normalizedTempPassword, $passwordHash);
+    }
+}
+
 $studentIsActive = ($student && ((string) ($student['status'] ?? '') === 'active'));
 
 if (!$student || !$studentIsActive || !$passwordValid) {

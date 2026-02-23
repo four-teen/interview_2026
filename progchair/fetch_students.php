@@ -153,7 +153,6 @@ if ($search !== '') {
     }
 }
 
-$accountId = (int) ($_SESSION['accountid'] ?? 0);
 $ownerAction = strtolower(trim((string) ($_GET['owner_action'] ?? '')));
 
 $allowedOwnerActions = ['pending', 'unscored', 'needs_review'];
@@ -181,9 +180,9 @@ if ($ownerAction !== '') {
             break;
 
         case 'unscored':
-            if ($accountId > 0) {
+            if ($assignedProgramId > 0) {
                 $ownerActionWhere = "
-                  AND si.program_chair_id = {$accountId}
+                  AND si.first_choice = {$assignedProgramId}
                   AND si.status = 'active'
                   AND si.final_score IS NULL
                 ";
@@ -191,9 +190,9 @@ if ($ownerAction !== '') {
             break;
 
         case 'needs_review':
-            if ($accountId > 0) {
+            if ($assignedProgramId > 0) {
                 $ownerActionWhere = "
-                  AND si.program_chair_id = {$accountId}
+                  AND si.first_choice = {$assignedProgramId}
                   AND si.status = 'active'
                   AND si.final_score IS NOT NULL
                   AND NOT EXISTS (
@@ -269,6 +268,7 @@ $sql = "
         pr.sat_score,
         pr.qualitative_text,
         si.interview_id,
+        si.first_choice,
         si.program_chair_id,
         si.final_score,
 
@@ -354,8 +354,9 @@ while ($row = $result->fetch_assoc()) {
 
     // Flag: can current program chair edit?
     $row['can_edit'] = (
-        !empty($row['program_chair_id']) &&
-        (int)$row['program_chair_id'] === (int)$_SESSION['accountid']
+        !empty($row['interview_id']) &&
+        !empty($row['first_choice']) &&
+        (int)$row['first_choice'] === $assignedProgramId
     );
 
     // NEW: pending transfer exists

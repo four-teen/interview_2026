@@ -17,7 +17,8 @@ header('Content-Type: application/json');
 if (
     !isset($_SESSION['logged_in']) ||
     $_SESSION['role'] !== 'progchair' ||
-    empty($_SESSION['accountid'])
+    empty($_SESSION['accountid']) ||
+    empty($_SESSION['program_id'])
 ) {
     echo json_encode([
         'success' => false,
@@ -26,7 +27,7 @@ if (
     exit;
 }
 
-$accountId = (int) $_SESSION['accountid'];
+$assignedProgramId = (int) $_SESSION['program_id'];
 
 // =====================================================
 // 2. VALIDATE INPUT
@@ -76,7 +77,7 @@ $interview = $result->fetch_assoc();
 // =====================================================
 // 4. OWNER CHECK
 // =====================================================
-$isOwner = ($interview['program_chair_id'] == $accountId);
+$isOwner = ($assignedProgramId > 0 && (int) ($interview['first_choice'] ?? 0) === $assignedProgramId);
 
 // =====================================================
 // 5. RETURN RESPONSE
