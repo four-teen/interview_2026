@@ -257,3 +257,114 @@ if (!function_exists('provision_student_credentials')) {
         ];
     }
 }
+
+if (!function_exists('reset_student_temporary_password')) {
+    /**
+     * Issues a new temporary password for an existing student credential.
+     */
+    function reset_student_temporary_password($conn, $examineeNumber)
+    {
+        $examineeNumber = trim((string) $examineeNumber);
+        if ($examineeNumber === '') {
+            return [
+                'success' => false,
+                'message' => 'Examinee number is required.'
+            ];
+        }
+
+        if (!ensure_student_credentials_table($conn)) {
+            return [
+                'success' => false,
+                'message' => 'Failed ensuring student credentials storage.'
+            ];
+        }
+
+        $findSql = "
+            SELECT credential_id
+            FROM tbl_student_credentials
+            WHERE examinee_number = ?
+              AND status = 'active'
+            LIMIT 1
+        ";
+        $findStmt = $conn->prepare($findSql);
+        if (!$findStmt) {
+            return [
+                'success' => false,
+                'message' => 'Failed to prepare credential lookup.'
+            ];
+        }
+        $findStmt->bind_param('s', $examineeNumber);
+        $findStmt->execute();
+        $existing = $findStmt->get_result()->fetch_assoc();
+        $findStmt->close();
+
+        $credentialId = (int) ($existing['credential_id'] ?? 0);
+        if ($credentialId <= 0) {
+            return [
+                'success' => false,
+                'message' => 'No active student credential found for this examinee number.'
+            ];
+        }
+
+        list($ok, $tempCode, $errorMessage) = generate_unique_student_temp_code($conn, 12, 1);
+        if (!$ok) {
+            return [
+                'success' => false,
+                'message' => $errorMessage ?: 'Failed generating temporary password.'
+            ];
+        }
+
+        $passwordHash = password_hash($tempCode, PASSWORD_DEFAULT);
+        if ($passwordHash === false) {
+            return [
+                'success' => false,
+                'message' => 'Failed to hash temporary password.'
+            ];
+        }
+
+        $updateSql = "
+            UPDATE tbl_student_credentials
+            SET password_hash = ?,
+                must_change_password = 1,
+                status = 'active',
+                password_changed_at = NULL
+            WHERE credential_id = ?
+            LIMIT 1
+        ";
+        $updateStmt = $conn->prepare($updateSql);
+        if (!$updateStmt) {
+            return [
+                'success' => false,
+                'message' => 'Failed to prepare credential update.'
+            ];
+        }
+        $updateStmt->bind_param('si', $passwordHash, $credentialId);
+        $okUpdate = $updateStmt->execute();
+        $updateStmt->close();
+
+        if (!$okUpdate) {
+            return [
+                'success' => false,
+                'message' => 'Failed updating student credentials.'
+            ];
+        }
+
+        $attemptsTableResult = $conn->query("SHOW TABLES LIKE 'tbl_student_login_attempts'");
+        if ($attemptsTableResult && $attemptsTableResult->num_rows > 0) {
+            $conn->query(
+                "DELETE FROM tbl_student_login_attempts WHERE examinee_number = '" .
+                $conn->real_escape_string($examineeNumber) .
+                "'"
+            );
+        }
+        if ($attemptsTableResult instanceof mysqli_result) {
+            $attemptsTableResult->free();
+        }
+
+        return [
+            'success' => true,
+            'temporary_code' => $tempCode,
+            'examinee_number' => $examineeNumber
+        ];
+    }
+}

@@ -72,6 +72,12 @@
 
             if ($sidebarSection === 'accounts') {
                 $sidebarActiveKey = 'accounts';
+            } elseif ($sidebarCurrentPage === 'student_passwords.php') {
+                $sidebarActiveKey = 'student_passwords';
+            } elseif ($sidebarCurrentPage === 'student_monitoring.php') {
+                $sidebarActiveKey = 'student_monitoring';
+            } elseif ($sidebarCurrentPage === 'progchair_monitoring.php') {
+                $sidebarActiveKey = 'progchair_monitoring';
             } elseif ($sidebarSection === 'campuses') {
                 $sidebarActiveKey = 'campuses';
             } elseif ($sidebarSection === 'colleges') {
@@ -177,6 +183,51 @@
                 <div class="sidebar-action-content">
                   <div class="sidebar-action-title">User Accounts</div>
                   <small class="sidebar-action-sub">Manage administrators and chairs</small>
+                </div>
+              </a>
+            </li>
+
+            <li class="menu-item px-2">
+              <a
+                href="<?= $sidebarHrefPrefix; ?>student_passwords.php"
+                class="menu-link sidebar-action-card<?= $sidebarActiveKey === 'student_passwords' ? ' active' : ''; ?>"
+              >
+                <span class="sidebar-action-icon bg-label-warning">
+                  <i class="bx bx-key"></i>
+                </span>
+                <div class="sidebar-action-content">
+                  <div class="sidebar-action-title">Student Passwords</div>
+                  <small class="sidebar-action-sub">Reset forgotten student access</small>
+                </div>
+              </a>
+            </li>
+
+            <li class="menu-item px-2">
+              <a
+                href="<?= $sidebarHrefPrefix; ?>student_monitoring.php"
+                class="menu-link sidebar-action-card<?= $sidebarActiveKey === 'student_monitoring' ? ' active' : ''; ?>"
+              >
+                <span class="sidebar-action-icon bg-label-primary">
+                  <i class="bx bx-user-check"></i>
+                </span>
+                <div class="sidebar-action-content">
+                  <div class="sidebar-action-title">Student Monitoring</div>
+                  <small class="sidebar-action-sub">View student progress and status</small>
+                </div>
+              </a>
+            </li>
+
+            <li class="menu-item px-2">
+              <a
+                href="<?= $sidebarHrefPrefix; ?>progchair_monitoring.php"
+                class="menu-link sidebar-action-card<?= $sidebarActiveKey === 'progchair_monitoring' ? ' active' : ''; ?>"
+              >
+                <span class="sidebar-action-icon bg-label-info">
+                  <i class="bx bx-line-chart"></i>
+                </span>
+                <div class="sidebar-action-content">
+                  <div class="sidebar-action-title">Program Chair Monitoring</div>
+                  <small class="sidebar-action-sub">View chair workload and activity</small>
                 </div>
               </a>
             </li>

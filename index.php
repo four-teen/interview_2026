@@ -1,24 +1,33 @@
 <?php
 require_once __DIR__ . '/config/env.php';
+require_once __DIR__ . '/config/db.php';
+require_once __DIR__ . '/config/system_controls.php';
 require_once __DIR__ . '/config/session_security.php';
 
 secure_session_start();
 
 $googleClientId = getenv('GOOGLE_CLIENT_ID') ?: '115027937761-p80e2nudpe4ldsg9kbi73qc5o9nhg07p.apps.googleusercontent.com';
 
-try {
-    $googleLoginNonce = bin2hex(random_bytes(16));
-    $googleLoginCsrf = bin2hex(random_bytes(32));
-    $studentLoginCsrf = bin2hex(random_bytes(32));
-} catch (Exception $e) {
-    $googleLoginNonce = sha1(uniqid('nonce_', true));
-    $googleLoginCsrf = sha1(uniqid('gcsrf_', true));
-    $studentLoginCsrf = sha1(uniqid('scsrf_', true));
-}
+$googleLoginNonce = (string) ($_SESSION['google_login_nonce'] ?? '');
+$googleLoginCsrf = (string) ($_SESSION['google_login_csrf'] ?? '');
+$studentLoginCsrf = (string) ($_SESSION['student_login_csrf'] ?? '');
 
-$_SESSION['google_login_nonce'] = $googleLoginNonce;
-$_SESSION['google_login_csrf'] = $googleLoginCsrf;
-$_SESSION['student_login_csrf'] = $studentLoginCsrf;
+if ($googleLoginNonce === '' || $googleLoginCsrf === '' || $studentLoginCsrf === '') {
+    try {
+        $googleLoginNonce = bin2hex(random_bytes(16));
+        $googleLoginCsrf = bin2hex(random_bytes(32));
+        $studentLoginCsrf = bin2hex(random_bytes(32));
+    } catch (Exception $e) {
+        $googleLoginNonce = sha1(uniqid('nonce_', true));
+        $googleLoginCsrf = sha1(uniqid('gcsrf_', true));
+        $studentLoginCsrf = sha1(uniqid('scsrf_', true));
+    }
+
+    $_SESSION['google_login_nonce'] = $googleLoginNonce;
+    $_SESSION['google_login_csrf'] = $googleLoginCsrf;
+    $_SESSION['student_login_csrf'] = $studentLoginCsrf;
+}
+$nonAdminLoginLocked = is_non_admin_login_locked($conn);
 ?>
 <!DOCTYPE html>
 <html
@@ -320,6 +329,12 @@ $_SESSION['student_login_csrf'] = $studentLoginCsrf;
     access this system.
   </div>
 <?php endif; ?>
+<?php if ($nonAdminLoginLocked): ?>
+  <div class="alert alert-warning small login-alert" role="alert">
+    Student and Program Chair login is temporarily locked by the administrator.
+    Administrator login remains available.
+  </div>
+<?php endif; ?>
 
               <!-- Google Login -->
               <div class="mb-3">
@@ -361,8 +376,9 @@ $_SESSION['student_login_csrf'] = $studentLoginCsrf;
                   type="button"
                   id="studentLoginToggle"
                   class="btn btn-outline-secondary w-100 student-login-toggle"
+                  <?= $nonAdminLoginLocked ? 'disabled' : ''; ?>
                 >
-                  Student Login
+                  <?= $nonAdminLoginLocked ? 'Student Login (Locked)' : 'Student Login'; ?>
                 </button>
 
                 <form id="studentLoginForm" class="student-login-form d-none">
@@ -418,15 +434,22 @@ $_SESSION['student_login_csrf'] = $studentLoginCsrf;
 <script>
 const googleLoginCsrfToken = <?= json_encode((string) $googleLoginCsrf); ?>;
 const studentLoginCsrfToken = <?= json_encode((string) $studentLoginCsrf); ?>;
+let googleLoginInFlight = false;
 
 function handleGoogleCredential(response) {
+  if (googleLoginInFlight) {
+    return;
+  }
+
   const msg = document.getElementById("loginMsg");
+  googleLoginInFlight = true;
 
   msg.className = "mt-3 small text-center text-success";
   msg.textContent = "Login successful. Checking account authorization...";
 
   fetch('auth/google_callback.php', {
     method: 'POST',
+    credentials: 'same-origin',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded'
     },
@@ -446,7 +469,8 @@ function handleGoogleCredential(response) {
   .catch(err => {
     console.error(err);
     msg.className = "mt-3 small text-center text-danger";
-    msg.textContent = "Authentication failed. Please contact the system administrator.";
+    msg.textContent = err.message || "Authentication failed. Please contact the system administrator.";
+    googleLoginInFlight = false;
   });
 }
 
@@ -486,6 +510,7 @@ if (studentLoginForm) {
 
     fetch("auth/student_login.php", {
       method: "POST",
+      credentials: "same-origin",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded"
       },

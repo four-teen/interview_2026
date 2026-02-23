@@ -6,6 +6,7 @@
 require_once __DIR__ . '/../config/env.php';
 require_once __DIR__ . '/../config/session_security.php';
 require_once __DIR__ . '/../config/db.php';
+require_once __DIR__ . '/../config/system_controls.php';
 
 $APP_DEBUG = getenv('APP_DEBUG') === '1';
 ini_set('display_errors', $APP_DEBUG ? '1' : '0');
@@ -228,8 +229,6 @@ if (
     json_response(401, ['success' => false, 'message' => 'Invalid Google token']);
 }
 
-unset($_SESSION['google_login_nonce'], $_SESSION['google_login_csrf']);
-
 try {
     $pdo = new PDO(
         "mysql:host=$DB_HOST;dbname=$DB_NAME;charset=utf8mb4",
@@ -259,6 +258,15 @@ if (!$account) {
     json_response(403, ['success' => false, 'message' => 'Account not authorized']);
 }
 
+$accountRole = (string) ($account['role'] ?? '');
+if ($accountRole === 'progchair' && is_non_admin_login_locked($conn)) {
+    log_auth('Program Chair login blocked by admin lock', ['accountid' => (int) ($account['accountid'] ?? 0)]);
+    json_response(423, [
+        'success' => false,
+        'message' => 'Program Chair login is temporarily locked by the administrator.'
+    ]);
+}
+
 if (!ensure_google_subject_bindings_table($pdo)) {
     json_response(500, ['success' => false, 'message' => 'Server configuration error']);
 }
@@ -272,6 +280,7 @@ if (!bind_google_subject($pdo, (int) $account['accountid'], $googleSub, $binding
     json_response(403, ['success' => false, 'message' => 'Account not authorized']);
 }
 
+unset($_SESSION['google_login_nonce'], $_SESSION['google_login_csrf']);
 session_regenerate_id(true);
 $_SESSION['logged_in'] = true;
 $_SESSION['accountid'] = $account['accountid'];

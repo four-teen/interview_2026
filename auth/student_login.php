@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../config/student_credentials.php';
+require_once __DIR__ . '/../config/system_controls.php';
 require_once __DIR__ . '/../config/session_security.php';
 
 secure_session_start();
@@ -215,6 +216,13 @@ if ($postedCsrf === '' || $sessionCsrf === '' || !hash_equals($sessionCsrf, $pos
     student_json_response(403, [
         'success' => false,
         'message' => 'Invalid authentication request.'
+    ]);
+}
+
+if (is_non_admin_login_locked($conn)) {
+    student_json_response(423, [
+        'success' => false,
+        'message' => 'Student login is temporarily locked by the administrator.'
     ]);
 }
 
