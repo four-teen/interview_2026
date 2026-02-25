@@ -44,6 +44,43 @@ if ($result) {
     }
 }
 
+$campusStats = [];
+$campusStatsSql = "
+  SELECT
+    c.campus_id,
+    c.campus_name,
+    COALESCE(SUM(CASE WHEN a.status = 'active' THEN 1 ELSE 0 END), 0) AS active_count,
+    COALESCE(SUM(CASE WHEN a.status = 'inactive' THEN 1 ELSE 0 END), 0) AS inactive_count,
+    COUNT(a.accountid) AS total_count
+  FROM tbl_campus c
+  LEFT JOIN tblaccount a ON a.campus_id = c.campus_id
+  WHERE c.status = 'active'
+  GROUP BY c.campus_id, c.campus_name
+  ORDER BY c.campus_name ASC
+";
+$campusStatsResult = $conn->query($campusStatsSql);
+if ($campusStatsResult) {
+    while ($row = $campusStatsResult->fetch_assoc()) {
+        $campusStats[] = $row;
+    }
+}
+
+$overallCounts = ['active_count' => 0, 'inactive_count' => 0, 'total_count' => 0];
+$overallSql = "
+  SELECT
+    COALESCE(SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), 0) AS active_count,
+    COALESCE(SUM(CASE WHEN status = 'inactive' THEN 1 ELSE 0 END), 0) AS inactive_count,
+    COUNT(*) AS total_count
+  FROM tblaccount
+";
+$overallResult = $conn->query($overallSql);
+if ($overallResult) {
+    $overallRow = $overallResult->fetch_assoc();
+    if ($overallRow) {
+        $overallCounts = $overallRow;
+    }
+}
+
 
 
 session_start();
@@ -56,6 +93,7 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'administrator') {
 $fullname = $_SESSION['fullname'] ?? 'Administrator';
 $email    = $_SESSION['email'] ?? '';
 $role     = $_SESSION['role'] ?? 'administrator';
+$currentAdminId = (int) ($_SESSION['accountid'] ?? 0);
 ?>
 <!DOCTYPE html>
 
@@ -219,6 +257,25 @@ $role     = $_SESSION['role'] ?? 'administrator';
 
                             </li>
                             <li>
+                              <?php if ((int) $acc['accountid'] === $currentAdminId): ?>
+                                <span class="dropdown-item text-muted disabled">
+                                  <i class="bx bx-user me-2"></i> Current Account
+                                </span>
+                              <?php else: ?>
+                                <a
+                                  class="dropdown-item btn-toggle-account-lock"
+                                  href="javascript:void(0);"
+                                  data-id="<?= (int) $acc['accountid'] ?>"
+                                  data-name="<?= htmlspecialchars($acc['acc_fullname'], ENT_QUOTES) ?>"
+                                  data-current-status="<?= htmlspecialchars($acc['status'], ENT_QUOTES) ?>"
+                                  data-action="<?= $acc['status'] === 'active' ? 'lock' : 'unlock' ?>"
+                                >
+                                  <i class="bx <?= $acc['status'] === 'active' ? 'bx-lock-alt' : 'bx-lock-open-alt' ?> me-2"></i>
+                                  <?= $acc['status'] === 'active' ? 'Lock Account' : 'Unlock Account' ?>
+                                </a>
+                              <?php endif; ?>
+                            </li>
+                            <li>
                               <a 
                                 class="dropdown-item text-danger btn-delete-account"
                                 href="javascript:void(0);"
@@ -253,55 +310,45 @@ $role     = $_SESSION['role'] ?? 'administrator';
               </div>
             </div>
 
-            <!-- RIGHT: Campus “wire” cards -->
+            <!-- RIGHT: Campus filter cards -->
             <div class="col-lg-4 mb-4">
               <div class="card h-100">
                 <div class="card-header">
                   <h5 class="mb-0">Campus Filters</h5>
-                  <small class="text-muted">
-                    Use these cards to scope accounts per campus (UI only).
-                  </small>
+                  <small class="text-muted">Click a campus to filter accounts.</small>
                 </div>
 
                 <div class="card-body">
-                  <div class="d-grid gap-2">
-
-                    <!-- UI placeholders; we will load real campus list later -->
-                    <button type="button" class="btn btn-outline-primary text-start">
-                      <i class="bx bx-buildings me-2"></i> Campus 1
-                      <span class="badge bg-label-primary float-end">—</span>
+                  <div class="d-grid gap-2" id="campusFilters">
+                    <button
+                      type="button"
+                      class="btn btn-outline-primary text-start campus-filter-btn active"
+                      data-campus-id=""
+                    >
+                      <div class="d-flex justify-content-between align-items-center">
+                        <span><i class="bx bx-buildings me-2"></i> All Campuses</span>
+                        <span class="badge bg-label-primary"><?= (int) ($overallCounts['total_count'] ?? 0) ?></span>
+                      </div>
+                      <small class="text-muted d-block mt-1">
+                        Active: <?= (int) ($overallCounts['active_count'] ?? 0) ?> / Inactive: <?= (int) ($overallCounts['inactive_count'] ?? 0) ?>
+                      </small>
                     </button>
 
-                    <button type="button" class="btn btn-outline-primary text-start">
-                      <i class="bx bx-buildings me-2"></i> Campus 2
-                      <span class="badge bg-label-primary float-end">—</span>
-                    </button>
-
-                    <button type="button" class="btn btn-outline-primary text-start">
-                      <i class="bx bx-buildings me-2"></i> Campus 3
-                      <span class="badge bg-label-primary float-end">—</span>
-                    </button>
-
-                    <button type="button" class="btn btn-outline-primary text-start">
-                      <i class="bx bx-buildings me-2"></i> Campus 4
-                      <span class="badge bg-label-primary float-end">—</span>
-                    </button>
-
-                    <button type="button" class="btn btn-outline-primary text-start">
-                      <i class="bx bx-buildings me-2"></i> Campus 5
-                      <span class="badge bg-label-primary float-end">—</span>
-                    </button>
-
-                    <button type="button" class="btn btn-outline-primary text-start">
-                      <i class="bx bx-buildings me-2"></i> Campus 6
-                      <span class="badge bg-label-primary float-end">—</span>
-                    </button>
-
-                    <button type="button" class="btn btn-outline-primary text-start">
-                      <i class="bx bx-buildings me-2"></i> Campus 7
-                      <span class="badge bg-label-primary float-end">—</span>
-                    </button>
-
+                    <?php foreach ($campusStats as $campus): ?>
+                      <button
+                        type="button"
+                        class="btn btn-outline-primary text-start campus-filter-btn"
+                        data-campus-id="<?= (int) ($campus['campus_id'] ?? 0) ?>"
+                      >
+                        <div class="d-flex justify-content-between align-items-center">
+                          <span><i class="bx bx-buildings me-2"></i> <?= htmlspecialchars($campus['campus_name']) ?></span>
+                          <span class="badge bg-label-primary"><?= (int) ($campus['total_count'] ?? 0) ?></span>
+                        </div>
+                        <small class="text-muted d-block mt-1">
+                          Active: <?= (int) ($campus['active_count'] ?? 0) ?> / Inactive: <?= (int) ($campus['inactive_count'] ?? 0) ?>
+                        </small>
+                      </button>
+                    <?php endforeach; ?>
                   </div>
 
                   <hr class="my-4" />
@@ -374,8 +421,8 @@ $role     = $_SESSION['role'] ?? 'administrator';
           <div class="col-md-4">
             <label class="form-label">Status</label>
             <select name="status" class="form-select">
+              <option value="inactive" selected>Inactive</option>
               <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
             </select>
           </div>
 
@@ -558,8 +605,18 @@ document.addEventListener('DOMContentLoaded', function () {
   let offset = <?= (int)$LIMIT ?>; // start after initial batch
   const limit = <?= (int)$LIMIT ?>;
   let endReached = false;
+  let selectedCampusId = '';
 
 let activeRequest = null;
+
+function resetAndReloadAccounts() {
+  offset = 0;
+  endReached = false;
+  loadingAccounts = false;
+  $('#accountsList').html('');
+  $('#accountLoader').show().text('Loading more accounts...');
+  loadMoreAccounts();
+}
 
 function loadMoreAccounts() {
   if (loadingAccounts || endReached) return;
@@ -574,7 +631,12 @@ function loadMoreAccounts() {
     activeRequest.abort();
   }
 
-  activeRequest = $.get('fetch_accounts.php', { limit: limit, offset: offset, q: q })
+  activeRequest = $.get('fetch_accounts.php', {
+      limit: limit,
+      offset: offset,
+      q: q,
+      campus_id: selectedCampusId
+    })
     .done(function (html) {
       html = (html || '').trim();
 
@@ -618,20 +680,20 @@ $('#accountSearch').on('keyup', function () {
   clearTimeout(searchTimer);
 
   searchTimer = setTimeout(function () {
-
-    // reset state
-    offset = 0;
-    endReached = false;
-    loadingAccounts = false;
-
-    // clear list + loader
-    $('#accountsList').html('');
-    $('#accountLoader').show().text('Loading more accounts...');
-
-    // load first batch based on search
-    loadMoreAccounts();
-
+    resetAndReloadAccounts();
   }, 300);
+});
+
+$(document).on('click', '.campus-filter-btn', function () {
+  const campusId = String($(this).data('campus-id') ?? '');
+  if (campusId === selectedCampusId) {
+    return;
+  }
+
+  selectedCampusId = campusId;
+  $('.campus-filter-btn').removeClass('active');
+  $(this).addClass('active');
+  resetAndReloadAccounts();
 });
 
 
@@ -678,6 +740,59 @@ html += `<option value="${row.program_id}">
     $('#delete_account_name').text($(this).data('name'));
     $('#deleteAccountModal').modal('show');
   });
+
+$(document).on('click', '.btn-toggle-account-lock', function () {
+  const accountid = $(this).data('id');
+  const accountName = $(this).data('name');
+  const action = $(this).data('action');
+  const currentStatus = $(this).data('current-status');
+  const nextStatus = action === 'lock' ? 'inactive' : 'active';
+  const titleText = action === 'lock' ? 'Lock account?' : 'Unlock account?';
+
+  Swal.fire({
+    icon: 'question',
+    title: titleText,
+    text: `${accountName} is currently ${currentStatus}. Set to ${nextStatus}?`,
+    showCancelButton: true,
+    confirmButtonText: action === 'lock' ? 'Lock' : 'Unlock',
+    confirmButtonColor: action === 'lock' ? '#ff3e1d' : '#71dd37'
+  }).then((result) => {
+    if (!result.isConfirmed) return;
+
+    $.ajax({
+      url: 'toggle_account_lock.php',
+      method: 'POST',
+      data: { accountid: accountid, action: action },
+      dataType: 'json',
+      success: function (res) {
+        if (res.success) {
+          Swal.fire({
+            icon: 'success',
+            title: 'Updated',
+            text: res.message,
+            timer: 1400,
+            showConfirmButton: false
+          }).then(() => {
+            location.reload();
+          });
+        } else {
+          Swal.fire({
+            icon: 'error',
+            title: 'Action failed',
+            text: res.message || 'Unable to update account status.'
+          });
+        }
+      },
+      error: function () {
+        Swal.fire({
+          icon: 'error',
+          title: 'Server error',
+          text: 'Unable to update account status.'
+        });
+      }
+    });
+  });
+});
 
 /* SUBMIT EDIT ACCOUNT */
 $('#editAccountForm').on('submit', function (e) {

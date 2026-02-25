@@ -952,7 +952,7 @@ document.addEventListener("DOMContentLoaded", function () {
               <span class="badge bg-label-warning">Not Scored: ${programUnscored.toLocaleString()}</span>
               <span class="badge bg-label-secondary">Cutoff: ${toNumber(program.cutoff_score).toLocaleString()}</span>
               <span class="badge bg-label-info">AC: ${toNumber(program.absorptive_capacity).toLocaleString()}</span>
-              <span class="badge bg-label-danger">EC: ${toNumber(program.endorsement_capacity).toLocaleString()}</span>
+              <span class="badge bg-label-danger">SCC: ${toNumber(program.endorsement_capacity).toLocaleString()}</span>
             </div>
           </div>
         `;

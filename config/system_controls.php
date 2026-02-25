@@ -92,3 +92,74 @@ if (!function_exists('set_non_admin_login_lock')) {
         return set_system_control_value($conn, 'non_admin_login_lock', $locked ? '1' : '0', $updatedBy);
     }
 }
+
+if (!function_exists('program_login_control_key')) {
+    function program_login_control_key(int $programId): string
+    {
+        return 'program_login_lock_' . max(0, (int) $programId);
+    }
+}
+
+if (!function_exists('is_program_login_unlocked')) {
+    function is_program_login_unlocked(mysqli $conn, int $programId): bool
+    {
+        $programId = (int) $programId;
+        if ($programId <= 0) {
+            return false;
+        }
+
+        $value = get_system_control_value($conn, program_login_control_key($programId), '0');
+        return $value === '1';
+    }
+}
+
+if (!function_exists('set_program_login_unlocked')) {
+    function set_program_login_unlocked(mysqli $conn, int $programId, bool $unlocked, ?int $updatedBy = null): bool
+    {
+        $programId = (int) $programId;
+        if ($programId <= 0) {
+            return false;
+        }
+
+        return set_system_control_value(
+            $conn,
+            program_login_control_key($programId),
+            $unlocked ? '1' : '0',
+            $updatedBy
+        );
+    }
+}
+
+if (!function_exists('get_program_login_lock_map')) {
+    function get_program_login_lock_map(mysqli $conn): array
+    {
+        if (!ensure_system_controls_table($conn)) {
+            return [];
+        }
+
+        $sql = "
+            SELECT control_key, control_value
+            FROM tbl_system_controls
+            WHERE control_key LIKE 'program_login_lock_%'
+        ";
+        $result = $conn->query($sql);
+        if (!$result) {
+            return [];
+        }
+
+        $map = [];
+        while ($row = $result->fetch_assoc()) {
+            $key = (string) ($row['control_key'] ?? '');
+            if (!preg_match('/^program_login_lock_(\d+)$/', $key, $matches)) {
+                continue;
+            }
+            $programId = (int) ($matches[1] ?? 0);
+            if ($programId <= 0) {
+                continue;
+            }
+            $map[$programId] = ((string) ($row['control_value'] ?? '0')) === '1';
+        }
+
+        return $map;
+    }
+}

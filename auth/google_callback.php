@@ -245,9 +245,13 @@ try {
 }
 
 $stmt = $pdo->prepare("
-    SELECT accountid, acc_fullname, email, role, campus_id, program_id
+    SELECT accountid, acc_fullname, email, role, campus_id, program_id, status
     FROM tblaccount
-    WHERE email = :email AND status = 'active'
+    WHERE LOWER(TRIM(email)) = :email
+    ORDER BY
+        (role = 'administrator') DESC,
+        (status = 'active') DESC,
+        accountid DESC
     LIMIT 1
 ");
 $stmt->execute(['email' => $email]);
@@ -259,12 +263,39 @@ if (!$account) {
 }
 
 $accountRole = (string) ($account['role'] ?? '');
+$accountStatus = strtolower(trim((string) ($account['status'] ?? '')));
+if ($accountRole !== 'administrator' && $accountStatus !== 'active') {
+    log_auth('Non-admin login blocked by inactive status', [
+        'accountid' => (int) ($account['accountid'] ?? 0),
+        'role' => $accountRole,
+        'status' => $accountStatus
+    ]);
+    json_response(403, [
+        'success' => false,
+        'message' => 'Your account is inactive. Please contact the administrator.'
+    ]);
+}
+
 if ($accountRole === 'progchair' && is_non_admin_login_locked($conn)) {
     log_auth('Program Chair login blocked by admin lock', ['accountid' => (int) ($account['accountid'] ?? 0)]);
     json_response(423, [
         'success' => false,
         'message' => 'Program Chair login is temporarily locked by the administrator.'
     ]);
+}
+
+if ($accountRole === 'progchair') {
+    $programId = (int) ($account['program_id'] ?? 0);
+    if ($programId <= 0 || !is_program_login_unlocked($conn, $programId)) {
+        log_auth('Program Chair login blocked by per-program lock', [
+            'accountid' => (int) ($account['accountid'] ?? 0),
+            'program_id' => $programId
+        ]);
+        json_response(423, [
+            'success' => false,
+            'message' => 'Login for your assigned program is currently locked by the administrator.'
+        ]);
+    }
 }
 
 if (!ensure_google_subject_bindings_table($pdo)) {

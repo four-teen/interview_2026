@@ -16,6 +16,8 @@ require_once '../../config/db.php';
 $limit  = isset($_GET['limit'])  ? (int) $_GET['limit']  : 20;
 $offset = isset($_GET['offset']) ? (int) $_GET['offset'] : 0;
 $q      = isset($_GET['q']) ? trim($_GET['q']) : '';
+$campusId = isset($_GET['campus_id']) ? (int) $_GET['campus_id'] : 0;
+$currentAdminId = (int) ($_SESSION['accountid'] ?? 0);
 
 if ($limit < 1) $limit = 20;
 if ($limit > 50) $limit = 50;
@@ -45,13 +47,24 @@ $sql = "
 
 $params = [];
 $types  = "";
+$whereClauses = [];
 
 if ($q !== "") {
-  $sql .= " WHERE a.acc_fullname LIKE ? OR a.email LIKE ? ";
+  $whereClauses[] = "(a.acc_fullname LIKE ? OR a.email LIKE ?)";
   $like = "%{$q}%";
   $params[] = $like;
   $params[] = $like;
   $types .= "ss";
+}
+
+if ($campusId > 0) {
+  $whereClauses[] = "a.campus_id = ?";
+  $params[] = $campusId;
+  $types .= "i";
+}
+
+if (count($whereClauses) > 0) {
+  $sql .= " WHERE " . implode(" AND ", $whereClauses);
 }
 
 $sql .= " ORDER BY a.acc_fullname LIMIT ? OFFSET ? ";
@@ -114,6 +127,31 @@ while ($acc = $result->fetch_assoc()) {
               >
                 <i class="bx bx-edit-alt me-2"></i> Edit
               </a>
+            </li>
+
+            <li>';
+  if ((int) $acc['accountid'] === $currentAdminId) {
+    echo '
+              <span class="dropdown-item text-muted disabled">
+                <i class="bx bx-user me-2"></i> Current Account
+              </span>';
+  } else {
+    $toggleAction = ($acc['status'] === 'active') ? 'lock' : 'unlock';
+    $toggleLabel = ($acc['status'] === 'active') ? 'Lock Account' : 'Unlock Account';
+    $toggleIcon = ($acc['status'] === 'active') ? 'bx-lock-alt' : 'bx-lock-open-alt';
+    echo '
+              <a
+                class="dropdown-item btn-toggle-account-lock"
+                href="javascript:void(0);"
+                data-id="'.(int) $acc['accountid'].'"
+                data-name="'.htmlspecialchars($acc['acc_fullname'], ENT_QUOTES).'"
+                data-current-status="'.htmlspecialchars($acc['status'], ENT_QUOTES).'"
+                data-action="'.$toggleAction.'"
+              >
+                <i class="bx '.$toggleIcon.' me-2"></i> '.$toggleLabel.'
+              </a>';
+  }
+  echo '
             </li>
 
             <li>

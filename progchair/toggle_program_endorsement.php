@@ -127,7 +127,7 @@ if ($action === 'ADD') {
     if ($endorsementCapacity <= 0) {
         echo json_encode([
             'success' => false,
-            'message' => 'EC capacity is 0. Configure EC capacity first.'
+            'message' => 'SCC capacity is 0. Configure SCC capacity first.'
         ]);
         exit;
     }
@@ -199,7 +199,7 @@ if ($action === 'ADD') {
     if ($currentEndorsed >= $endorsementCapacity) {
         echo json_encode([
             'success' => false,
-            'message' => 'EC capacity is full.'
+            'message' => 'SCC capacity is full.'
         ]);
         exit;
     }
@@ -250,7 +250,7 @@ if ($action === 'ADD') {
 
     echo json_encode([
         'success' => true,
-        'message' => 'Student added to EC list and set as first choice.'
+        'message' => 'Student added to SCC list and set as first choice.'
     ]);
     exit;
 }
@@ -277,6 +277,6 @@ $stmtDelete->close();
 
 echo json_encode([
     'success' => true,
-    'message' => 'Student removed from EC list.'
+    'message' => 'Student removed from SCC list.'
 ]);
 exit;

@@ -200,7 +200,7 @@ foreach ($endorsementRowsRaw as $endorsementRow) {
 
     $mapped = $allRowsByInterviewId[$eid];
     $mapped['is_endorsement'] = true;
-    $mapped['endorsement_label'] = 'EC';
+    $mapped['endorsement_label'] = 'SCC';
     $mapped['endorsement_order'] = (string) ($endorsementRow['endorsed_at'] ?? '');
     $endorsementRows[] = $mapped;
     $endorsementIds[$eid] = true;

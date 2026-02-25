@@ -52,6 +52,7 @@ $programs = [];
 $programSql = "
     SELECT 
         p.program_id,
+        p.college_id,
         p.program_code,
         p.program_name,
         p.major,
@@ -100,7 +101,7 @@ while ($row = $resultProgram->fetch_assoc()) {
 $allPrograms = [];
 
 $allProgramSql = "
-    SELECT program_id, program_name, major
+    SELECT program_id, program_code, program_name, major
     FROM tbl_program
     WHERE status = 'active'
     ORDER BY program_name ASC
@@ -187,6 +188,7 @@ $profileSql = "
         p.program_name,
         p.program_code,
         p.major,
+        p.college_id,
 
         co.college_name
     FROM tblaccount a
@@ -219,6 +221,8 @@ $pc_campus_name = $profile['campus_name'];
 $pc_program     = $profile['program_name'];
 $pc_major       = $profile['major'];
 $pc_college     = $profile['college_name'];
+$assignedCollegeId = (int) ($profile['college_id'] ?? 0);
+$pc_campus_label = preg_replace('/\s*campus\s*$/i', '', (string) $pc_campus_name);
 
 
 
@@ -392,6 +396,12 @@ if ($activeBatchId) {
   transition: background-color 0.2s ease;
 }
 
+.program-rank-trigger.program-rank-college {
+  border-left: 4px solid #f39c12;
+  border-radius: 8px;
+  padding: 10px 10px 10px 12px;
+}
+
 .program-rank-trigger:hover {
   background-color: #f5f7ff;
 }
@@ -399,6 +409,12 @@ if ($activeBatchId) {
 .program-rank-trigger:focus {
   outline: 2px solid #696cff;
   outline-offset: 2px;
+}
+
+.program-rank-trigger.program-rank-trigger-disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+  pointer-events: none;
 }
 
 .program-score-badge {
@@ -560,7 +576,7 @@ if ($activeBatchId) {
 
   <div class="card-header bg-success text-white">
     <h6 class="mb-0">
-      Programs in <?= htmlspecialchars($pc_campus_name); ?> Campus
+      Programs in <?= htmlspecialchars((string) $pc_campus_label); ?> Campus
     </h6>
   </div>
 
@@ -569,6 +585,7 @@ if ($activeBatchId) {
     <?php foreach ($programs as $program): ?>
     <?php 
     $isAssigned = ($program['program_id'] == $assignedProgramId);
+    $isSameCollege = ((int) ($program['college_id'] ?? 0) === $assignedCollegeId);
 
     $hasCapacityConfig = $program['absorptive_capacity'] !== null
       && $program['regular_percentage'] !== null
@@ -587,12 +604,14 @@ if ($activeBatchId) {
       ? max(0, $distributableCapacity - $regularSlots)
       : 0;
     ?>
-      <div class="mb-3 pb-3 border-bottom program-rank-trigger <?= $isAssigned ? 'bg-label-primary rounded px-2 py-2' : '' ?>"
-           data-program-id="<?= (int)$program['program_id']; ?>"
-           data-program-name="<?= htmlspecialchars(strtoupper($program['program_name'] . (!empty($program['major']) ? ' - ' . $program['major'] : ''))); ?>"
-           tabindex="0"
-           role="button"
-           aria-label="View ranking for <?= htmlspecialchars($program['program_name']); ?>">
+      <div class="mb-3 pb-3 border-bottom program-rank-trigger <?= $isSameCollege ? 'program-rank-college' : 'program-rank-trigger-disabled' ?> <?= $isAssigned ? 'bg-label-primary rounded px-2 py-2' : '' ?>"
+            data-program-id="<?= (int)$program['program_id']; ?>"
+            data-program-name="<?= htmlspecialchars(strtoupper($program['program_name'] . (!empty($program['major']) ? ' - ' . $program['major'] : ''))); ?>"
+            data-can-open="<?= $isSameCollege ? '1' : '0'; ?>"
+            tabindex="<?= $isSameCollege ? '0' : '-1'; ?>"
+            role="<?= $isSameCollege ? 'button' : 'presentation'; ?>"
+            aria-disabled="<?= $isSameCollege ? 'false' : 'true'; ?>"
+            aria-label="<?= $isSameCollege ? 'View ranking for ' . htmlspecialchars($program['program_name']) : 'Only programs under your college can be opened'; ?>">
 
         <!-- Program Name -->
         <div class="fw-semibold small text-dark">
@@ -632,7 +651,7 @@ if ($activeBatchId) {
           <?php if ($hasCapacityConfig): ?>
             <div class="small mt-2 text-dark">
               CAPACITY: <?= $absorptiveCapacity; ?> |
-              EC: <?= $endorsementCapacity; ?> |
+              SCC: <?= $endorsementCapacity; ?> |
               REGULAR: <?= $regularSlots; ?> |
               ETG: <?= $etgSlots; ?>
             </div>
@@ -690,9 +709,9 @@ if ($activeBatchId) {
         <div class="d-none" id="programRankingTableWrap">
           <div class="mb-4">
             <div class="d-flex justify-content-between align-items-center mb-2">
-              <h6 class="mb-0 text-uppercase fw-bold text-primary">REGULAR + EC List</h6>
+              <h6 class="mb-0 text-uppercase fw-bold text-primary">REGULAR + SCC List</h6>
               <button type="button" class="btn btn-sm btn-label-primary" id="addEcRegularBtn">
-                + EC (Regular)
+                + SCC (Regular)
               </button>
             </div>
             <div class="table-responsive">
@@ -717,7 +736,7 @@ if ($activeBatchId) {
             <div class="d-flex justify-content-between align-items-center mb-2">
               <h6 class="mb-0 text-uppercase fw-bold text-success">ETG List</h6>
               <button type="button" class="btn btn-sm btn-label-success" id="addEcEtgBtn">
-                + EC (ETG)
+                + SCC (ETG)
               </button>
             </div>
             <div class="table-responsive">
@@ -936,7 +955,18 @@ if ($activeBatchId) {
           <?php
           function renderProgramOptions($programs) {
               foreach ($programs as $p) {
-                  $display = strtoupper($p['program_name'] . (!empty($p['major']) ? ' - ' . $p['major'] : ''));
+                  $programCode = trim((string)($p['program_code'] ?? ''));
+                  $programName = trim((string)($p['program_name'] ?? ''));
+                  $major = trim((string)($p['major'] ?? ''));
+
+                  $display = $programName;
+                  if ($programCode !== '') {
+                      $display = $programCode . ' - ' . $display;
+                  }
+                  if ($major !== '') {
+                      $display .= ' (' . $major . ')';
+                  }
+                  $display = strtoupper($display);
                   echo '<option value="' . (int)$p['program_id'] . '">' . htmlspecialchars($display) . '</option>';
               }
           }
@@ -1591,11 +1621,11 @@ function getEcEligibleRows(sourceType) {
 function buildRankingRowHtml(row, rankDisplay, { isEndorsement = false } = {}) {
   const rowClass = isEndorsement ? 'ranking-ec-row' : '';
   const classificationText = isEndorsement
-    ? `EC - ${escapeHtml(row.classification || 'REGULAR')}`
+    ? `SCC - ${escapeHtml(row.classification || 'REGULAR')}`
     : escapeHtml(row.classification || 'REGULAR');
 
   const rankHtml = isEndorsement
-    ? `<span class="ranking-ec-badge">EC ${rankDisplay}</span>`
+    ? `<span class="ranking-ec-badge">SCC ${rankDisplay}</span>`
     : `<span class="fw-semibold">${rankDisplay}</span>`;
 
   return `
@@ -1632,7 +1662,7 @@ function renderRegularWithEcTable(regularRows, endorsementRows) {
   if (!regularRows.length && !endorsementRows.length) {
     programRankingRegularBody.innerHTML = `
       <tr>
-        <td colspan="7" class="text-center text-muted py-3">No regular or EC students.</td>
+        <td colspan="7" class="text-center text-muted py-3">No regular or SCC students.</td>
       </tr>
     `;
     return;
@@ -1646,7 +1676,7 @@ function renderRegularWithEcTable(regularRows, endorsementRows) {
   if (endorsementRows.length) {
     html += `
       <tr class="table-warning">
-        <td colspan="7" class="fw-semibold text-uppercase small">EC Students (Pinned below regular)</td>
+        <td colspan="7" class="fw-semibold text-uppercase small">SCC Students (Pinned below regular)</td>
       </tr>
     `;
     html += endorsementRows
@@ -1668,22 +1698,22 @@ function refreshEcButtons() {
     addEcRegularBtn.disabled = regularEligible.length === 0;
     addEcRegularBtn.title = addEcRegularBtn.disabled
       ? (ecCapacity <= 0
-          ? 'EC capacity is 0.'
+          ? 'SCC capacity is 0.'
           : (ecRemaining <= 0
-              ? 'EC is full.'
+              ? 'SCC is full.'
               : 'No Regular students meet SAT cutoff.'))
-      : `Add EC from ${regularEligible.length} eligible Regular student(s).`;
+      : `Add SCC from ${regularEligible.length} eligible Regular student(s).`;
   }
 
   if (addEcEtgBtn) {
     addEcEtgBtn.disabled = etgEligible.length === 0;
     addEcEtgBtn.title = addEcEtgBtn.disabled
       ? (ecCapacity <= 0
-          ? 'EC capacity is 0.'
+          ? 'SCC capacity is 0.'
           : (ecRemaining <= 0
-              ? 'EC is full.'
+              ? 'SCC is full.'
               : 'No ETG students meet SAT cutoff.'))
-      : `Add EC from ${etgEligible.length} eligible ETG student(s).`;
+      : `Add SCC from ${etgEligible.length} eligible ETG student(s).`;
   }
 }
 
@@ -1722,7 +1752,7 @@ function buildRankingMeta(grouped, quota) {
   const total = regularCount + endorsementCount + etgCount;
 
   if (!quota || quota.enabled !== true) {
-    return `${total} ranked student${total === 1 ? '' : 's'} | REGULAR: ${regularCount} | EC: ${endorsementCount} | ETG: ${etgCount}`;
+    return `${total} ranked student${total === 1 ? '' : 's'} | REGULAR: ${regularCount} | SCC: ${endorsementCount} | ETG: ${etgCount}`;
   }
 
   const capacity = Number(quota.absorptive_capacity ?? 0);
@@ -1730,7 +1760,7 @@ function buildRankingMeta(grouped, quota) {
   const etgSlots = Number(quota.etg_slots ?? 0);
   const ecSlots = Number(quota.endorsement_capacity ?? 0);
 
-  return `Shown ${total}/${capacity} | REGULAR: ${regularCount}/${regularSlots} | EC: ${endorsementCount}/${ecSlots} | ETG: ${etgCount}/${etgSlots}`;
+  return `Shown ${total}/${capacity} | REGULAR: ${regularCount}/${regularSlots} | SCC: ${endorsementCount}/${ecSlots} | ETG: ${etgCount}/${etgSlots}`;
 }
 
 function setRankingState({ loading = false, empty = false, showTable = false }) {
@@ -1757,7 +1787,7 @@ function toggleEndorsement(interviewId, action) {
     .then(res => res.json())
     .then(data => {
       if (!data || !data.success) {
-        throw new Error((data && data.message) || 'Failed to update EC list.');
+        throw new Error((data && data.message) || 'Failed to update SCC list.');
       }
       return data;
     });
@@ -1769,7 +1799,7 @@ function openAddEcPicker(sourceType) {
 
   if (!candidates.length) {
     const typeLabel = targetType === 'REGULAR' ? 'Regular' : 'ETG';
-    Swal.fire('No Eligible Students', `No ${typeLabel} students are eligible for EC.`, 'info');
+    Swal.fire('No Eligible Students', `No ${typeLabel} students are eligible for SCC.`, 'info');
     return;
   }
 
@@ -1782,12 +1812,12 @@ function openAddEcPicker(sourceType) {
   });
 
   Swal.fire({
-    title: targetType === 'REGULAR' ? 'Add EC from Regular List' : 'Add EC from ETG List',
+    title: targetType === 'REGULAR' ? 'Add SCC from Regular List' : 'Add SCC from ETG List',
     input: 'select',
     inputOptions,
     inputPlaceholder: 'Select student',
     showCancelButton: true,
-    confirmButtonText: 'Add EC',
+    confirmButtonText: 'Add SCC',
     cancelButtonText: 'Cancel',
     inputValidator: (value) => {
       if (!value) return 'Please select a student.';
@@ -1801,11 +1831,11 @@ function openAddEcPicker(sourceType) {
 
     toggleEndorsement(interviewId, 'ADD')
       .then((data) => {
-        Swal.fire('Added', data.message || 'Student added to EC list.', 'success');
+        Swal.fire('Added', data.message || 'Student added to SCC list.', 'success');
         loadProgramRanking(currentRankingProgramId, currentRankingProgramName);
       })
       .catch((err) => {
-        Swal.fire('Error', err.message || 'Failed to add EC.', 'error');
+        Swal.fire('Error', err.message || 'Failed to add SCC.', 'error');
       });
   });
 }
@@ -1861,7 +1891,7 @@ function loadProgramRanking(programId, programName) {
           if (capacity <= 0) {
             programRankingEmptyEl.textContent = 'No ranking shown because absorptive capacity is set to 0.';
           } else {
-            programRankingEmptyEl.textContent = 'No ranked students matched the configured Regular/EC/ETG slots.';
+            programRankingEmptyEl.textContent = 'No ranked students matched the configured Regular/SCC/ETG slots.';
           }
         }
         refreshEcButtons();
@@ -1890,10 +1920,11 @@ function loadProgramRanking(programId, programName) {
 
 document.querySelectorAll('.program-rank-trigger').forEach((el) => {
   const openRanking = () => {
+    const canOpen = el.getAttribute('data-can-open') === '1';
     const programId = Number(el.getAttribute('data-program-id') || 0);
     const programName = (el.getAttribute('data-program-name') || '').trim();
 
-    if (!programId || !programRankingModal) return;
+    if (!canOpen || !programId || !programRankingModal) return;
 
     if (programRankingEmptyEl) {
       programRankingEmptyEl.textContent = 'No ranked students found for this program.';

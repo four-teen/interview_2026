@@ -167,7 +167,7 @@ foreach ($endorsementRowsRaw as $endorsementRow) {
     }
 
     $row = $allRowsByInterviewId[$eid];
-    $row['classification_label'] = 'EC - ' . strtoupper((string) ($row['classification_label'] ?? 'REGULAR'));
+    $row['classification_label'] = 'SCC - ' . strtoupper((string) ($row['classification_label'] ?? 'REGULAR'));
     $row['is_endorsement'] = 1;
     $endorsementRows[] = $row;
     $endorsementIds[$eid] = true;
@@ -211,7 +211,7 @@ fputcsv($output, ['Program', $programLabel]);
 fputcsv($output, ['Generated', date('Y-m-d H:i:s')]);
 if ($quotaEnabled) {
     $quotaSummary = sprintf(
-        'Capacity: %d | Base: %d | Regular: %d/%d | EC: %d/%d | ETG: %d/%d',
+        'Capacity: %d | Base: %d | Regular: %d/%d | SCC: %d/%d | ETG: %d/%d',
         (int) $absorptiveCapacity,
         (int) $baseCapacity,
         count($regularRows),

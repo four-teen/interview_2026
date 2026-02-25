@@ -1,5 +1,6 @@
 <?php
 require_once '../../config/db.php';
+require_once '../../config/system_controls.php';
 session_start();
 
 if (!isset($_SESSION['logged_in']) || ($_SESSION['role'] ?? '') !== 'administrator') {
@@ -34,6 +35,12 @@ function table_column_exists(mysqli $conn, string $table, string $column): bool
 
 $hasEndorsementCapacityColumn = table_column_exists($conn, 'tbl_program_cutoff', 'endorsement_capacity');
 $hasEndorsementPercentageColumn = table_column_exists($conn, 'tbl_program_cutoff', 'endorsement_percentage');
+$programLoginLockMap = get_program_login_lock_map($conn);
+
+if (empty($_SESSION['admin_program_login_csrf'])) {
+    $_SESSION['admin_program_login_csrf'] = bin2hex(random_bytes(32));
+}
+$programLoginCsrfToken = (string) $_SESSION['admin_program_login_csrf'];
 
 /**
  * ============================================================
@@ -254,6 +261,8 @@ $regularSlots = $hasCapacityConfig
 $etgSlots = $hasCapacityConfig
     ? max(0, $distributableCapacity - $regularSlots)
     : 0;
+$programId = (int) ($program['program_id'] ?? 0);
+$isProgramLoginUnlocked = (bool) ($programLoginLockMap[$programId] ?? false);
 $programSearchText = strtolower(trim(
     (string) ($program['program_name'] ?? '') . ' ' .
     (string) ($program['program_code'] ?? '') . ' ' .
@@ -293,6 +302,11 @@ $programSearchText = strtolower(trim(
         <?php else: ?>
             <span class="badge bg-secondary">INACTIVE</span>
         <?php endif; ?>
+        <?php if ($isProgramLoginUnlocked): ?>
+            <span class="badge bg-label-success">LOGIN UNLOCKED</span>
+        <?php else: ?>
+            <span class="badge bg-label-danger">LOGIN LOCKED</span>
+        <?php endif; ?>
         <?php if ($hasCutoff): ?>
             <span class="program-chip program-chip-cutoff">Cut-Off <span class="badge bg-primary"><?= (int)$program['cutoff_score']; ?></span></span>
         <?php else: ?>
@@ -300,7 +314,7 @@ $programSearchText = strtolower(trim(
         <?php endif; ?>
         <?php if ($hasCapacityConfig): ?>
             <span class="program-chip program-chip-capacity">Capacity <span class="badge bg-info"><?= $absorptiveCapacity; ?></span></span>
-            <span class="program-chip program-chip-ec">EC <span class="badge bg-warning text-dark"><?= number_format($endorsementCapacity); ?></span></span>
+            <span class="program-chip program-chip-ec">SCC <span class="badge bg-warning text-dark"><?= number_format($endorsementCapacity); ?></span></span>
         <?php endif; ?>
     </div>
 
@@ -318,6 +332,23 @@ $programSearchText = strtolower(trim(
 </div>
 
 <div class="d-flex gap-2">
+    <form method="POST"
+          action="toggle_program_login_lock.php"
+          class="m-0">
+        <input type="hidden"
+               name="csrf_token"
+               value="<?= htmlspecialchars($programLoginCsrfToken); ?>">
+        <input type="hidden"
+               name="program_id"
+               value="<?= $programId; ?>">
+        <input type="hidden"
+               name="action"
+               value="<?= $isProgramLoginUnlocked ? 'lock' : 'unlock'; ?>">
+        <button type="submit"
+                class="btn btn-sm <?= $isProgramLoginUnlocked ? 'btn-warning' : 'btn-success'; ?>">
+            <?= $isProgramLoginUnlocked ? 'Lock Login' : 'Unlock Login'; ?>
+        </button>
+    </form>
 
     <button type="button"
             class="btn btn-sm btn-info cutoff-btn"
@@ -508,7 +539,7 @@ $programSearchText = strtolower(trim(
                     </div>
 
                     <div class="mb-3">
-                        <label class="form-label">Endorsement Capacity (EC)</label>
+                        <label class="form-label">Special Case Capacity (SCC)</label>
                         <input type="number"
                                name="endorsement_capacity"
                                id="endorsementCapacity"
@@ -550,7 +581,7 @@ $programSearchText = strtolower(trim(
 
                     <div class="small text-muted cutoff-preview-line mb-1" id="capacityBasePreview">
                         <span class="me-1">Absorptive Capacity</span><span class="badge bg-label-info">0</span>
-                        <span class="ms-2 me-1">EC</span><span class="badge bg-label-warning">0</span>
+                        <span class="ms-2 me-1">SCC</span><span class="badge bg-label-warning">0</span>
                         <span class="ms-2 me-1">Base</span><span class="badge bg-label-primary">0</span>
                     </div>
 
@@ -621,7 +652,7 @@ function updateCapacityPreview() {
 
     capacityBasePreview.innerHTML = `
         <span class="me-1">Absorptive Capacity</span><span class="badge bg-label-info">${capacity}</span>
-        <span class="ms-2 me-1">EC</span><span class="badge bg-label-warning">${endorsementCap}</span>
+        <span class="ms-2 me-1">SCC</span><span class="badge bg-label-warning">${endorsementCap}</span>
         <span class="ms-2 me-1">Base</span><span class="badge bg-label-primary">${baseCapacity}</span>
     `;
 

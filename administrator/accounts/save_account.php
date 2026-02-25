@@ -22,12 +22,21 @@ $email      = trim($_POST['email'] ?? '');
 $role       = $_POST['role'] ?? 'progchair';
 $campus_id  = $_POST['campus_id'] !== '' ? (int)$_POST['campus_id'] : null;
 $program_id = $_POST['program_id'] !== '' ? (int)$_POST['program_id'] : null;
-$status     = $_POST['status'] ?? 'active';
+$status     = $_POST['status'] ?? 'inactive';
 
 if ($fullname === '' || $email === '') {
     $_SESSION['error'] = 'Full name and email are required.';
     header('Location: index.php');
     exit;
+}
+
+if (!in_array($status, ['active', 'inactive'], true)) {
+    $status = 'inactive';
+}
+
+if ($role !== 'administrator') {
+    // Non-admin accounts should start locked by default.
+    $status = 'inactive';
 }
 
 /* =======================
