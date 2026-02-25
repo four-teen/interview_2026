@@ -1641,7 +1641,7 @@ function buildRankingRowHtml(row, rankDisplay, { isEndorsement = false } = {}) {
   `;
 }
 
-function renderRankingTable(bodyEl, rows, emptyMessage) {
+function renderRankingTable(bodyEl, rows, emptyMessage, { startRank = 1 } = {}) {
   if (!bodyEl) return;
 
   if (!rows.length) {
@@ -1653,7 +1653,9 @@ function renderRankingTable(bodyEl, rows, emptyMessage) {
     return;
   }
 
-  bodyEl.innerHTML = rows.map((row, index) => buildRankingRowHtml(row, index + 1)).join('');
+  bodyEl.innerHTML = rows
+    .map((row, index) => buildRankingRowHtml(row, startRank + index))
+    .join('');
 }
 
 function renderRegularWithEcTable(regularRows, endorsementRows) {
@@ -1680,7 +1682,7 @@ function renderRegularWithEcTable(regularRows, endorsementRows) {
       </tr>
     `;
     html += endorsementRows
-      .map((row, index) => buildRankingRowHtml(row, index + 1, { isEndorsement: true }))
+      .map((row, index) => buildRankingRowHtml(row, regularRows.length + index + 1, { isEndorsement: true }))
       .join('');
   }
 
@@ -1735,7 +1737,9 @@ function renderRankingRows(rows) {
   );
 
   renderRegularWithEcTable(regularRows, endorsementRows);
-  renderRankingTable(programRankingEtgBody, etgRows, 'No ETG ranked students.');
+  renderRankingTable(programRankingEtgBody, etgRows, 'No ETG ranked students.', {
+    startRank: regularRows.length + endorsementRows.length + 1
+  });
   refreshEcButtons();
 
   return {

@@ -1126,6 +1126,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') =
     $interviewId = (int) ($student['interview_id'] ?? 0);
     $currentFirstChoiceId = (int) ($student['first_choice'] ?? 0);
     $studentSatScoreForTransfer = null;
+    $studentClassGroupForTransfer = (strtoupper(trim((string) ($student['classification'] ?? 'REGULAR'))) === 'ETG')
+        ? 'ETG'
+        : 'REGULAR';
     if (isset($student['sat_score']) && $student['sat_score'] !== '' && $student['sat_score'] !== null) {
         $studentSatScoreForTransfer = (float) $student['sat_score'];
     }
@@ -1148,13 +1151,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') =
                 p.program_id,
                 pc.cutoff_score,
                 pc.absorptive_capacity,
+                pc.regular_percentage,
+                pc.etg_percentage,
+                COALESCE(pc.endorsement_capacity, 0) AS endorsement_capacity,
                 COALESCE(scored.scored_students, 0) AS scored_students
             FROM tbl_program p
             LEFT JOIN (
                 SELECT
                     pcx.program_id,
                     pcx.cutoff_score,
-                    pcx.absorptive_capacity
+                    pcx.absorptive_capacity,
+                    pcx.regular_percentage,
+                    pcx.etg_percentage,
+                    COALESCE(pcx.endorsement_capacity, 0) AS endorsement_capacity
                 FROM tbl_program_cutoff pcx
                 INNER JOIN (
                     SELECT program_id, MAX(cutoff_id) AS max_cutoff_id
@@ -1195,7 +1204,64 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') =
                 ? max(0, (int) $targetProgram['absorptive_capacity'])
                 : null;
             $targetScored = max(0, (int) ($targetProgram['scored_students'] ?? 0));
-            $targetAvailable = ($targetCapacity !== null) ? max(0, $targetCapacity - $targetScored) : 0;
+            $targetRegularPercentage = ($targetProgram['regular_percentage'] !== null && $targetProgram['regular_percentage'] !== '')
+                ? round((float) $targetProgram['regular_percentage'], 2)
+                : null;
+            $targetEtgPercentage = ($targetProgram['etg_percentage'] !== null && $targetProgram['etg_percentage'] !== '')
+                ? round((float) $targetProgram['etg_percentage'], 2)
+                : null;
+            $targetEndorsementCapacity = max(0, (int) ($targetProgram['endorsement_capacity'] ?? 0));
+
+            $targetQuotaConfigured = false;
+            $targetRegularSlots = null;
+            $targetEtgSlots = null;
+            $targetSlotLimit = null;
+            if (
+                $targetCapacity !== null &&
+                $targetRegularPercentage !== null &&
+                $targetEtgPercentage !== null &&
+                $targetRegularPercentage >= 0 &&
+                $targetRegularPercentage <= 100 &&
+                $targetEtgPercentage >= 0 &&
+                $targetEtgPercentage <= 100 &&
+                abs(($targetRegularPercentage + $targetEtgPercentage) - 100) <= 0.01
+            ) {
+                $targetBaseCapacity = max(0, $targetCapacity - $targetEndorsementCapacity);
+                $targetRegularSlots = (int) round($targetBaseCapacity * ($targetRegularPercentage / 100));
+                $targetEtgSlots = max(0, $targetBaseCapacity - $targetRegularSlots);
+                $targetSlotLimit = ($studentClassGroupForTransfer === 'ETG') ? $targetEtgSlots : $targetRegularSlots;
+                $targetQuotaConfigured = true;
+            }
+
+            $targetClassScored = 0;
+            if ($targetProgramId > 0) {
+                $targetClassSql = "
+                    SELECT COUNT(*) AS class_scored
+                    FROM tbl_student_interview
+                    WHERE status = 'active'
+                      AND final_score IS NOT NULL
+                      AND first_choice = ?
+                      AND UPPER(COALESCE(classification, 'REGULAR')) = ?
+                ";
+                $targetClassStmt = $conn->prepare($targetClassSql);
+                if ($targetClassStmt) {
+                    $targetClassStmt->bind_param('is', $targetProgramId, $studentClassGroupForTransfer);
+                    $targetClassStmt->execute();
+                    $targetClassRow = $targetClassStmt->get_result()->fetch_assoc();
+                    $targetClassScored = max(0, (int) ($targetClassRow['class_scored'] ?? 0));
+                    $targetClassStmt->close();
+                }
+            }
+
+            if ($targetCapacity !== null) {
+                if ($targetQuotaConfigured && $targetSlotLimit !== null) {
+                    $targetAvailable = max(0, (int) $targetSlotLimit - $targetClassScored);
+                } else {
+                    $targetAvailable = max(0, $targetCapacity - $targetScored);
+                }
+            } else {
+                $targetAvailable = 0;
+            }
             $targetCutoff = ($targetProgram['cutoff_score'] !== null && $targetProgram['cutoff_score'] !== '')
                 ? (int) $targetProgram['cutoff_score']
                 : null;
@@ -1409,6 +1475,7 @@ $firstChoiceId = (int) ($student['first_choice'] ?? 0);
 $secondChoiceId = (int) ($student['second_choice'] ?? 0);
 $thirdChoiceId = (int) ($student['third_choice'] ?? 0);
 $currentExaminee = (string) ($student['examinee_number'] ?? '');
+$studentClassGroup = (strtoupper(trim((string) ($student['classification'] ?? 'REGULAR'))) === 'ETG') ? 'ETG' : 'REGULAR';
 
 $choiceStats = [
     'first_choice_scored' => 0,
@@ -1443,9 +1510,17 @@ $secondChoiceScoredTotal = (int) ($choiceStats['second_choice_scored'] ?? 0);
 $thirdChoiceScoredTotal = (int) ($choiceStats['third_choice_scored'] ?? 0);
 
 $firstChoiceAbsorptiveCapacity = null;
+$firstChoiceQuotaEnabled = false;
+$firstChoiceRegularSlots = null;
+$firstChoiceEtgSlots = null;
+$firstChoiceEndorsementCapacity = 0;
 if ($firstChoiceId > 0) {
     $capacitySql = "
-        SELECT absorptive_capacity
+        SELECT
+            absorptive_capacity,
+            regular_percentage,
+            etg_percentage,
+            COALESCE(endorsement_capacity, 0) AS endorsement_capacity
         FROM tbl_program_cutoff
         WHERE program_id = ?
         ORDER BY date_updated DESC, cutoff_id DESC
@@ -1456,8 +1531,35 @@ if ($firstChoiceId > 0) {
         $capacityStmt->bind_param('i', $firstChoiceId);
         $capacityStmt->execute();
         $capacityRow = $capacityStmt->get_result()->fetch_assoc();
-        if ($capacityRow && $capacityRow['absorptive_capacity'] !== null) {
-            $firstChoiceAbsorptiveCapacity = max(0, (int) $capacityRow['absorptive_capacity']);
+        if ($capacityRow) {
+            if ($capacityRow['absorptive_capacity'] !== null) {
+                $firstChoiceAbsorptiveCapacity = max(0, (int) $capacityRow['absorptive_capacity']);
+            }
+
+            $regularPercentage = ($capacityRow['regular_percentage'] !== null && $capacityRow['regular_percentage'] !== '')
+                ? round((float) $capacityRow['regular_percentage'], 2)
+                : null;
+            $etgPercentage = ($capacityRow['etg_percentage'] !== null && $capacityRow['etg_percentage'] !== '')
+                ? round((float) $capacityRow['etg_percentage'], 2)
+                : null;
+            $endorsementCapacity = max(0, (int) ($capacityRow['endorsement_capacity'] ?? 0));
+            $firstChoiceEndorsementCapacity = $endorsementCapacity;
+
+            if (
+                $firstChoiceAbsorptiveCapacity !== null &&
+                $regularPercentage !== null &&
+                $etgPercentage !== null &&
+                $regularPercentage >= 0 &&
+                $regularPercentage <= 100 &&
+                $etgPercentage >= 0 &&
+                $etgPercentage <= 100 &&
+                abs(($regularPercentage + $etgPercentage) - 100) <= 0.01
+            ) {
+                $baseCapacity = max(0, $firstChoiceAbsorptiveCapacity - $endorsementCapacity);
+                $firstChoiceRegularSlots = (int) round($baseCapacity * ($regularPercentage / 100));
+                $firstChoiceEtgSlots = max(0, $baseCapacity - $firstChoiceRegularSlots);
+                $firstChoiceQuotaEnabled = true;
+            }
         }
         $capacityStmt->close();
     }
@@ -1466,14 +1568,25 @@ if ($firstChoiceId > 0) {
 $firstChoiceRank = null;
 if ($firstChoiceId > 0 && $hasScoredInterview) {
     $rankSql = "
-        SELECT si2.examinee_number
+        SELECT
+            si2.interview_id,
+            si2.examinee_number,
+            CASE
+                WHEN UPPER(COALESCE(si2.classification, 'REGULAR')) = 'ETG' THEN 1
+                ELSE 0
+            END AS classification_group
         FROM tbl_student_interview si2
         INNER JOIN tbl_placement_results pr2
             ON pr2.id = si2.placement_result_id
         WHERE si2.status = 'active'
           AND si2.final_score IS NOT NULL
           AND si2.first_choice = ?
-        ORDER BY si2.final_score DESC, pr2.sat_score DESC, pr2.full_name ASC, si2.examinee_number ASC
+        ORDER BY
+            classification_group ASC,
+            si2.final_score DESC,
+            pr2.sat_score DESC,
+            pr2.full_name ASC,
+            si2.examinee_number ASC
     ";
 
     if ($rankStmt = $conn->prepare($rankSql)) {
@@ -1481,8 +1594,82 @@ if ($firstChoiceId > 0 && $hasScoredInterview) {
         $rankStmt->execute();
         $rankResult = $rankStmt->get_result();
 
-        $position = 1;
+        $allRegularRows = [];
+        $allEtgRows = [];
+        $allRowsByInterviewId = [];
         while ($rankRow = $rankResult->fetch_assoc()) {
+            $mappedRow = [
+                'interview_id' => (int) ($rankRow['interview_id'] ?? 0),
+                'examinee_number' => (string) ($rankRow['examinee_number'] ?? ''),
+            ];
+
+            $allRowsByInterviewId[$mappedRow['interview_id']] = $mappedRow;
+
+            if ((int) ($rankRow['classification_group'] ?? 0) === 1) {
+                $allEtgRows[] = $mappedRow;
+            } else {
+                $allRegularRows[] = $mappedRow;
+            }
+        }
+
+        $rankStmt->close();
+
+        $endorsementRows = [];
+        $endorsementIds = [];
+        $endorsementSql = "
+            SELECT interview_id
+            FROM tbl_program_endorsements
+            WHERE program_id = ?
+            ORDER BY endorsed_at ASC, endorsement_id ASC
+        ";
+        if ($endorsementStmt = $conn->prepare($endorsementSql)) {
+            $endorsementStmt->bind_param('i', $firstChoiceId);
+            $endorsementStmt->execute();
+            $endorsementResult = $endorsementStmt->get_result();
+
+            while ($endorsementRow = $endorsementResult->fetch_assoc()) {
+                $endorsementInterviewId = (int) ($endorsementRow['interview_id'] ?? 0);
+                if ($endorsementInterviewId <= 0 || !isset($allRowsByInterviewId[$endorsementInterviewId])) {
+                    continue;
+                }
+
+                $endorsementRows[] = $allRowsByInterviewId[$endorsementInterviewId];
+                $endorsementIds[$endorsementInterviewId] = true;
+            }
+
+            $endorsementStmt->close();
+        }
+
+        $filteredRegularRows = array_values(array_filter($allRegularRows, function (array $row) use ($endorsementIds): bool {
+            return !isset($endorsementIds[(int) ($row['interview_id'] ?? 0)]);
+        }));
+        $filteredEtgRows = array_values(array_filter($allEtgRows, function (array $row) use ($endorsementIds): bool {
+            return !isset($endorsementIds[(int) ($row['interview_id'] ?? 0)]);
+        }));
+
+        $etgPosition = null;
+        if ($studentClassGroup === 'ETG') {
+            $etgPositionCursor = 1;
+            foreach ($filteredEtgRows as $etgRow) {
+                if ((string) ($etgRow['examinee_number'] ?? '') === $currentExaminee) {
+                    $etgPosition = $etgPositionCursor;
+                    break;
+                }
+                $etgPositionCursor++;
+            }
+        }
+
+        if ($firstChoiceQuotaEnabled) {
+            $regularRows = array_slice($filteredRegularRows, 0, (int) $firstChoiceRegularSlots);
+            $etgRows = array_slice($filteredEtgRows, 0, (int) $firstChoiceEtgSlots);
+        } else {
+            $regularRows = $filteredRegularRows;
+            $etgRows = $filteredEtgRows;
+        }
+
+        $rankingRows = array_merge($regularRows, $endorsementRows, $etgRows);
+        $position = 1;
+        foreach ($rankingRows as $rankRow) {
             if ((string) ($rankRow['examinee_number'] ?? '') === $currentExaminee) {
                 $firstChoiceRank = $position;
                 break;
@@ -1490,18 +1677,47 @@ if ($firstChoiceId > 0 && $hasScoredInterview) {
             $position++;
         }
 
-        $rankStmt->close();
+        // Keep a deterministic rank even when the student falls outside configured display slots.
+        if ($firstChoiceRank === null) {
+            $fallbackRows = array_merge($filteredRegularRows, $endorsementRows, $filteredEtgRows);
+            $position = 1;
+            foreach ($fallbackRows as $rankRow) {
+                if ((string) ($rankRow['examinee_number'] ?? '') === $currentExaminee) {
+                    $firstChoiceRank = $position;
+                    break;
+                }
+                $position++;
+            }
+        }
+
+        if ($firstChoiceQuotaEnabled && $studentClassGroup === 'ETG' && $etgPosition !== null) {
+            // ETG rank is offset by reserved regular slots.
+            $firstChoiceRank = (int) $firstChoiceRegularSlots + $etgPosition;
+        }
     }
 }
 
+if ($firstChoiceRank !== null && $firstChoiceEndorsementCapacity > 0) {
+    // Student-facing rank keeps SCC seats hidden, but reserves them at the top count.
+    $firstChoiceRank = $firstChoiceRank + $firstChoiceEndorsementCapacity;
+}
+
+$firstChoiceRankTotal = ($firstChoiceAbsorptiveCapacity !== null)
+    ? $firstChoiceAbsorptiveCapacity
+    : $firstChoiceScoredTotal;
+
+$firstChoiceRankValueDisplay = null;
+$firstChoiceRankTotalDisplay = ($firstChoiceId > 0) ? number_format($firstChoiceRankTotal) : null;
 $firstChoiceRankDisplay = 'N/A';
 if ($firstChoiceId > 0) {
     if ($hasScoredInterview && $firstChoiceRank !== null) {
-        $firstChoiceRankDisplay = number_format($firstChoiceRank) . ' / ' . number_format($firstChoiceScoredTotal);
+        $firstChoiceRankValueDisplay = number_format($firstChoiceRank);
+        $firstChoiceRankDisplay = $firstChoiceRankValueDisplay . ' / ' . $firstChoiceRankTotalDisplay;
     } elseif ($hasScoredInterview) {
-        $firstChoiceRankDisplay = 'N/A / ' . number_format($firstChoiceScoredTotal);
+        $firstChoiceRankDisplay = 'N/A / ' . $firstChoiceRankTotalDisplay;
     } else {
-        $firstChoiceRankDisplay = 'Pending / ' . number_format($firstChoiceScoredTotal);
+        $firstChoiceRankValueDisplay = 'Pending';
+        $firstChoiceRankDisplay = 'Pending / ' . $firstChoiceRankTotalDisplay;
     }
 }
 
@@ -1536,8 +1752,6 @@ if (isset($student['sat_score']) && $student['sat_score'] !== '' && $student['sa
     $studentSatScore = (float) $student['sat_score'];
 }
 $studentFinalScoreValue = $hasScoredInterview ? (float) $finalScore : null;
-$studentClassGroup = (strtoupper(trim((string) ($student['classification'] ?? 'REGULAR'))) === 'ETG') ? 'ETG' : 'REGULAR';
-
 $programRankingPools = [];
 $rankingPoolSql = "
     SELECT
@@ -1660,6 +1874,7 @@ $allProgramsSql = "
         pc.cutoff_score,
         pc.regular_percentage,
         pc.etg_percentage,
+        COALESCE(pc.endorsement_capacity, 0) AS endorsement_capacity,
         COALESCE(scored.scored_students, 0) AS scored_students
     FROM tbl_program p
     LEFT JOIN (
@@ -1668,7 +1883,8 @@ $allProgramsSql = "
             pcx.cutoff_score,
             pcx.absorptive_capacity,
             pcx.regular_percentage,
-            pcx.etg_percentage
+            pcx.etg_percentage,
+            COALESCE(pcx.endorsement_capacity, 0) AS endorsement_capacity
         FROM tbl_program_cutoff pcx
         INNER JOIN (
             SELECT program_id, MAX(cutoff_id) AS max_cutoff_id
@@ -1712,7 +1928,9 @@ if ($allProgramsStmt = $conn->prepare($allProgramsSql)) {
             : null;
 
         $scoredStudents = max(0, (int) ($programRow['scored_students'] ?? 0));
-        $availableSlots = ($capacity !== null) ? max(0, $capacity - $scoredStudents) : null;
+        $endorsementCapacity = max(0, (int) ($programRow['endorsement_capacity'] ?? 0));
+        $classScoredCount = count($programRankingPools[$programId][$studentClassGroup] ?? []);
+        $availableSlots = null;
 
         $quotaConfigured = false;
         $regularSlots = null;
@@ -1728,13 +1946,22 @@ if ($allProgramsStmt = $conn->prepare($allProgramsSql)) {
             abs(($regularPercentage + $etgPercentage) - 100) <= 0.01
         ) {
             $quotaConfigured = true;
-            $regularSlots = (int) round($capacity * ($regularPercentage / 100));
-            $etgSlots = max(0, $capacity - $regularSlots);
+            $baseCapacity = max(0, $capacity - $endorsementCapacity);
+            $regularSlots = (int) round($baseCapacity * ($regularPercentage / 100));
+            $etgSlots = max(0, $baseCapacity - $regularSlots);
         }
 
         $studentSlotLimit = null;
         if ($quotaConfigured) {
             $studentSlotLimit = ($studentClassGroup === 'ETG') ? $etgSlots : $regularSlots;
+        }
+
+        if ($capacity !== null) {
+            if ($quotaConfigured && $studentSlotLimit !== null) {
+                $availableSlots = max(0, (int) $studentSlotLimit - $classScoredCount);
+            } else {
+                $availableSlots = max(0, $capacity - $scoredStudents);
+            }
         }
 
         $studentProjectedRank = null;
@@ -1769,7 +1996,9 @@ if ($allProgramsStmt = $conn->prepare($allProgramsSql)) {
             'etg_percentage' => $etgPercentage,
             'regular_slots' => $regularSlots,
             'etg_slots' => $etgSlots,
+            'endorsement_capacity' => $endorsementCapacity,
             'scored_students' => $scoredStudents,
+            'class_scored' => $classScoredCount,
             'available_slots' => $availableSlots,
             'slot_status' => $slotStatus,
             'quota_configured' => $quotaConfigured,
@@ -1809,12 +2038,9 @@ $buildChoiceSlotDetails = function ($programId, $scoredStudents) use ($programIn
         $capacity = max(0, (int) $programData['absorptive_capacity']);
     }
 
-    $scored = ($programData !== null && array_key_exists('scored_students', $programData))
-        ? max(0, (int) ($programData['scored_students'] ?? 0))
-        : max(0, (int) $scoredStudents);
     $available = ($programData !== null && array_key_exists('available_slots', $programData))
         ? (($programData['available_slots'] !== null) ? max(0, (int) $programData['available_slots']) : null)
-        : (($capacity !== null) ? max(0, $capacity - $scored) : null);
+        : (($capacity !== null) ? max(0, $capacity - max(0, (int) $scoredStudents)) : null);
 
     $slotStatus = (string) ($programData['slot_status'] ?? 'Capacity not set');
 
@@ -1848,7 +2074,6 @@ $buildChoiceSlotDetails = function ($programId, $scoredStudents) use ($programIn
         'program_code' => $programCode,
         'cutoff_display' => ($cutoffScore !== null) ? number_format($cutoffScore) : 'N/A',
         'capacity_display' => ($capacity !== null) ? number_format($capacity) : 'N/A',
-        'scored_display' => number_format($scored),
         'available_display' => ($available !== null) ? number_format($available) : 'N/A',
         'slot_status' => $slotStatus,
         'slot_badge_class' => $slotBadgeClass,
@@ -1869,9 +2094,11 @@ $programChoiceCards = [
         'is_primary' => true,
         'stat_label' => 'Rank / Total Scored',
         'stat_value' => $firstChoiceRankDisplay,
+        'stat_primary_value' => $firstChoiceRankValueDisplay,
+        'stat_secondary_value' => $firstChoiceRankTotalDisplay,
+        'stat_primary_outside' => $firstChoiceOutsideCapacity,
         'meta_rows' => [
             ['label' => 'Capacity', 'value' => $firstChoiceSlotDetails['capacity_display']],
-            ['label' => 'Scored', 'value' => $firstChoiceSlotDetails['scored_display']],
             ['label' => 'Available Slots', 'value' => $firstChoiceSlotDetails['available_display']],
             ['label' => 'Cutoff SAT', 'value' => $firstChoiceSlotDetails['cutoff_display']],
         ],
@@ -1881,7 +2108,6 @@ $programChoiceCards = [
         'show_transfer' => false,
         'transfer_program_id' => $firstChoiceSlotDetails['program_id'],
         'transfer_capacity' => $firstChoiceSlotDetails['capacity_display'],
-        'transfer_scored' => $firstChoiceSlotDetails['scored_display'],
         'transfer_available' => $firstChoiceSlotDetails['available_display'],
         'transfer_cutoff' => $firstChoiceSlotDetails['cutoff_display'],
         'status_text' => $firstChoiceStatusText,
@@ -1892,11 +2118,13 @@ $programChoiceCards = [
         'program' => format_program_label($student['second_program_name'] ?? '', $student['second_program_major'] ?? ''),
         'program_code' => $secondChoiceSlotDetails['program_code'],
         'is_primary' => false,
-        'stat_label' => 'Scored Students',
-        'stat_value' => $secondChoiceSlotDetails['scored_display'],
+        'stat_label' => 'Available Slots',
+        'stat_value' => $secondChoiceSlotDetails['available_display'],
+        'stat_primary_value' => null,
+        'stat_secondary_value' => null,
+        'stat_primary_outside' => false,
         'meta_rows' => [
             ['label' => 'Capacity', 'value' => $secondChoiceSlotDetails['capacity_display']],
-            ['label' => 'Scored', 'value' => $secondChoiceSlotDetails['scored_display']],
             ['label' => 'Available Slots', 'value' => $secondChoiceSlotDetails['available_display']],
             ['label' => 'Cutoff SAT', 'value' => $secondChoiceSlotDetails['cutoff_display']],
         ],
@@ -1906,7 +2134,6 @@ $programChoiceCards = [
         'show_transfer' => $secondChoiceSlotDetails['transfer_open'],
         'transfer_program_id' => $secondChoiceSlotDetails['program_id'],
         'transfer_capacity' => $secondChoiceSlotDetails['capacity_display'],
-        'transfer_scored' => $secondChoiceSlotDetails['scored_display'],
         'transfer_available' => $secondChoiceSlotDetails['available_display'],
         'transfer_cutoff' => $secondChoiceSlotDetails['cutoff_display'],
         'status_text' => '',
@@ -1917,11 +2144,13 @@ $programChoiceCards = [
         'program' => format_program_label($student['third_program_name'] ?? '', $student['third_program_major'] ?? ''),
         'program_code' => $thirdChoiceSlotDetails['program_code'],
         'is_primary' => false,
-        'stat_label' => 'Scored Students',
-        'stat_value' => $thirdChoiceSlotDetails['scored_display'],
+        'stat_label' => 'Available Slots',
+        'stat_value' => $thirdChoiceSlotDetails['available_display'],
+        'stat_primary_value' => null,
+        'stat_secondary_value' => null,
+        'stat_primary_outside' => false,
         'meta_rows' => [
             ['label' => 'Capacity', 'value' => $thirdChoiceSlotDetails['capacity_display']],
-            ['label' => 'Scored', 'value' => $thirdChoiceSlotDetails['scored_display']],
             ['label' => 'Available Slots', 'value' => $thirdChoiceSlotDetails['available_display']],
             ['label' => 'Cutoff SAT', 'value' => $thirdChoiceSlotDetails['cutoff_display']],
         ],
@@ -1931,7 +2160,6 @@ $programChoiceCards = [
         'show_transfer' => $thirdChoiceSlotDetails['transfer_open'],
         'transfer_program_id' => $thirdChoiceSlotDetails['program_id'],
         'transfer_capacity' => $thirdChoiceSlotDetails['capacity_display'],
-        'transfer_scored' => $thirdChoiceSlotDetails['scored_display'],
         'transfer_available' => $thirdChoiceSlotDetails['available_display'],
         'transfer_cutoff' => $thirdChoiceSlotDetails['cutoff_display'],
         'status_text' => '',
@@ -2127,6 +2355,10 @@ $profileCompletionBadge = number_format((float) $studentProfileCompletionPercent
         font-size: 1.24rem;
         line-height: 1.15;
         margin-top: 0.22rem;
+      }
+
+      .student-rank-number-outside {
+        color: #d93025;
       }
 
       .student-program-status {
@@ -2541,7 +2773,16 @@ $profileCompletionBadge = number_format((float) $studentProfileCompletionPercent
                                     <div class="student-program-code"><?= htmlspecialchars((string) $choiceCard['program_code']); ?></div>
                                   <?php endif; ?>
                                   <div class="student-program-card-title mt-3"><?= htmlspecialchars($choiceCard['stat_label']); ?></div>
-                                  <div class="student-program-card-value"><?= htmlspecialchars($choiceCard['stat_value']); ?></div>
+                                  <?php if ($index === 0 && $choiceCard['stat_primary_value'] !== null && $choiceCard['stat_secondary_value'] !== null): ?>
+                                    <div class="student-program-card-value">
+                                      <span class="<?= !empty($choiceCard['stat_primary_outside']) ? 'student-rank-number-outside' : ''; ?>">
+                                        <?= htmlspecialchars((string) $choiceCard['stat_primary_value']); ?>
+                                      </span>
+                                      <span>/<?= htmlspecialchars((string) $choiceCard['stat_secondary_value']); ?></span>
+                                    </div>
+                                  <?php else: ?>
+                                    <div class="student-program-card-value"><?= htmlspecialchars($choiceCard['stat_value']); ?></div>
+                                  <?php endif; ?>
                                   <?php if (!empty($choiceCard['meta_rows']) && is_array($choiceCard['meta_rows'])): ?>
                                     <div class="student-program-details">
                                       <?php foreach ($choiceCard['meta_rows'] as $metaRow): ?>
@@ -2572,7 +2813,6 @@ $profileCompletionBadge = number_format((float) $studentProfileCompletionPercent
                                       data-program-code="<?= htmlspecialchars((string) ($choiceCard['program_code'] ?? '')); ?>"
                                       data-program-label="<?= htmlspecialchars((string) ($choiceCard['program'] ?? '')); ?>"
                                       data-capacity="<?= htmlspecialchars((string) ($choiceCard['transfer_capacity'] ?? 'N/A')); ?>"
-                                      data-scored="<?= htmlspecialchars((string) ($choiceCard['transfer_scored'] ?? 'N/A')); ?>"
                                       data-available="<?= htmlspecialchars((string) ($choiceCard['transfer_available'] ?? 'N/A')); ?>"
                                       data-cutoff="<?= htmlspecialchars((string) ($choiceCard['transfer_cutoff'] ?? 'N/A')); ?>"
                                       data-status="<?= htmlspecialchars((string) ($choiceCard['slot_status'] ?? 'N/A')); ?>"
@@ -2608,7 +2848,7 @@ $profileCompletionBadge = number_format((float) $studentProfileCompletionPercent
                                 ?>
                                 <div class="student-program-item">
                                   <div class="student-program-item-name"><?= htmlspecialchars((string) ($program['program_code'] ?? '')); ?><?= htmlspecialchars((string) ($program['program_code'] ?? '') !== '' ? ' - ' : ''); ?><?= htmlspecialchars((string) ($program['program_label'] ?? 'N/A')); ?></div>
-                                  <div class="student-program-item-meta">Capacity: <strong><?= htmlspecialchars($capacityDisplay); ?></strong> | Scored: <strong><?= number_format((int) ($program['scored_students'] ?? 0)); ?></strong></div>
+                                  <div class="student-program-item-meta">Capacity: <strong><?= htmlspecialchars($capacityDisplay); ?></strong></div>
                                   <div class="student-program-item-meta">Cutoff SAT: <strong><?= htmlspecialchars($cutoffDisplay); ?></strong></div>
                                   <div class="mt-2 d-flex align-items-center justify-content-between">
                                     <small class="fw-semibold">Available Slots: <?= htmlspecialchars($availableDisplay); ?></small>
@@ -2622,7 +2862,6 @@ $profileCompletionBadge = number_format((float) $studentProfileCompletionPercent
                                       data-program-code="<?= htmlspecialchars((string) ($program['program_code'] ?? '')); ?>"
                                       data-program-label="<?= htmlspecialchars((string) ($program['program_label'] ?? '')); ?>"
                                       data-capacity="<?= htmlspecialchars($capacityDisplay); ?>"
-                                      data-scored="<?= htmlspecialchars((string) number_format((int) ($program['scored_students'] ?? 0))); ?>"
                                       data-available="<?= htmlspecialchars($availableDisplay); ?>"
                                       data-cutoff="<?= htmlspecialchars($cutoffDisplay); ?>"
                                       data-status="<?= htmlspecialchars((string) ($program['slot_status'] ?? 'N/A')); ?>"
@@ -3003,7 +3242,7 @@ $profileCompletionBadge = number_format((float) $studentProfileCompletionPercent
             <div id="studentSearchEmptyState" class="text-center text-muted py-4 d-none">No matching programs found.</div>
             <div id="studentSearchTableWrap" class="table-responsive d-none">
               <table class="table table-sm table-hover mb-0">
-                <thead><tr><th>Program</th><th>Scored Students</th><th>Capacity</th><th>Available Slots</th><th>Status</th></tr></thead>
+                <thead><tr><th>Program</th><th>Capacity</th><th>Available Slots</th><th>Status</th></tr></thead>
                 <tbody id="studentProgramSearchResults"></tbody>
               </table>
             </div>
@@ -3034,7 +3273,6 @@ $profileCompletionBadge = number_format((float) $studentProfileCompletionPercent
               <div class="small text-muted mb-2">Program Details</div>
               <div class="small">
                 <div class="d-flex justify-content-between py-1 border-bottom"><span>Capacity</span><strong id="transferModalCapacity">-</strong></div>
-                <div class="d-flex justify-content-between py-1 border-bottom"><span>Scored</span><strong id="transferModalScored">-</strong></div>
                 <div class="d-flex justify-content-between py-1 border-bottom"><span>Available Slots</span><strong id="transferModalAvailable">-</strong></div>
                 <div class="d-flex justify-content-between py-1 border-bottom"><span>Cutoff SAT</span><strong id="transferModalCutoff">-</strong></div>
               </div>
@@ -3122,7 +3360,7 @@ $profileCompletionBadge = number_format((float) $studentProfileCompletionPercent
             }
 
             const programCode = row.program_code ? `${escapeHtml(row.program_code)} - ` : '';
-            return `<tr><td class="fw-semibold">${programCode}${escapeHtml(row.program_label || '-')}</td><td>${formatNumber(row.scored_students)}</td><td>${formatNumber(row.absorptive_capacity)}</td><td>${formatNumber(row.available_slots)}</td><td><span class="badge ${badgeClass}">${escapeHtml(status)}</span></td></tr>`;
+            return `<tr><td class="fw-semibold">${programCode}${escapeHtml(row.program_label || '-')}</td><td>${formatNumber(row.absorptive_capacity)}</td><td>${formatNumber(row.available_slots)}</td><td><span class="badge ${badgeClass}">${escapeHtml(status)}</span></td></tr>`;
           }).join('');
 
           emptyEl.classList.add('d-none');
@@ -3462,7 +3700,6 @@ $profileCompletionBadge = number_format((float) $studentProfileCompletionPercent
             setText('transferModalProgramCode', this.getAttribute('data-program-code'));
             setText('transferModalStatus', this.getAttribute('data-status'));
             setText('transferModalCapacity', this.getAttribute('data-capacity'));
-            setText('transferModalScored', this.getAttribute('data-scored'));
             setText('transferModalAvailable', this.getAttribute('data-available'));
             setText('transferModalCutoff', this.getAttribute('data-cutoff'));
             if (programIdInputEl) {
