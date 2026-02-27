@@ -87,10 +87,9 @@ if (!$program) {
 $endorsementCapacity = max(0, (int) ($program['endorsement_capacity'] ?? 0));
 $programCutoff = $program['cutoff_score'] !== null ? (int) $program['cutoff_score'] : null;
 $globalCutoffState = get_global_sat_cutoff_state($conn);
-$globalCutoffMin = isset($globalCutoffState['min']) ? (int) $globalCutoffState['min'] : null;
-$globalCutoffMax = isset($globalCutoffState['max']) ? (int) $globalCutoffState['max'] : null;
-$globalCutoffActive = (bool) ($globalCutoffState['active'] ?? false);
-$effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalCutoffActive, $globalCutoffMin);
+$globalCutoffEnabled = (bool) ($globalCutoffState['enabled'] ?? false);
+$globalCutoffValue = isset($globalCutoffState['value']) ? (int) $globalCutoffState['value'] : null;
+$effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalCutoffEnabled, $globalCutoffValue);
 
 $quotaEnabled = false;
 $regularSlots = null;
@@ -250,9 +249,7 @@ if ($action === 'ADD') {
                   AND UPPER(COALESCE(si_rank.classification, 'REGULAR')) = 'REGULAR'
                   AND pe_rank.endorsement_id IS NULL
             ";
-            if ($globalCutoffActive) {
-                $rankedSql .= " AND pr_rank.sat_score BETWEEN ? AND ? ";
-            } elseif ($effectiveCutoff !== null) {
+            if ($effectiveCutoff !== null) {
                 $rankedSql .= " AND pr_rank.sat_score >= ? ";
             }
             $rankedSql .= "
@@ -273,9 +270,7 @@ if ($action === 'ADD') {
                 exit;
             }
 
-            if ($globalCutoffActive) {
-                $stmtRanked->bind_param("iiiii", $programId, $programId, $globalCutoffMin, $globalCutoffMax, $limit);
-            } elseif ($effectiveCutoff !== null) {
+            if ($effectiveCutoff !== null) {
                 $stmtRanked->bind_param("iiii", $programId, $programId, $effectiveCutoff, $limit);
             } else {
                 $stmtRanked->bind_param("iii", $programId, $programId, $limit);
@@ -291,9 +286,7 @@ if ($action === 'ADD') {
             $stmtRanked->close();
         }
     } else {
-        if ($globalCutoffActive) {
-            $isInRegularRankingList = ($satScore >= $globalCutoffMin && $satScore <= $globalCutoffMax);
-        } elseif ($effectiveCutoff === null) {
+        if ($effectiveCutoff === null) {
             $isInRegularRankingList = true;
         } else {
             $isInRegularRankingList = $satScore >= $effectiveCutoff;

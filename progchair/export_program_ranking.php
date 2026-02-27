@@ -70,16 +70,9 @@ if (!$program) {
 $programCutoff = $program['cutoff_score'] !== null ? (int) $program['cutoff_score'] : null;
 $globalSatCutoffState = get_global_sat_cutoff_state($conn);
 $globalSatCutoffEnabled = (bool) ($globalSatCutoffState['enabled'] ?? false);
-$globalSatCutoffMin = isset($globalSatCutoffState['min']) ? (int) $globalSatCutoffState['min'] : null;
-$globalSatCutoffMax = isset($globalSatCutoffState['max']) ? (int) $globalSatCutoffState['max'] : null;
-$globalSatCutoffActive = (bool) ($globalSatCutoffState['active'] ?? false);
-$effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalSatCutoffActive, $globalSatCutoffMin);
-$cutoffWhereSql = '';
-if ($globalSatCutoffActive) {
-    $cutoffWhereSql = ' AND pr.sat_score BETWEEN ? AND ?';
-} elseif ($effectiveCutoff !== null) {
-    $cutoffWhereSql = ' AND pr.sat_score >= ?';
-}
+$globalSatCutoffValue = isset($globalSatCutoffState['value']) ? (int) $globalSatCutoffState['value'] : null;
+$effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalSatCutoffEnabled, $globalSatCutoffValue);
+$cutoffWhereSql = $effectiveCutoff !== null ? ' AND pr.sat_score >= ?' : '';
 
 $rankingSql = "
     SELECT
@@ -124,9 +117,7 @@ if (!$stmtRanking) {
     exit;
 }
 
-if ($globalSatCutoffActive) {
-    $stmtRanking->bind_param("iii", $programId, $globalSatCutoffMin, $globalSatCutoffMax);
-} elseif ($effectiveCutoff !== null) {
+if ($effectiveCutoff !== null) {
     $stmtRanking->bind_param("ii", $programId, $effectiveCutoff);
 } else {
     $stmtRanking->bind_param("i", $programId);
@@ -231,13 +222,11 @@ $output = fopen('php://output', 'w');
 fputcsv($output, ['Program Ranking']);
 fputcsv($output, ['Program', $programLabel]);
 fputcsv($output, ['Generated', date('Y-m-d H:i:s')]);
-if ($globalSatCutoffActive) {
-    fputcsv($output, [
-        'Applied SAT Cutoff',
-        'Global Override: SAT ' . (int) $globalSatCutoffMin . ' - ' . (int) $globalSatCutoffMax
-    ]);
-} elseif ($effectiveCutoff !== null) {
-    fputcsv($output, ['Applied SAT Cutoff', 'Program Cutoff: SAT >= ' . (int) $effectiveCutoff]);
+if ($effectiveCutoff !== null) {
+    $cutoffLabel = ($globalSatCutoffEnabled && $globalSatCutoffValue !== null)
+        ? 'Global Override'
+        : 'Program Cutoff';
+    fputcsv($output, ['Applied SAT Cutoff', $cutoffLabel . ': SAT >= ' . (int) $effectiveCutoff]);
 }
 if ($quotaEnabled) {
     $quotaSummary = sprintf(

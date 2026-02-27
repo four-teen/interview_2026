@@ -17,9 +17,9 @@ $profileFilter = in_array($profileFilter, ['complete', 'incomplete', 'none'], tr
 $credentialFilter = trim((string) ($_GET['credential_status'] ?? ''));
 $credentialFilter = in_array($credentialFilter, ['active', 'inactive', 'needs_change', 'none'], true) ? $credentialFilter : '';
 $globalSatCutoffState = get_global_sat_cutoff_state($conn);
-$globalSatCutoffMin = isset($globalSatCutoffState['min']) ? (int) $globalSatCutoffState['min'] : null;
-$globalSatCutoffMax = isset($globalSatCutoffState['max']) ? (int) $globalSatCutoffState['max'] : null;
-$globalSatCutoffActive = (bool) ($globalSatCutoffState['active'] ?? false);
+$globalSatCutoffEnabled = (bool) ($globalSatCutoffState['enabled'] ?? false);
+$globalSatCutoffValue = isset($globalSatCutoffState['value']) ? (int) $globalSatCutoffState['value'] : null;
+$globalSatCutoffActive = ($globalSatCutoffEnabled && $globalSatCutoffValue !== null);
 
 $campusOptions = [];
 $campusOptionSql = "
@@ -77,10 +77,9 @@ if ($credentialFilter === 'active') {
 }
 
 if ($globalSatCutoffActive) {
-    $where[] = 'pr.sat_score BETWEEN ? AND ?';
-    $types .= 'ii';
-    $params[] = $globalSatCutoffMin;
-    $params[] = $globalSatCutoffMax;
+    $where[] = 'pr.sat_score >= ?';
+    $types .= 'i';
+    $params[] = $globalSatCutoffValue;
 }
 
 $sql = "
@@ -258,7 +257,7 @@ foreach ($rows as $row) {
               </p>
               <?php if ($globalSatCutoffActive): ?>
                 <div class="alert alert-info py-2 mb-3">
-                  Global SAT cutoff is active: showing students with SAT <?= number_format((int) $globalSatCutoffMin); ?> - <?= number_format((int) $globalSatCutoffMax); ?>.
+                  Global SAT cutoff is active: showing students with SAT >= <?= number_format((int) $globalSatCutoffValue); ?>.
                 </div>
               <?php endif; ?>
 

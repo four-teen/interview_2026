@@ -85,9 +85,9 @@ if (!$student || empty($student['interview_id'])) {
 }
 
 $globalSatCutoffState = get_global_sat_cutoff_state($conn);
-$globalSatCutoffMin = isset($globalSatCutoffState['min']) ? (int) $globalSatCutoffState['min'] : null;
-$globalSatCutoffMax = isset($globalSatCutoffState['max']) ? (int) $globalSatCutoffState['max'] : null;
-$globalSatCutoffActive = (bool) ($globalSatCutoffState['active'] ?? false);
+$globalSatCutoffEnabled = (bool) ($globalSatCutoffState['enabled'] ?? false);
+$globalSatCutoffValue = isset($globalSatCutoffState['value']) ? (int) $globalSatCutoffState['value'] : null;
+$globalSatCutoffActive = ($globalSatCutoffEnabled && $globalSatCutoffValue !== null);
 
 
 /**
@@ -304,8 +304,7 @@ $programs = $stmtProg->get_result();
 <?php if ($globalSatCutoffActive): ?>
 <div class="alert alert-info mb-4">
     Global SAT cutoff override is active: only students with SAT
-    <strong><?= number_format((int) $globalSatCutoffMin); ?> - <?= number_format((int) $globalSatCutoffMax); ?></strong>
-    can be transferred.
+    <strong><?= (int) $globalSatCutoffValue; ?></strong> and above can be transferred.
 </div>
 <?php endif; ?>
 
@@ -344,23 +343,15 @@ $programs = $stmtProg->get_result();
 
     $sat = (int)$student['sat_score'];
     $programCutoff = isset($row['cutoff_score']) ? (int) $row['cutoff_score'] : null;
-    $effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalSatCutoffActive, $globalSatCutoffMin);
-    $effectiveCutoffLabel = ($effectiveCutoff !== null) ? number_format((int) $effectiveCutoff) : 'N/A';
+    $effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalSatCutoffEnabled, $globalSatCutoffValue);
     $qualified = ($effectiveCutoff === null) ? true : ($sat >= $effectiveCutoff);
-    $qualificationNote = 'SAT BELOW CUT-OFF';
-
-    if ($globalSatCutoffActive) {
-        $qualified = ($sat >= (int) $globalSatCutoffMin && $sat <= (int) $globalSatCutoffMax);
-        $effectiveCutoffLabel = number_format((int) $globalSatCutoffMin) . ' - ' . number_format((int) $globalSatCutoffMax);
-        $qualificationNote = 'SAT OUTSIDE CUT-OFF RANGE';
-    }
 
 ?>
 
 <div class="col-md-4 mb-3">
   <div class="card program-card p-3 <?= !$qualified ? 'border border-danger opacity-50' : ''; ?>"
        data-qualified="<?= $qualified ? '1' : '0'; ?>"
-       data-cutoff="<?= htmlspecialchars($effectiveCutoffLabel); ?>"
+       data-cutoff="<?= (int) ($effectiveCutoff ?? 0); ?>"
        onclick="selectProgram(<?= $row['program_id']; ?>, this)">
 
         <small class="text-muted">
@@ -380,7 +371,7 @@ $programs = $stmtProg->get_result();
         <div class="mt-2">
 
             <span class="badge <?= $qualified ? 'bg-label-success' : 'bg-label-danger'; ?>">
-                CUT-OFF: <?= htmlspecialchars($effectiveCutoffLabel); ?>
+                CUT-OFF: <?= (int) ($effectiveCutoff ?? 0); ?>
             </span>
 
             <span class="badge bg-label-primary ms-2">
@@ -389,14 +380,13 @@ $programs = $stmtProg->get_result();
 
             <?php if (!$qualified): ?>
                 <div class="text-danger small mt-1">
-                    <?= htmlspecialchars($qualificationNote); ?>
+                    SAT BELOW CUT-OFF
                 </div>
             <?php endif; ?>
 
             <?php if ($globalSatCutoffActive): ?>
                 <div class="text-muted small mt-1">
-                    Program Cut-Off: <?= number_format((int) ($programCutoff ?? 0)); ?> |
-                    Global Override: <?= number_format((int) $globalSatCutoffMin); ?> - <?= number_format((int) $globalSatCutoffMax); ?>
+                    Program Cut-Off: <?= (int) ($programCutoff ?? 0); ?> | Global Override: <?= (int) $globalSatCutoffValue; ?>
                 </div>
             <?php endif; ?>
 
@@ -452,7 +442,7 @@ function selectProgram(programId, element) {
     Swal.fire({
       icon: 'warning',
       title: 'Not Qualified',
-      text: 'Student SAT score is outside the required cut-off filter.',
+      text: 'Student SAT score is below the required cut-off.',
     });
 
     return;

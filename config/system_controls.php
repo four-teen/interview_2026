@@ -174,22 +174,7 @@ if (!function_exists('global_sat_cutoff_enabled_control_key')) {
 if (!function_exists('global_sat_cutoff_value_control_key')) {
     function global_sat_cutoff_value_control_key(): string
     {
-        // Backward-compatible alias for the global SAT minimum key.
-        return global_sat_cutoff_min_control_key();
-    }
-}
-
-if (!function_exists('global_sat_cutoff_min_control_key')) {
-    function global_sat_cutoff_min_control_key(): string
-    {
         return 'global_sat_cutoff_value';
-    }
-}
-
-if (!function_exists('global_sat_cutoff_max_control_key')) {
-    function global_sat_cutoff_max_control_key(): string
-    {
-        return 'global_sat_cutoff_max';
     }
 }
 
@@ -204,20 +189,7 @@ if (!function_exists('is_global_sat_cutoff_enabled')) {
 if (!function_exists('get_global_sat_cutoff_value')) {
     function get_global_sat_cutoff_value(mysqli $conn): ?int
     {
-        $value = trim(get_system_control_value($conn, global_sat_cutoff_min_control_key(), ''));
-        if ($value === '' || !preg_match('/^\d+$/', $value)) {
-            return null;
-        }
-
-        $parsed = (int) $value;
-        return $parsed >= 0 ? $parsed : null;
-    }
-}
-
-if (!function_exists('get_global_sat_cutoff_max')) {
-    function get_global_sat_cutoff_max(mysqli $conn): ?int
-    {
-        $value = trim(get_system_control_value($conn, global_sat_cutoff_max_control_key(), ''));
+        $value = trim(get_system_control_value($conn, global_sat_cutoff_value_control_key(), ''));
         if ($value === '' || !preg_match('/^\d+$/', $value)) {
             return null;
         }
@@ -231,21 +203,12 @@ if (!function_exists('get_global_sat_cutoff_state')) {
     function get_global_sat_cutoff_state(mysqli $conn): array
     {
         $enabled = is_global_sat_cutoff_enabled($conn);
-        $min = get_global_sat_cutoff_value($conn);
-        $max = get_global_sat_cutoff_max($conn);
-
-        // Backward compatibility for old single-cutoff installs.
-        if ($enabled && $min !== null && $max === null) {
-            $max = 9999;
-        }
-
-        $active = $enabled && $min !== null && $max !== null && $min <= $max;
+        $value = get_global_sat_cutoff_value($conn);
+        $active = $enabled && $value !== null;
 
         return [
             'enabled' => $enabled,
-            'value' => $min,
-            'min' => $min,
-            'max' => $max,
+            'value' => $value,
             'active' => $active
         ];
     }
@@ -270,26 +233,17 @@ if (!function_exists('set_global_sat_cutoff_state')) {
     function set_global_sat_cutoff_state(
         mysqli $conn,
         bool $enabled,
-        ?int $cutoffMin,
-        ?int $cutoffMax,
+        ?int $cutoffValue,
         ?int $updatedBy = null
     ): bool {
         if (!$enabled) {
-            $cutoffMin = null;
-            $cutoffMax = null;
-        } elseif (
-            $cutoffMin === null ||
-            $cutoffMax === null ||
-            $cutoffMin < 0 ||
-            $cutoffMax < 0 ||
-            $cutoffMin > $cutoffMax
-        ) {
+            $cutoffValue = null;
+        } elseif ($cutoffValue === null || $cutoffValue < 0) {
             return false;
         }
 
         $enabledValue = $enabled ? '1' : '0';
-        $cutoffMinControlValue = ($enabled && $cutoffMin !== null) ? (string) ((int) $cutoffMin) : '';
-        $cutoffMaxControlValue = ($enabled && $cutoffMax !== null) ? (string) ((int) $cutoffMax) : '';
+        $cutoffControlValue = ($enabled && $cutoffValue !== null) ? (string) ((int) $cutoffValue) : '';
 
         $conn->begin_transaction();
         try {
@@ -305,22 +259,12 @@ if (!function_exists('set_global_sat_cutoff_state')) {
 
             $savedValue = set_system_control_value(
                 $conn,
-                global_sat_cutoff_min_control_key(),
-                $cutoffMinControlValue,
+                global_sat_cutoff_value_control_key(),
+                $cutoffControlValue,
                 $updatedBy
             );
             if (!$savedValue) {
-                throw new RuntimeException('Failed saving global SAT cutoff minimum value.');
-            }
-
-            $savedMaxValue = set_system_control_value(
-                $conn,
-                global_sat_cutoff_max_control_key(),
-                $cutoffMaxControlValue,
-                $updatedBy
-            );
-            if (!$savedMaxValue) {
-                throw new RuntimeException('Failed saving global SAT cutoff maximum value.');
+                throw new RuntimeException('Failed saving global SAT cutoff value.');
             }
 
             $conn->commit();

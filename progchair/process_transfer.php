@@ -143,15 +143,11 @@ if ($programCutoff === null) {
     exit;
 }
 $globalSatCutoffState = get_global_sat_cutoff_state($conn);
-$globalSatCutoffMin = isset($globalSatCutoffState['min']) ? (int) $globalSatCutoffState['min'] : null;
-$globalSatCutoffMax = isset($globalSatCutoffState['max']) ? (int) $globalSatCutoffState['max'] : null;
-$globalSatCutoffActive = (bool) ($globalSatCutoffState['active'] ?? false);
-$effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalSatCutoffActive, $globalSatCutoffMin);
+$globalSatCutoffEnabled = (bool) ($globalSatCutoffState['enabled'] ?? false);
+$globalSatCutoffValue = isset($globalSatCutoffState['value']) ? (int) $globalSatCutoffState['value'] : null;
+$effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalSatCutoffEnabled, $globalSatCutoffValue);
 
-if (
-    ($globalSatCutoffActive && ($satScore < $globalSatCutoffMin || $satScore > $globalSatCutoffMax)) ||
-    (!$globalSatCutoffActive && $effectiveCutoff !== null && $satScore < $effectiveCutoff)
-) {
+if ($effectiveCutoff !== null && $satScore < $effectiveCutoff) {
     header('Location: index.php?msg=below_cutoff');
     exit;
 }

@@ -29,10 +29,10 @@ if (strlen($query) > 100) {
 
 $like = '%' . $query . '%';
 $globalSatCutoffState = get_global_sat_cutoff_state($conn);
-$globalSatCutoffMin = isset($globalSatCutoffState['min']) ? (int) $globalSatCutoffState['min'] : null;
-$globalSatCutoffMax = isset($globalSatCutoffState['max']) ? (int) $globalSatCutoffState['max'] : null;
-$globalSatCutoffActive = (bool) ($globalSatCutoffState['active'] ?? false);
-$cutoffWhereSql = $globalSatCutoffActive ? ' AND pr.sat_score BETWEEN ? AND ?' : '';
+$globalSatCutoffEnabled = (bool) ($globalSatCutoffState['enabled'] ?? false);
+$globalSatCutoffValue = isset($globalSatCutoffState['value']) ? (int) $globalSatCutoffState['value'] : null;
+$globalSatCutoffActive = ($globalSatCutoffEnabled && $globalSatCutoffValue !== null);
+$cutoffWhereSql = $globalSatCutoffActive ? ' AND pr.sat_score >= ?' : '';
 
 $sql = "
     SELECT
@@ -64,7 +64,7 @@ if (!$stmt) {
 }
 
 if ($globalSatCutoffActive) {
-    $stmt->bind_param('sssii', $like, $like, $like, $globalSatCutoffMin, $globalSatCutoffMax);
+    $stmt->bind_param('sssi', $like, $like, $like, $globalSatCutoffValue);
 } else {
     $stmt->bind_param('sss', $like, $like, $like);
 }

@@ -121,21 +121,13 @@ if ($stmtCutoff) {
 
 $programCutoff = ($cutoff && $cutoff['cutoff_score'] !== null) ? (int) $cutoff['cutoff_score'] : null;
 $globalSatCutoffState = get_global_sat_cutoff_state($conn);
-$globalSatCutoffMin = isset($globalSatCutoffState['min']) ? (int) $globalSatCutoffState['min'] : null;
-$globalSatCutoffMax = isset($globalSatCutoffState['max']) ? (int) $globalSatCutoffState['max'] : null;
-$globalSatCutoffActive = (bool) ($globalSatCutoffState['active'] ?? false);
 $effectiveCutoff = get_effective_sat_cutoff(
     $programCutoff,
-    $globalSatCutoffActive,
-    $globalSatCutoffMin
+    (bool) ($globalSatCutoffState['enabled'] ?? false),
+    isset($globalSatCutoffState['value']) ? (int) $globalSatCutoffState['value'] : null
 );
 
-$cutoffWhereSql = '';
-if ($globalSatCutoffActive) {
-    $cutoffWhereSql = ' AND pr.sat_score BETWEEN ? AND ?';
-} elseif ($effectiveCutoff !== null) {
-    $cutoffWhereSql = ' AND pr.sat_score >= ?';
-}
+$cutoffWhereSql = $effectiveCutoff !== null ? ' AND pr.sat_score >= ?' : '';
 $rankingSql = "
     SELECT
         si.interview_id,
@@ -172,9 +164,7 @@ if (!$stmtRanking) {
     exit;
 }
 
-if ($globalSatCutoffActive) {
-    $stmtRanking->bind_param('iii', $programId, $globalSatCutoffMin, $globalSatCutoffMax);
-} elseif ($effectiveCutoff !== null) {
+if ($effectiveCutoff !== null) {
     $stmtRanking->bind_param('ii', $programId, $effectiveCutoff);
 } else {
     $stmtRanking->bind_param('i', $programId);
@@ -343,8 +333,8 @@ $rankingMessage = null;
 if ($student['final_score'] === null) {
     $rankingMessage = 'Interview is unscored.';
 } elseif (!isset($allRowsByInterviewId[$interviewId])) {
-    $rankingMessage = ($globalSatCutoffActive || $effectiveCutoff !== null)
-        ? 'Student is currently outside the active SAT cutoff filter range.'
+    $rankingMessage = ($effectiveCutoff !== null)
+        ? 'Student is currently outside the active SAT cutoff filter.'
         : 'Student is not included in current ranking list.';
 }
 

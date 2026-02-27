@@ -90,10 +90,9 @@ if (!$program) {
 
 $programCutoff = $program['cutoff_score'] !== null ? (int) $program['cutoff_score'] : null;
 $globalCutoffState = get_global_sat_cutoff_state($conn);
-$globalCutoffMin = isset($globalCutoffState['min']) ? (int) $globalCutoffState['min'] : null;
-$globalCutoffMax = isset($globalCutoffState['max']) ? (int) $globalCutoffState['max'] : null;
-$globalCutoffActive = (bool) ($globalCutoffState['active'] ?? false);
-$effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalCutoffActive, $globalCutoffMin);
+$globalCutoffEnabled = (bool) ($globalCutoffState['enabled'] ?? false);
+$globalCutoffValue = isset($globalCutoffState['value']) ? (int) $globalCutoffState['value'] : null;
+$effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalCutoffEnabled, $globalCutoffValue);
 
 $endorsementCapacity = max(0, (int) ($program['endorsement_capacity'] ?? 0));
 $quotaEnabled = false;
@@ -160,12 +159,7 @@ if ($quotaEnabled) {
         $rankedTypes = 'ii';
         $rankedParams = [$programId, $programId];
 
-        if ($globalCutoffActive) {
-            $rankedSql .= " AND pr_rank.sat_score BETWEEN ? AND ? ";
-            $rankedTypes .= 'ii';
-            $rankedParams[] = $globalCutoffMin;
-            $rankedParams[] = $globalCutoffMax;
-        } elseif ($effectiveCutoff !== null) {
+        if ($effectiveCutoff !== null) {
             $rankedSql .= " AND pr_rank.sat_score >= ? ";
             $rankedTypes .= 'i';
             $rankedParams[] = $effectiveCutoff;
@@ -253,12 +247,7 @@ if ($quotaEnabled) {
         }
     }
 } else {
-    if ($globalCutoffActive) {
-        $sql .= " AND (pr.sat_score < ? OR pr.sat_score > ?) ";
-        $types .= 'ii';
-        $params[] = $globalCutoffMin;
-        $params[] = $globalCutoffMax;
-    } elseif ($effectiveCutoff !== null) {
+    if ($effectiveCutoff !== null) {
         $sql .= " AND pr.sat_score < ? ";
         $types .= 'i';
         $params[] = $effectiveCutoff;

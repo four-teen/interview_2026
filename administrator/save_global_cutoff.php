@@ -25,46 +25,24 @@ if ($postedCsrf === '' || $sessionCsrf === '' || !hash_equals($sessionCsrf, $pos
 }
 
 $enabled = ((string) ($_POST['global_cutoff_enabled'] ?? '0')) === '1';
-$cutoffMinRaw = trim((string) ($_POST['global_cutoff_min'] ?? ''));
-$cutoffMaxRaw = trim((string) ($_POST['global_cutoff_max'] ?? ''));
-$cutoffMin = null;
-$cutoffMax = null;
+$cutoffRaw = trim((string) ($_POST['global_cutoff_score'] ?? ''));
+$cutoffValue = null;
 
 if ($enabled) {
-    if ($cutoffMinRaw === '' || !preg_match('/^\d+$/', $cutoffMinRaw)) {
+    if ($cutoffRaw === '' || !preg_match('/^\d+$/', $cutoffRaw)) {
         $_SESSION['admin_global_cutoff_flash'] = [
             'type' => 'danger',
-            'message' => 'Global SAT minimum must be a whole number when enabled.'
+            'message' => 'Global SAT cutoff must be a whole number when enabled.'
         ];
         header('Location: index.php');
         exit;
     }
 
-    if ($cutoffMaxRaw === '' || !preg_match('/^\d+$/', $cutoffMaxRaw)) {
+    $cutoffValue = (int) $cutoffRaw;
+    if ($cutoffValue < 0 || $cutoffValue > 9999) {
         $_SESSION['admin_global_cutoff_flash'] = [
             'type' => 'danger',
-            'message' => 'Global SAT maximum must be a whole number when enabled.'
-        ];
-        header('Location: index.php');
-        exit;
-    }
-
-    $cutoffMin = (int) $cutoffMinRaw;
-    $cutoffMax = (int) $cutoffMaxRaw;
-
-    if ($cutoffMin < 0 || $cutoffMin > 9999 || $cutoffMax < 0 || $cutoffMax > 9999) {
-        $_SESSION['admin_global_cutoff_flash'] = [
-            'type' => 'danger',
-            'message' => 'Global SAT range must be between 0 and 9999.'
-        ];
-        header('Location: index.php');
-        exit;
-    }
-
-    if ($cutoffMin > $cutoffMax) {
-        $_SESSION['admin_global_cutoff_flash'] = [
-            'type' => 'danger',
-            'message' => 'Global SAT minimum cannot be greater than maximum.'
+            'message' => 'Global SAT cutoff must be between 0 and 9999.'
         ];
         header('Location: index.php');
         exit;
@@ -75,8 +53,7 @@ $accountId = (int) ($_SESSION['accountid'] ?? 0);
 $ok = set_global_sat_cutoff_state(
     $conn,
     $enabled,
-    $cutoffMin,
-    $cutoffMax,
+    $cutoffValue,
     ($accountId > 0 ? $accountId : null)
 );
 
@@ -92,7 +69,7 @@ if (!$ok) {
 $_SESSION['admin_global_cutoff_flash'] = [
     'type' => 'success',
     'message' => $enabled
-        ? ('Global SAT cutoff is now active (SAT ' . number_format((int) $cutoffMin) . ' - ' . number_format((int) $cutoffMax) . ').')
+        ? ('Global SAT cutoff is now active (SAT >= ' . number_format((int) $cutoffValue) . ').')
         : 'Global SAT cutoff is now disabled. Program cutoffs are being used.'
 ];
 

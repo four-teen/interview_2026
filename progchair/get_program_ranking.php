@@ -86,16 +86,9 @@ if (!$program) {
 $programCutoff = $program['cutoff_score'] !== null ? (int) $program['cutoff_score'] : null;
 $globalSatCutoffState = get_global_sat_cutoff_state($conn);
 $globalSatCutoffEnabled = (bool) ($globalSatCutoffState['enabled'] ?? false);
-$globalSatCutoffMin = isset($globalSatCutoffState['min']) ? (int) $globalSatCutoffState['min'] : null;
-$globalSatCutoffMax = isset($globalSatCutoffState['max']) ? (int) $globalSatCutoffState['max'] : null;
-$globalSatCutoffActive = (bool) ($globalSatCutoffState['active'] ?? false);
-$effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalSatCutoffActive, $globalSatCutoffMin);
-$cutoffWhereSql = '';
-if ($globalSatCutoffActive) {
-    $cutoffWhereSql = ' AND pr.sat_score BETWEEN ? AND ?';
-} elseif ($effectiveCutoff !== null) {
-    $cutoffWhereSql = ' AND pr.sat_score >= ?';
-}
+$globalSatCutoffValue = isset($globalSatCutoffState['value']) ? (int) $globalSatCutoffState['value'] : null;
+$effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalSatCutoffEnabled, $globalSatCutoffValue);
+$cutoffWhereSql = $effectiveCutoff !== null ? ' AND pr.sat_score >= ?' : '';
 
 $rankingSql = "
     SELECT
@@ -144,9 +137,7 @@ if (!$stmtRanking) {
     exit;
 }
 
-if ($globalSatCutoffActive) {
-    $stmtRanking->bind_param("iii", $programId, $globalSatCutoffMin, $globalSatCutoffMax);
-} elseif ($effectiveCutoff !== null) {
+if ($effectiveCutoff !== null) {
     $stmtRanking->bind_param("ii", $programId, $effectiveCutoff);
 } else {
     $stmtRanking->bind_param("i", $programId);
@@ -281,10 +272,8 @@ echo json_encode([
         'cutoff_score' => $effectiveCutoff,
         'program_cutoff_score' => $programCutoff,
         'global_cutoff_enabled' => $globalSatCutoffEnabled,
-        'global_cutoff_value' => $globalSatCutoffMin,
-        'global_cutoff_min' => $globalSatCutoffMin,
-        'global_cutoff_max' => $globalSatCutoffMax,
-        'global_cutoff_active' => $globalSatCutoffActive,
+        'global_cutoff_value' => $globalSatCutoffValue,
+        'global_cutoff_active' => ($globalSatCutoffEnabled && $globalSatCutoffValue !== null),
         'absorptive_capacity' => $absorptiveCapacity,
         'base_capacity' => $baseCapacity,
         'endorsement_capacity' => $endorsementCapacity,

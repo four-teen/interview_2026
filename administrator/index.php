@@ -30,8 +30,7 @@ if (empty($_SESSION['admin_global_cutoff_csrf'])) {
 $adminGlobalCutoffCsrf = (string) $_SESSION['admin_global_cutoff_csrf'];
 $globalSatCutoffState = get_global_sat_cutoff_state($conn);
 $globalSatCutoffEnabled = (bool) ($globalSatCutoffState['enabled'] ?? false);
-$globalSatCutoffMin = isset($globalSatCutoffState['min']) ? (int) $globalSatCutoffState['min'] : null;
-$globalSatCutoffMax = isset($globalSatCutoffState['max']) ? (int) $globalSatCutoffState['max'] : null;
+$globalSatCutoffValue = isset($globalSatCutoffState['value']) ? (int) $globalSatCutoffState['value'] : null;
 $globalSatCutoffActive = (bool) ($globalSatCutoffState['active'] ?? false);
 
 $loginLockFlash = null;
@@ -752,7 +751,7 @@ $overallInterviewTrendSeries = [
                 </div>
                 <div class="admin-login-control">
                   <span class="admin-login-chip <?= $globalSatCutoffActive ? 'global-active' : 'global-inactive'; ?>">
-                    Global SAT: <?= $globalSatCutoffActive ? (number_format((int) $globalSatCutoffMin) . ' - ' . number_format((int) $globalSatCutoffMax)) : 'Disabled'; ?>
+                    Global SAT: <?= $globalSatCutoffActive ? ('>= ' . number_format((int) $globalSatCutoffValue)) : 'Disabled'; ?>
                   </span>
                   <button
                     type="button"
@@ -760,7 +759,7 @@ $overallInterviewTrendSeries = [
                     data-bs-toggle="modal"
                     data-bs-target="#globalCutoffModal"
                   >
-                    Set Global Range
+                    Set Global Cutoff
                   </button>
                 </div>
               </div>
@@ -890,7 +889,7 @@ $overallInterviewTrendSeries = [
     <div class="modal-content">
       <form method="POST" action="save_global_cutoff.php">
         <div class="modal-header">
-          <h5 class="modal-title">Global SAT Cutoff Range</h5>
+          <h5 class="modal-title">Global SAT Cutoff</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
         </div>
         <div class="modal-body">
@@ -910,35 +909,20 @@ $overallInterviewTrendSeries = [
             </label>
           </div>
 
-          <div class="row g-2">
-            <div class="col-6">
-              <label class="form-label" for="globalCutoffMinInput">Minimum SAT Score</label>
-              <input
-                type="number"
-                class="form-control"
-                id="globalCutoffMinInput"
-                name="global_cutoff_min"
-                min="0"
-                max="9999"
-                step="1"
-                value="<?= $globalSatCutoffMin !== null ? (int) $globalSatCutoffMin : ''; ?>"
-              />
-            </div>
-            <div class="col-6">
-              <label class="form-label" for="globalCutoffMaxInput">Maximum SAT Score</label>
-              <input
-                type="number"
-                class="form-control"
-                id="globalCutoffMaxInput"
-                name="global_cutoff_max"
-                min="0"
-                max="9999"
-                step="1"
-                value="<?= $globalSatCutoffMax !== null ? (int) $globalSatCutoffMax : ''; ?>"
-              />
-            </div>
+          <div>
+            <label class="form-label" for="globalCutoffScoreInput">Minimum SAT Score (show >= score)</label>
+            <input
+              type="number"
+              class="form-control"
+              id="globalCutoffScoreInput"
+              name="global_cutoff_score"
+              min="0"
+              max="9999"
+              step="1"
+              value="<?= $globalSatCutoffValue !== null ? (int) $globalSatCutoffValue : ''; ?>"
+            />
             <small class="text-muted d-block mt-2">
-              When enabled, this range overrides per-program cutoff visibility for Administrator and Program Chair lists.
+              When enabled, this value overrides per-program cutoff visibility for Administrator and Program Chair lists.
             </small>
           </div>
         </div>
@@ -1005,19 +989,16 @@ document.addEventListener("DOMContentLoaded", function () {
   const campusStatusEmptyStateEl = document.getElementById('campusStatusEmptyState');
   const campusCardEls = document.querySelectorAll('.admin-campus-card[data-campus-id]');
   const globalCutoffEnabledInput = document.getElementById('globalCutoffEnabledInput');
-  const globalCutoffMinInput = document.getElementById('globalCutoffMinInput');
-  const globalCutoffMaxInput = document.getElementById('globalCutoffMaxInput');
+  const globalCutoffScoreInput = document.getElementById('globalCutoffScoreInput');
 
   function syncGlobalCutoffControls() {
-    if (!globalCutoffEnabledInput || !globalCutoffMinInput || !globalCutoffMaxInput) return;
+    if (!globalCutoffEnabledInput || !globalCutoffScoreInput) return;
     const enabled = globalCutoffEnabledInput.checked;
-    globalCutoffMinInput.disabled = !enabled;
-    globalCutoffMaxInput.disabled = !enabled;
-    globalCutoffMinInput.required = enabled;
-    globalCutoffMaxInput.required = enabled;
+    globalCutoffScoreInput.disabled = !enabled;
+    globalCutoffScoreInput.required = enabled;
   }
 
-  if (globalCutoffEnabledInput && globalCutoffMinInput && globalCutoffMaxInput) {
+  if (globalCutoffEnabledInput && globalCutoffScoreInput) {
     globalCutoffEnabledInput.addEventListener('change', syncGlobalCutoffControls);
     syncGlobalCutoffControls();
   }

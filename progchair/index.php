@@ -18,8 +18,7 @@ error_reporting(E_ALL);
 $assignedCampusId  = $_SESSION['campus_id'];
 $assignedProgramId = $_SESSION['program_id'];
 $globalSatCutoffState = get_global_sat_cutoff_state($conn);
-$globalSatCutoffMin = isset($globalSatCutoffState['min']) ? (int) $globalSatCutoffState['min'] : null;
-$globalSatCutoffMax = isset($globalSatCutoffState['max']) ? (int) $globalSatCutoffState['max'] : null;
+$globalSatCutoffValue = isset($globalSatCutoffState['value']) ? (int) $globalSatCutoffState['value'] : null;
 $globalSatCutoffActive = (bool) ($globalSatCutoffState['active'] ?? false);
 
 function table_column_exists(mysqli $conn, string $table, string $column): bool
@@ -688,7 +687,7 @@ if ($activeBatchId) {
     <small class="text-muted d-block">Use the header search bar to find students.</small>
     <small class="text-muted d-block" id="activeCutoffInfo">
       <?php if ($globalSatCutoffActive): ?>
-        Global SAT cutoff is active: showing SAT <?= number_format((int) $globalSatCutoffMin); ?> - <?= number_format((int) $globalSatCutoffMax); ?>.
+        Global SAT cutoff is active: showing SAT >= <?= number_format((int) $globalSatCutoffValue); ?>.
       <?php else: ?>
         Program SAT cutoff filtering is active.
       <?php endif; ?>
@@ -1587,12 +1586,11 @@ function createStudentCard(student) {
           if (cutoffInfoEl && !ownerActionFilter) {
             const appliedCutoff = Number(data.applied_cutoff ?? 0);
             const globalActive = Boolean(data.global_cutoff_active);
-            const globalCutoffMin = Number(data.global_cutoff_min ?? data.global_cutoff_value ?? 0);
-            const globalCutoffMax = Number(data.global_cutoff_max ?? 0);
+            const globalCutoff = Number(data.global_cutoff_value ?? 0);
             const programCutoff = Number(data.program_cutoff ?? 0);
 
             if (globalActive) {
-              cutoffInfoEl.innerText = `Global SAT cutoff is active: showing SAT ${globalCutoffMin.toLocaleString()} - ${globalCutoffMax.toLocaleString()} (program cutoff: ${programCutoff.toLocaleString()}).`;
+              cutoffInfoEl.innerText = `Global SAT cutoff is active: showing SAT >= ${globalCutoff.toLocaleString()} (program cutoff: ${programCutoff.toLocaleString()}).`;
             } else {
               cutoffInfoEl.innerText = `Program SAT cutoff is active: showing SAT >= ${appliedCutoff.toLocaleString()}.`;
             }
@@ -1782,15 +1780,25 @@ function buildRankingListHeaderHtml() {
   `;
 }
 
-function renderRankingTable(bodyEl, rows, emptyMessage) {
-  if (!bodyEl) return;
+function renderRankingTable(listEl, rows, emptyMessage, options = {}) {
+  if (!listEl) return;
 
   if (!rows.length) {
     listEl.innerHTML = `${buildRankingListHeaderHtml()}<div class="ranking-list-empty">${escapeHtml(emptyMessage)}</div>`;
     return;
   }
 
-  bodyEl.innerHTML = rows.map((row, index) => buildRankingRowHtml(row, index + 1)).join('');
+  const capacityLimitRaw = options && Object.prototype.hasOwnProperty.call(options, 'capacityLimit')
+    ? Number(options.capacityLimit)
+    : null;
+  const capacityLimit = Number.isFinite(capacityLimitRaw) ? Math.max(0, capacityLimitRaw) : null;
+
+  const rowsHtml = rows.map((row, index) => {
+    const rank = index + 1;
+    const isOutsideCapacity = capacityLimit !== null && rank > capacityLimit;
+    return buildRankingRowHtml(row, rank, { isOutsideCapacity });
+  }).join('');
+  listEl.innerHTML = `${buildRankingListHeaderHtml()}${rowsHtml}`;
 }
 
 function renderRegularWithEcTable(regularRows, endorsementRows) {
@@ -1801,21 +1809,53 @@ function renderRegularWithEcTable(regularRows, endorsementRows) {
     return;
   }
 
-  let html = '';
-  if (regularRows.length) {
-    html += regularRows.map((row, index) => buildRankingRowHtml(row, index + 1)).join('');
-  }
+  const quotaEnabled = Boolean(currentRankingQuota && currentRankingQuota.enabled === true);
+  const regularSlotsRaw = Number(currentRankingQuota?.regular_slots ?? 0);
+  const endorsementLimitRaw = Number(currentRankingQuota?.endorsement_capacity ?? 0);
+  const regularEffectiveSlotsRaw = Number(currentRankingQuota?.regular_effective_slots ?? NaN);
+  const endorsementInRegularSlotsRaw = Number(currentRankingQuota?.endorsement_in_regular_slots ?? NaN);
 
-  if (endorsementRows.length) {
-    html += `
-      <tr class="table-warning">
-        <td colspan="7" class="fw-semibold text-uppercase small">SCC Students (Pinned below regular)</td>
-      </tr>
-    `;
-    html += endorsementRows
-      .map((row, index) => buildRankingRowHtml(row, index + 1, { isEndorsement: true }))
-      .join('');
-  }
+  const regularSlots = quotaEnabled ? Math.max(0, regularSlotsRaw) : null;
+  const endorsementLimit = quotaEnabled ? Math.max(0, endorsementLimitRaw) : null;
+  const endorsementInRegularSlots = quotaEnabled
+    ? (Number.isFinite(endorsementInRegularSlotsRaw)
+        ? Math.max(0, endorsementInRegularSlotsRaw)
+        : Math.min(endorsementRows.length, regularSlots, endorsementLimit))
+    : 0;
+  const regularInsideSlots = quotaEnabled
+    ? (Number.isFinite(regularEffectiveSlotsRaw)
+        ? Math.max(0, regularEffectiveSlotsRaw)
+        : Math.max(0, regularSlots - endorsementInRegularSlots))
+    : regularRows.length;
+  const leftCapacity = quotaEnabled ? (regularSlots + endorsementLimit) : null;
+
+  const regularInsideRows = quotaEnabled ? regularRows.slice(0, regularInsideSlots) : regularRows;
+  const regularOutsideRows = quotaEnabled ? regularRows.slice(regularInsideSlots) : [];
+
+  let html = buildRankingListHeaderHtml();
+  let rankCounter = 1;
+  let endorsementCounter = 0;
+
+  const appendRow = (row, { isEndorsement = false } = {}) => {
+    if (isEndorsement) {
+      endorsementCounter += 1;
+    }
+
+    const outsideByLeftCapacity = leftCapacity !== null && rankCounter > leftCapacity;
+    const outsideByEndorsementCap = isEndorsement && endorsementLimit !== null && endorsementCounter > endorsementLimit;
+    const isOutsideCapacity = outsideByLeftCapacity || outsideByEndorsementCap;
+
+    html += buildRankingRowHtml(row, rankCounter, {
+      isEndorsement,
+      isOutsideCapacity
+    });
+
+    rankCounter += 1;
+  };
+
+  regularInsideRows.forEach((row) => appendRow(row));
+  endorsementRows.forEach((row) => appendRow(row, { isEndorsement: true }));
+  regularOutsideRows.forEach((row) => appendRow(row));
 
   programRankingRegularList.innerHTML = html;
 }
@@ -1856,7 +1896,9 @@ function renderRankingRows(rows) {
   );
 
   renderRegularWithEcTable(regularRows, endorsementRows);
-  renderRankingTable(programRankingEtgBody, etgRows, 'No ETG ranked students.');
+  renderRankingTable(programRankingEtgList, etgRows, 'No ETG ranked students.', {
+    capacityLimit: getCapacityLimit('etg')
+  });
   refreshEcButtons();
 
   return {
