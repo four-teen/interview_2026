@@ -7,6 +7,7 @@
  */
 
 require_once '../config/db.php';
+require_once '../config/system_controls.php';
 session_start();
 
 header('Content-Type: application/json');
@@ -70,6 +71,25 @@ if ($cutoffResult->num_rows === 0) {
 
 $cutoffRow = $cutoffResult->fetch_assoc();
 $programCutoff = (int) $cutoffRow['cutoff_score'];
+$globalSatCutoffState = get_global_sat_cutoff_state($conn);
+$globalSatCutoffEnabled = (bool) ($globalSatCutoffState['enabled'] ?? false);
+$globalSatCutoffMin = isset($globalSatCutoffState['min']) ? (int) $globalSatCutoffState['min'] : null;
+$globalSatCutoffMax = isset($globalSatCutoffState['max']) ? (int) $globalSatCutoffState['max'] : null;
+$globalSatCutoffActive = (bool) ($globalSatCutoffState['active'] ?? false);
+$effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalSatCutoffActive, $globalSatCutoffMin);
+
+$satFilterSql = '';
+$satFilterTypes = '';
+$satFilterParams = [];
+if ($globalSatCutoffActive) {
+    $satFilterSql = ' AND pr.sat_score BETWEEN ? AND ?';
+    $satFilterTypes = 'ii';
+    $satFilterParams = [$globalSatCutoffMin, $globalSatCutoffMax];
+} elseif ($effectiveCutoff !== null) {
+    $satFilterSql = ' AND pr.sat_score >= ?';
+    $satFilterTypes = 'i';
+    $satFilterParams = [$effectiveCutoff];
+}
 
 
 // ======================================================
@@ -103,22 +123,40 @@ $activeBatchId = $batchResult->fetch_assoc()['upload_batch_id'];
 $uploadedTotal = 0;
 $qualifiedByCutoffTotal = 0;
 
+$batchQualifiedExpr = '1';
+$batchBindTypes = 's';
+$batchBindParams = [$activeBatchId];
+if ($globalSatCutoffActive) {
+    $batchQualifiedExpr = 'CASE WHEN sat_score BETWEEN ? AND ? THEN 1 ELSE 0 END';
+    $batchBindTypes = 'iis';
+    $batchBindParams = [$globalSatCutoffMin, $globalSatCutoffMax, $activeBatchId];
+} elseif ($effectiveCutoff !== null) {
+    $batchQualifiedExpr = 'CASE WHEN sat_score >= ? THEN 1 ELSE 0 END';
+    $batchBindTypes = 'is';
+    $batchBindParams = [$effectiveCutoff, $activeBatchId];
+}
+
 $batchTotalsSql = "
     SELECT
         COUNT(*) AS uploaded_total,
-        SUM(CASE WHEN sat_score >= ? THEN 1 ELSE 0 END) AS qualified_total
+        SUM({$batchQualifiedExpr}) AS qualified_total
     FROM tbl_placement_results
     WHERE upload_batch_id = ?
 ";
 
 $stmtBatchTotals = $conn->prepare($batchTotalsSql);
 if ($stmtBatchTotals) {
-    $stmtBatchTotals->bind_param("is", $programCutoff, $activeBatchId);
-    $stmtBatchTotals->execute();
-    $batchTotalsRow = $stmtBatchTotals->get_result()->fetch_assoc();
-    if ($batchTotalsRow) {
-        $uploadedTotal = (int) ($batchTotalsRow['uploaded_total'] ?? 0);
-        $qualifiedByCutoffTotal = (int) ($batchTotalsRow['qualified_total'] ?? 0);
+    $batchBindArgs = [$batchBindTypes];
+    foreach ($batchBindParams as $idx => $value) {
+        $batchBindArgs[] = &$batchBindParams[$idx];
+    }
+    if (call_user_func_array([$stmtBatchTotals, 'bind_param'], $batchBindArgs)) {
+        $stmtBatchTotals->execute();
+        $batchTotalsRow = $stmtBatchTotals->get_result()->fetch_assoc();
+        if ($batchTotalsRow) {
+            $uploadedTotal = (int) ($batchTotalsRow['uploaded_total'] ?? 0);
+            $qualifiedByCutoffTotal = (int) ($batchTotalsRow['qualified_total'] ?? 0);
+        }
     }
 }
 
@@ -213,13 +251,13 @@ if ($ownerAction !== '') {
 // STEP 5 – COUNT TOTAL ELIGIBLE STUDENTS
 // ======================================================
 
-    $countSql = "
+$countSql = "
         SELECT COUNT(*) AS total
         FROM tbl_placement_results pr
         LEFT JOIN tbl_student_interview si
             ON pr.examinee_number = si.examinee_number
         WHERE pr.upload_batch_id = ?
-          AND pr.sat_score >= ?
+          {$satFilterSql}
           {$searchFilterSql}
           {$ownerActionWhere}
     ";
@@ -236,19 +274,29 @@ if (!$stmtCount) {
     exit;
 }
 
+$countBindTypes = 's' . $satFilterTypes;
+$countBindParams = [$activeBatchId];
+foreach ($satFilterParams as $satParam) {
+    $countBindParams[] = $satParam;
+}
 if ($searchFilterSql !== '') {
-    $stmtCount->bind_param(
-        "sis",
-        $activeBatchId,
-        $programCutoff,
-        $searchParam
-    );
-} else {
-    $stmtCount->bind_param(
-        "si",
-        $activeBatchId,
-        $programCutoff
-    );
+    $countBindTypes .= 's';
+    $countBindParams[] = $searchParam;
+}
+
+$countBindArgs = [$countBindTypes];
+foreach ($countBindParams as $idx => $value) {
+    $countBindArgs[] = &$countBindParams[$idx];
+}
+
+if (!call_user_func_array([$stmtCount, 'bind_param'], $countBindArgs)) {
+    error_log('SQL bind failed (STEP 5): ' . $stmtCount->error);
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'message' => 'Failed to load students'
+    ]);
+    exit;
 }
 
 $stmtCount->execute();
@@ -295,7 +343,7 @@ $sql = "
         AND th.to_program_id = ?
 
     WHERE pr.upload_batch_id = ?
-      AND pr.sat_score >= ?
+      {$satFilterSql}
       {$searchFilterSql}
       {$ownerActionWhere}
 
@@ -315,25 +363,32 @@ if (!$stmt) {
     ]);
     exit;
 }
+$studentBindTypes = 'is' . $satFilterTypes;
+$studentBindParams = [$assignedProgramId, $activeBatchId];
+foreach ($satFilterParams as $satParam) {
+    $studentBindParams[] = $satParam;
+}
 if ($searchFilterSql !== '') {
-    $stmt->bind_param(
-        "isisii",
-        $assignedProgramId,
-        $activeBatchId,
-        $programCutoff,
-        $searchParam,
-        $limit,
-        $offset
-    );
-} else {
-    $stmt->bind_param(
-        "isiii",
-        $assignedProgramId,
-        $activeBatchId,
-        $programCutoff,
-        $limit,
-        $offset
-    );
+    $studentBindTypes .= 's';
+    $studentBindParams[] = $searchParam;
+}
+$studentBindTypes .= 'ii';
+$studentBindParams[] = $limit;
+$studentBindParams[] = $offset;
+
+$studentBindArgs = [$studentBindTypes];
+foreach ($studentBindParams as $idx => $value) {
+    $studentBindArgs[] = &$studentBindParams[$idx];
+}
+
+if (!call_user_func_array([$stmt, 'bind_param'], $studentBindArgs)) {
+    error_log('SQL bind failed (STEP 6): ' . $stmt->error);
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'message' => 'Failed to load students'
+    ]);
+    exit;
 }
 
 $stmt->execute();
@@ -384,7 +439,14 @@ echo json_encode([
     'data' => $students,
     'total' => $totalQualified,
     'uploaded_total' => $uploadedTotal,
-    'qualified_total' => $qualifiedByCutoffTotal
+    'qualified_total' => $qualifiedByCutoffTotal,
+    'program_cutoff' => $programCutoff,
+    'applied_cutoff' => $effectiveCutoff,
+    'global_cutoff_enabled' => $globalSatCutoffEnabled,
+    'global_cutoff_value' => $globalSatCutoffMin,
+    'global_cutoff_min' => $globalSatCutoffMin,
+    'global_cutoff_max' => $globalSatCutoffMax,
+    'global_cutoff_active' => $globalSatCutoffActive
 ]);
 
 exit;

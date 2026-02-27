@@ -7,6 +7,7 @@
  */
 
 require_once '../config/db.php';
+require_once '../config/system_controls.php';
 session_start();
 
 /* ======================================================
@@ -99,6 +100,59 @@ $pendingExists = $stmtPending->get_result()->fetch_assoc();
 
 if ($pendingExists) {
     header('Location: index.php?msg=pending_transfer_exists');
+    exit;
+}
+
+/* ======================================================
+   VALIDATE SAT ELIGIBILITY AGAINST EFFECTIVE CUTOFF
+====================================================== */
+$eligibilitySql = "
+SELECT
+    pr.sat_score,
+    pc.cutoff_score
+FROM tbl_student_interview si
+INNER JOIN tbl_placement_results pr
+    ON pr.id = si.placement_result_id
+LEFT JOIN tbl_program_cutoff pc
+    ON pc.program_id = ?
+WHERE si.interview_id = ?
+LIMIT 1
+";
+
+$stmtEligibility = $conn->prepare($eligibilitySql);
+if (!$stmtEligibility) {
+    error_log("SQL Error (eligibilitySql): " . $conn->error);
+    header('Location: index.php?msg=server_error');
+    exit;
+}
+
+$stmtEligibility->bind_param("ii", $toProgramId, $interviewId);
+$stmtEligibility->execute();
+$eligibilityRow = $stmtEligibility->get_result()->fetch_assoc();
+$stmtEligibility->close();
+
+if (!$eligibilityRow) {
+    header('Location: index.php?msg=invalid_request');
+    exit;
+}
+
+$satScore = (int) ($eligibilityRow['sat_score'] ?? 0);
+$programCutoff = $eligibilityRow['cutoff_score'] !== null ? (int) $eligibilityRow['cutoff_score'] : null;
+if ($programCutoff === null) {
+    header('Location: index.php?msg=invalid_request');
+    exit;
+}
+$globalSatCutoffState = get_global_sat_cutoff_state($conn);
+$globalSatCutoffMin = isset($globalSatCutoffState['min']) ? (int) $globalSatCutoffState['min'] : null;
+$globalSatCutoffMax = isset($globalSatCutoffState['max']) ? (int) $globalSatCutoffState['max'] : null;
+$globalSatCutoffActive = (bool) ($globalSatCutoffState['active'] ?? false);
+$effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalSatCutoffActive, $globalSatCutoffMin);
+
+if (
+    ($globalSatCutoffActive && ($satScore < $globalSatCutoffMin || $satScore > $globalSatCutoffMax)) ||
+    (!$globalSatCutoffActive && $effectiveCutoff !== null && $satScore < $effectiveCutoff)
+) {
+    header('Location: index.php?msg=below_cutoff');
     exit;
 }
 

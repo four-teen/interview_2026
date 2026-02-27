@@ -5,17 +5,18 @@
  * PURPOSE: Interview Scoring Page
  *
  * PHASE 2:
- *   ✅ Load SAT automatically from placement
- *   ✅ Lock SAT input
- *   ✅ Load saved scores from tbl_interview_scores
+ *   ??? Load SAT automatically from placement
+ *   ??? Lock SAT input
+ *   ??? Load saved scores from tbl_interview_scores
  *
  * PHASE 3:
- *   ✅ Save/Update scores to tbl_interview_scores (server-side compute)
- *   ✅ Only OWNER (encoder) can save/edit
+ *   ??? Save/Update scores to tbl_interview_scores (server-side compute)
+ *   ??? Only OWNER (encoder) can save/edit
  * ============================================================================
  */
 
 require_once '../config/db.php';
+require_once '../config/score_receipt_security.php';
 session_start();
 
 // ======================================================
@@ -51,6 +52,9 @@ $ownerProgramChairId   = 0;
 $firstChoiceCourse     = '';
 $displayLastName       = '';
 $displayOtherNames     = '';
+$studentClassification = 'REGULAR';
+$isEtgStudent          = false;
+$savedFinalScore       = null;
 
 $baseSql = "
     SELECT 
@@ -58,6 +62,8 @@ $baseSql = "
         si.placement_result_id,
         si.program_chair_id,
         si.first_choice,
+        si.classification,
+        si.final_score,
         pr.sat_score,
         pr.full_name,
         pr.examinee_number,
@@ -93,6 +99,10 @@ $ownerProgramChairId   = (int) $baseRow['program_chair_id'];
 $satScoreFromPlacement = (float) $baseRow['sat_score'];
 $studentName           = $baseRow['full_name'];
 $examineeNumber        = $baseRow['examinee_number'];
+$studentClassification = strtoupper(trim((string) ($baseRow['classification'] ?? 'REGULAR')));
+$studentClassification = (strpos($studentClassification, 'ETG') === 0) ? 'ETG' : 'REGULAR';
+$isEtgStudent = ($studentClassification === 'ETG');
+$savedFinalScore = ($baseRow['final_score'] !== null) ? (float) $baseRow['final_score'] : null;
 
 $firstChoiceCourse = trim((string)($baseRow['first_choice_program_name'] ?? ''));
 $firstChoiceMajor  = trim((string)($baseRow['first_choice_major'] ?? ''));
@@ -110,6 +120,83 @@ if ($normalizedStudentName !== '' && strpos($normalizedStudentName, ',') !== fal
 }
 
 $isOwner = ($ownerProgramChairId === $accountId);
+
+function normalize_component_key(string $componentName): string
+{
+    $normalized = strtoupper(trim($componentName));
+    return preg_replace('/[^A-Z0-9]+/', '', $normalized) ?? '';
+}
+
+function is_sat_component(string $componentName): bool
+{
+    return normalize_component_key($componentName) === 'SAT';
+}
+
+function get_effective_component_weight(string $componentName, float $defaultWeight, bool $isEtgStudent): float
+{
+    if (!$isEtgStudent) {
+        return $defaultWeight;
+    }
+
+    $key = normalize_component_key($componentName);
+    if ($key === 'SAT') {
+        return 50.0;
+    }
+    if ($key === 'GENERALAVERAGE') {
+        return 30.0;
+    }
+    if ($key === 'INTERVIEW') {
+        return 5.0;
+    }
+
+    return 0.0;
+}
+
+function prepare_components_for_student(array $components, bool $isEtgStudent): array
+{
+    $prepared = [];
+    foreach ($components as $component) {
+        $effectiveWeight = get_effective_component_weight(
+            (string) ($component['component_name'] ?? ''),
+            (float) ($component['weight_percent'] ?? 0),
+            $isEtgStudent
+        );
+
+        if ($isEtgStudent && $effectiveWeight <= 0) {
+            continue;
+        }
+
+        $component['effective_weight_percent'] = $effectiveWeight;
+        $prepared[] = $component;
+    }
+
+    return $prepared;
+}
+
+// ======================================================
+// 2) LOAD COMPONENTS (DYNAMIC) + APPLY CLASS PROFILE
+// ======================================================
+$components = [];
+
+$componentSql = "
+    SELECT component_id, component_name, max_score, weight_percent, is_auto_computed, status
+    FROM tbl_scoring_components
+    WHERE status = 'ACTIVE'
+    ORDER BY component_id ASC
+";
+
+$componentResult = $conn->query($componentSql);
+if (!$componentResult) {
+    error_log("Component Query Error: " . $conn->error);
+    header('Location: index.php?error=1');
+    exit;
+}
+
+while ($row = $componentResult->fetch_assoc()) {
+    $components[] = $row;
+}
+
+$components = prepare_components_for_student($components, $isEtgStudent);
 
 // ======================================================
 // PHASE 3) SAVE SCORES
@@ -129,6 +216,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_scores'])) {
         exit;
     }
 
+    $componentsById = [];
+    foreach ($components as $component) {
+        $componentId = (int) ($component['component_id'] ?? 0);
+        if ($componentId > 0) {
+            $componentsById[$componentId] = $component;
+        }
+    }
+
     // optional: transaction for safety
     $conn->begin_transaction();
 
@@ -141,35 +236,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_scores'])) {
             // sanitize numeric
             $rawScore = trim((string)$rawScore);
             $rawScore = ($rawScore === '') ? 0 : (float)$rawScore;
-
-            // Get component details (max + weight)
-            $compSql = "
-                SELECT max_score, weight_percent, is_auto_computed, component_name
-                FROM tbl_scoring_components
-                WHERE component_id = ?
-                AND status = 'ACTIVE'
-                LIMIT 1
-            ";
-
-            $stmtComp = $conn->prepare($compSql);
-            if (!$stmtComp) {
-                throw new Exception("Prepare failed (compSql): " . $conn->error);
-            }
-
-            $stmtComp->bind_param("i", $componentId);
-            $stmtComp->execute();
-            $compResult = $stmtComp->get_result();
-
-            $component = $compResult->fetch_assoc();
-            if (!$component) {
-                // component removed/inactive, skip
+            if (!isset($componentsById[$componentId])) {
                 continue;
             }
 
+            $component = $componentsById[$componentId];
             $maxScore = (float) $component['max_score'];
-            $weight   = (float) $component['weight_percent'];
+            $weight   = (float) ($component['effective_weight_percent'] ?? $component['weight_percent']);
 
-            $isAuto = ((int)$component['is_auto_computed'] === 1) || (strtoupper(trim($component['component_name'])) === 'SAT');
+            $isAuto = ((int)$component['is_auto_computed'] === 1) || is_sat_component((string) ($component['component_name'] ?? ''));
 
             // enforce SAT from placement (cannot be overridden)
             if ($isAuto) {
@@ -323,22 +398,10 @@ $stmtAudit->execute();
             }
         }
 
-// ==========================================
-// RECOMPUTE FINAL SCORE FROM DB (SAFE)
-// ==========================================
-$recomputeSql = "
-    SELECT SUM(weighted_score) AS total_score
-    FROM tbl_interview_scores
-    WHERE interview_id = ?
-";
-
-$stmtRecompute = $conn->prepare($recomputeSql);
-$stmtRecompute->bind_param("i", $interviewId);
-$stmtRecompute->execute();
-$resRecompute = $stmtRecompute->get_result();
-$rowRecompute = $resRecompute->fetch_assoc();
-
-$totalFinalScore = (float)($rowRecompute['total_score'] ?? 0);
+        // ETG has fixed affirmative action rating: 100/100 * 15% = 15.
+        if ($isEtgStudent) {
+            $totalFinalScore += 15.0;
+        }
 
 // ==========================================
 // UPDATE FINAL SCORE IN tbl_student_interview
@@ -408,30 +471,7 @@ $stmtAudit2->execute();
 }
 
 // ======================================================
-// 2) LOAD COMPONENTS (DYNAMIC)
-// ======================================================
-$components = [];
-
-$componentSql = "
-    SELECT component_id, component_name, max_score, weight_percent, is_auto_computed, status
-    FROM tbl_scoring_components
-    WHERE status = 'ACTIVE'
-    ORDER BY component_id ASC
-";
-
-$componentResult = $conn->query($componentSql);
-if (!$componentResult) {
-    error_log("Component Query Error: " . $conn->error);
-    header('Location: index.php?error=1');
-    exit;
-}
-
-while ($row = $componentResult->fetch_assoc()) {
-    $components[] = $row;
-}
-
-// ======================================================
-// 3) LOAD SAVED SCORES (IF ANY) → keyed by component_id
+// 3) LOAD SAVED SCORES (IF ANY) -> keyed by component_id
 // ======================================================
 $savedScores = [];
 
@@ -465,7 +505,7 @@ $totalWeight = 0.0;
 $finalScore  = 0.0;
 
 foreach ($components as $c) {
-    $weight = (float) $c['weight_percent'];
+    $weight = (float) ($c['effective_weight_percent'] ?? $c['weight_percent']);
     $max    = (float) $c['max_score'];
     $cid    = (int) $c['component_id'];
 
@@ -473,7 +513,7 @@ foreach ($components as $c) {
 
     $raw = 0.0;
 
-    $isAuto = ((int)$c['is_auto_computed'] === 1) || (strtoupper(trim($c['component_name'])) === 'SAT');
+    $isAuto = ((int)$c['is_auto_computed'] === 1) || is_sat_component((string) ($c['component_name'] ?? ''));
 
     if ($isAuto) {
         $raw = $satScoreFromPlacement;
@@ -486,8 +526,40 @@ foreach ($components as $c) {
     }
 }
 
+if ($isEtgStudent) {
+    $totalWeight += 15.0;
+    $finalScore += 15.0;
+}
+
 // ======================================================
-// 5) LOAD QUESTION POOL (tblquestions)
+// 5) BUILD SIGNED RECEIPT VERIFICATION LINK
+// ======================================================
+$printedByName = trim((string) (
+    $_SESSION['acc_fullname']
+    ?? $_SESSION['account_name']
+    ?? $_SESSION['username']
+    ?? 'Program Chair'
+));
+$snapshotFinalScoreForReceipt = ($savedFinalScore !== null) ? $savedFinalScore : $finalScore;
+$canPrintSignedResult = ($savedFinalScore !== null);
+
+$scoreReceiptPayload = [
+    'v' => '1',
+    'id' => (string) $interviewId,
+    'ex' => (string) $examineeNumber,
+    'fs' => number_format((float) $snapshotFinalScoreForReceipt, 2, '.', ''),
+    'cl' => (string) $studentClassification,
+    'iat' => gmdate('Y-m-d\TH:i:s\Z'),
+];
+$scoreReceiptPayload['sig'] = score_receipt_sign($scoreReceiptPayload);
+
+$requestScheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+$requestHost = $_SERVER['HTTP_HOST'] ?? 'localhost';
+$verifyScoreUrlBase = rtrim($requestScheme . '://' . $requestHost, '/') . BASE_URL . '/progchair/verify_score_receipt.php';
+$verifyScoreUrl = $verifyScoreUrlBase . '?' . http_build_query($scoreReceiptPayload);
+
+// ======================================================
+// 6) LOAD QUESTION POOL (tblquestions)
 // ======================================================
 $questionPool = [];
 $questionSql = "SELECT questions FROM tblquestions ORDER BY questionsid ASC";
@@ -504,7 +576,7 @@ if ($questionRes instanceof mysqli_result) {
 }
 
 // ======================================================
-// 6) LOAD READING IMAGE POOL (../readings)
+// 7) LOAD READING IMAGE POOL (../readings)
 // ======================================================
 $readingPool = [];
 $readingFiles = glob(__DIR__ . '/../readings/*.{png,jpg,jpeg,gif,webp,PNG,JPG,JPEG,GIF,WEBP}', GLOB_BRACE);
@@ -615,7 +687,7 @@ if (is_array($readingFiles)) {
               <!-- SCORE COMPONENTS -->
               <div class="card">
                 <div class="card-header">
-                  <h6 class="mb-0">Score Components</h6>
+                  <h6 class="mb-0">Score Components<?= $isEtgStudent ? ' (ETG Profile)' : ' (Regular Profile)'; ?></h6>
                 </div>
 
                 <div class="card-body">
@@ -641,9 +713,9 @@ if (is_array($readingFiles)) {
                             $cid    = (int) $component['component_id'];
                             $name   = $component['component_name'];
                             $max    = (float) $component['max_score'];
-                            $weight = (float) $component['weight_percent'];
+                            $weight = (float) ($component['effective_weight_percent'] ?? $component['weight_percent']);
 
-                            $isAuto = ((int)$component['is_auto_computed'] === 1) || (strtoupper(trim($name)) === 'SAT');
+                            $isAuto = ((int)$component['is_auto_computed'] === 1) || is_sat_component((string) $name);
 
                             // raw score value
                             if ($isAuto) {
@@ -690,6 +762,36 @@ if (is_array($readingFiles)) {
                             <td class="weighted-result"><?= number_format($weightedValue, 2); ?></td>
                           </tr>
                         <?php endforeach; ?>
+                        <?php if ($isEtgStudent): ?>
+                          <tr
+                            data-max="100"
+                            data-weight="15"
+                            data-component="Affirmative Action Rating"
+                          >
+                            <td class="text-start">
+                              Affirmative Action Rating
+                              <span class="badge bg-label-info ms-1">Fixed</span>
+                            </td>
+                            <td>
+                              <input
+                                type="number"
+                                step="0.01"
+                                class="form-control raw-input"
+                                value="100"
+                                min="100"
+                                max="100"
+                                readonly
+                              >
+                            </td>
+                            <td>
+                              <input type="number" class="form-control" value="100" readonly>
+                            </td>
+                            <td>
+                              <input type="number" class="form-control" value="15" readonly>
+                            </td>
+                            <td class="weighted-result">15.00</td>
+                          </tr>
+                        <?php endif; ?>
                         </tbody>
                       </table>
                     </div>
@@ -706,7 +808,15 @@ if (is_array($readingFiles)) {
                       </div>
                     </div>
 
-                    <div class="mt-4 text-end">
+                    <div class="mt-4 d-flex justify-content-end gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        id="printResultBtn"
+                        class="btn btn-outline-secondary"
+                        <?= $canPrintSignedResult ? '' : 'disabled'; ?>
+                      >
+                        <i class="bx bx-printer me-1"></i> Print Result
+                      </button>
                       <button
                         type="submit"
                         name="save_scores"
@@ -716,6 +826,14 @@ if (is_array($readingFiles)) {
                         Save Scores
                       </button>
                     </div>
+
+                    <?php if (!$canPrintSignedResult): ?>
+                      <div class="mt-2 text-end">
+                        <small class="text-muted">
+                          Save scores first to generate a signed printable result with QR verification.
+                        </small>
+                      </div>
+                    <?php endif; ?>
 
                     <?php if (!$isOwner): ?>
                       <div class="mt-2 text-end">
@@ -799,10 +917,24 @@ if (is_array($readingFiles)) {
 <script src="../assets/vendor/js/menu.js"></script>
 <script src="../assets/js/main.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 
 <script>
 const questionPool = <?= json_encode(array_values($questionPool), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
 const readingPool  = <?= json_encode(array_values($readingPool), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
+const scoreReceiptMeta = <?= json_encode([
+  'verify_url' => $verifyScoreUrl,
+  'issued_at' => (string) ($scoreReceiptPayload['iat'] ?? ''),
+  'issued_by' => $printedByName,
+  'interview_id' => $interviewId,
+  'examinee_number' => $examineeNumber,
+  'student_name' => $studentName,
+  'classification' => $studentClassification,
+  'program_name' => $firstChoiceCourse,
+  'can_print_signed' => $canPrintSignedResult,
+  'snapshot_total_weight' => number_format((float) $totalWeight, 2, '.', ''),
+  'snapshot_final_score' => number_format((float) $snapshotFinalScoreForReceipt, 2, '.', ''),
+], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -820,6 +952,184 @@ function pickRandomItems(arr, count) {
     [copy[i], copy[j]] = [copy[j], copy[i]];
   }
   return copy.slice(0, count);
+}
+
+async function buildQrDataUrl(text) {
+  if (!text || typeof QRCode === 'undefined') {
+    return '';
+  }
+
+  return new Promise((resolve) => {
+    const qrHost = document.createElement('div');
+    qrHost.style.position = 'fixed';
+    qrHost.style.left = '-99999px';
+    qrHost.style.top = '-99999px';
+    document.body.appendChild(qrHost);
+
+    new QRCode(qrHost, {
+      text: String(text),
+      width: 160,
+      height: 160,
+      correctLevel: QRCode.CorrectLevel.M
+    });
+
+    setTimeout(() => {
+      let dataUrl = '';
+      const canvas = qrHost.querySelector('canvas');
+      const img = qrHost.querySelector('img');
+      if (canvas && typeof canvas.toDataURL === 'function') {
+        dataUrl = canvas.toDataURL('image/png');
+      } else if (img && typeof img.src === 'string') {
+        dataUrl = img.src;
+      }
+      qrHost.remove();
+      resolve(dataUrl);
+    }, 100);
+  });
+}
+
+function collectPrintableScoreRows(useDefaultValues = false) {
+  return Array.from(document.querySelectorAll('#scoreForm tbody tr[data-max]')).map((row) => {
+    const componentCell = row.querySelector('td.text-start');
+    const componentName = componentCell ? componentCell.textContent.trim().replace(/\s+/g, ' ') : '';
+    const rawInput = row.querySelector('.raw-input');
+    const rawSource = useDefaultValues ? rawInput?.defaultValue : rawInput?.value;
+    const rawValue = rawInput ? String(rawSource || '').trim() : '';
+    const maxValue = String(row.getAttribute('data-max') || '').trim();
+    const weightValue = String(row.getAttribute('data-weight') || '').trim();
+
+    const rawNumber = Number.parseFloat(rawValue || '0');
+    const maxNumber = Number.parseFloat(maxValue || '0');
+    const weightNumber = Number.parseFloat(weightValue || '0');
+    const weightedNumber = (maxNumber > 0 && Number.isFinite(rawNumber))
+      ? ((rawNumber / maxNumber) * weightNumber)
+      : 0;
+    const weightedValue = weightedNumber.toFixed(2);
+
+    return {
+      component: componentName,
+      raw: rawValue === '' ? '0' : rawValue,
+      max: maxValue,
+      weight: weightValue,
+      weighted: weightedValue
+    };
+  });
+}
+
+function buildPrintableRowsHtml(rows) {
+  if (!rows.length) {
+    return '<tr><td colspan="5">No score components found.</td></tr>';
+  }
+
+  return rows.map((row) => `
+    <tr>
+      <td>${escapeHtml(row.component)}</td>
+      <td>${escapeHtml(row.raw)}</td>
+      <td>${escapeHtml(row.max)}</td>
+      <td>${escapeHtml(row.weight)}</td>
+      <td>${escapeHtml(row.weighted)}</td>
+    </tr>
+  `).join('');
+}
+
+function hasUnsavedScoreChanges() {
+  return Array.from(document.querySelectorAll('#scoreForm .raw-input')).some((input) => {
+    if (!input) return false;
+    return String(input.value ?? '').trim() !== String(input.defaultValue ?? '').trim();
+  });
+}
+
+async function printInterviewScoreResult() {
+  const finalScoreText = `${String(scoreReceiptMeta.snapshot_final_score || '0.00')}%`;
+  const totalWeightText = `${String(scoreReceiptMeta.snapshot_total_weight || '0.00')}%`;
+  const profileLabel = scoreReceiptMeta.classification === 'ETG' ? 'ETG Profile' : 'Regular Profile';
+  const printedAt = new Date().toLocaleString();
+  const rowsHtml = buildPrintableRowsHtml(collectPrintableScoreRows(true));
+  const qrDataUrl = await buildQrDataUrl(scoreReceiptMeta.verify_url);
+
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) {
+    Swal.fire('Blocked', 'Please allow pop-ups to print this score result.', 'warning');
+    return;
+  }
+
+  const qrHtml = qrDataUrl
+    ? `<img src="${qrDataUrl}" alt="Verification QR" style="width:150px;height:150px;">`
+    : '<div style="font-size:12px;color:#6b7280;">QR could not be generated. Use the verification URL below.</div>';
+
+  printWindow.document.write(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Interview Score Result - ${escapeHtml(scoreReceiptMeta.examinee_number || '')}</title>
+      <style>
+        @page { size: A4 portrait; margin: 14mm; }
+        body { font-family: Arial, sans-serif; color: #111827; font-size: 12px; }
+        .header { margin-bottom: 12px; }
+        .title { margin: 0; font-size: 20px; font-weight: 700; }
+        .meta { margin-top: 4px; color: #4b5563; }
+        .grid { display: grid; grid-template-columns: 1fr 180px; gap: 16px; align-items: start; margin-bottom: 12px; }
+        .kv { margin: 2px 0; }
+        .qr-box { border: 1px solid #d1d5db; padding: 8px; text-align: center; border-radius: 6px; }
+        .qr-label { margin-top: 6px; font-size: 11px; color: #374151; }
+        table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+        th, td { border: 1px solid #d1d5db; padding: 6px 8px; text-align: left; }
+        th { background: #f3f4f6; font-weight: 700; }
+        td:nth-child(n+2), th:nth-child(n+2) { text-align: right; }
+        .summary { margin-top: 10px; display: flex; justify-content: space-between; gap: 12px; font-weight: 700; }
+        .verify-url { margin-top: 8px; font-size: 11px; color: #374151; word-break: break-all; }
+        .disclaimer { margin-top: 14px; border-top: 1px solid #d1d5db; padding-top: 8px; font-size: 11px; color: #6b7280; text-align: center; letter-spacing: .04em; }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <h1 class="title">Interview Score Result</h1>
+        <div class="meta">Printed: ${escapeHtml(printedAt)} | Printed by: ${escapeHtml(scoreReceiptMeta.issued_by || 'Program Chair')}</div>
+      </div>
+
+      <div class="grid">
+        <div>
+          <div class="kv"><strong>Interview ID:</strong> ${escapeHtml(String(scoreReceiptMeta.interview_id || ''))}</div>
+          <div class="kv"><strong>Examinee #:</strong> ${escapeHtml(scoreReceiptMeta.examinee_number || '')}</div>
+          <div class="kv"><strong>Student Name:</strong> ${escapeHtml(scoreReceiptMeta.student_name || '')}</div>
+          <div class="kv"><strong>Classification:</strong> ${escapeHtml(scoreReceiptMeta.classification || '')}</div>
+          <div class="kv"><strong>Program:</strong> ${escapeHtml(String(scoreReceiptMeta.program_name || '').toUpperCase())}</div>
+          <div class="kv"><strong>Scoring Profile:</strong> ${escapeHtml(profileLabel)}</div>
+        </div>
+        <div class="qr-box">
+          ${qrHtml}
+          <div class="qr-label">Scan to verify authenticity</div>
+        </div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Component</th>
+            <th>Raw</th>
+            <th>Max</th>
+            <th>Weight (%)</th>
+            <th>Weighted</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+
+      <div class="summary">
+        <div>Total Weight: ${escapeHtml(totalWeightText)}</div>
+        <div>Final Score: ${escapeHtml(finalScoreText)}</div>
+      </div>
+
+      <div class="verify-url"><strong>Verification URL:</strong> ${escapeHtml(scoreReceiptMeta.verify_url || '')}</div>
+      <div class="disclaimer">SIGNED INTERVIEW SCORE RECEIPT</div>
+    </body>
+    </html>
+  `);
+
+  printWindow.document.close();
+  printWindow.focus();
+  printWindow.print();
 }
 
 function computeScores() {
@@ -899,6 +1209,35 @@ if (scoreFormEl) {
       });
       return;
     }
+  });
+}
+
+const printResultBtn = document.getElementById('printResultBtn');
+if (printResultBtn) {
+  printResultBtn.addEventListener('click', async function () {
+    if (!scoreReceiptMeta.can_print_signed) {
+      Swal.fire('Save Required', 'Save scores first to generate a signed printable result.', 'info');
+      return;
+    }
+
+    if (hasUnsavedScoreChanges()) {
+      const decision = await Swal.fire({
+        icon: 'warning',
+        title: 'Unsaved Changes Detected',
+        text: 'Print uses the last saved signed snapshot. Save scores first if you want updated values.',
+        showCancelButton: true,
+        confirmButtonText: 'Print Saved Snapshot',
+        cancelButtonText: 'Cancel'
+      });
+      if (!decision.isConfirmed) {
+        return;
+      }
+    }
+
+    printInterviewScoreResult().catch((err) => {
+      console.error(err);
+      Swal.fire('Error', 'Failed to prepare printable result.', 'error');
+    });
   });
 }
 

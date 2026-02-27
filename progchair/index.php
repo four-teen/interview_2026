@@ -1,5 +1,6 @@
 <?php 
   require_once '../config/db.php';
+  require_once '../config/system_controls.php';
   session_start();
 
 
@@ -16,6 +17,10 @@ error_reporting(E_ALL);
 
 $assignedCampusId  = $_SESSION['campus_id'];
 $assignedProgramId = $_SESSION['program_id'];
+$globalSatCutoffState = get_global_sat_cutoff_state($conn);
+$globalSatCutoffMin = isset($globalSatCutoffState['min']) ? (int) $globalSatCutoffState['min'] : null;
+$globalSatCutoffMax = isset($globalSatCutoffState['max']) ? (int) $globalSatCutoffState['max'] : null;
+$globalSatCutoffActive = (bool) ($globalSatCutoffState['active'] ?? false);
 
 function table_column_exists(mysqli $conn, string $table, string $column): bool
 {
@@ -159,7 +164,7 @@ if ($etgResult) {
 
 /**
  * ============================================================================
- * STEP 0 – PROGRAM CHAIR IDENTITY & ASSIGNMENT
+ * STEP 0 - PROGRAM CHAIR IDENTITY & ASSIGNMENT
  * ============================================================================
  */
 
@@ -248,7 +253,7 @@ if ($batchResult && $batchResult->num_rows > 0) {
     $activeBatchId = $batchResult->fetch_assoc()['upload_batch_id'];
 }
 
-// STEP 2: Initialize qualitative buckets (ENSURE ORDER 1–6)
+// STEP 2: Initialize qualitative buckets (ENSURE ORDER 1-6)
 $qualitativeLabels = [
     1 => 'Outstanding',
     2 => 'Above Average',
@@ -439,18 +444,130 @@ if ($activeBatchId) {
   letter-spacing: 0.15px;
 }
 
-.ranking-ec-row {
-  background-color: #fff8e1 !important;
+.program-ranking-modal-dialog {
+  width: min(96vw, 1500px);
+  max-width: min(96vw, 1500px);
 }
 
-.ranking-ec-badge {
-  background: #ffedd5;
-  color: #b45309;
-  font-size: 0.68rem;
+#programRankingMeta {
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.ranking-list {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
+.ranking-list-header,
+.ranking-list-row {
+  display: grid;
+  grid-template-columns: 52px 96px minmax(220px, 2.2fr) 72px 62px 74px;
+  gap: 0.65rem;
+  align-items: center;
+  padding: 0.18rem 0;
+  min-width: 620px;
+}
+
+.ranking-list-header {
+  background: transparent;
+  border-bottom: none;
+  font-size: 0.72rem;
   font-weight: 700;
-  letter-spacing: 0.2px;
-  padding: 0.2rem 0.45rem;
-  border-radius: 999px;
+  letter-spacing: 0.08em;
+  color: #111827;
+  text-transform: uppercase;
+  margin-bottom: 0.28rem;
+}
+
+.ranking-list-row {
+  border-top: none;
+  font-size: 0.92rem;
+  color: #111827;
+}
+
+.ranking-list-row .ranking-col-name {
+  text-transform: uppercase;
+}
+
+.ranking-list-row .ranking-col-class {
+  font-weight: 500;
+}
+
+.ranking-list-row .ranking-col-score {
+  font-weight: 500;
+  color: #111827;
+}
+
+.ranking-list-label {
+  padding: 0.18rem 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: transparent;
+  color: #111827;
+  border-top: none;
+  margin-top: 0.35rem;
+}
+
+.ranking-list-empty {
+  padding: 0.45rem 0;
+  font-size: 0.82rem;
+  color: #64748b;
+}
+
+.ranking-ec-row {
+  background-color: transparent !important;
+}
+
+.ranking-outside-capacity {
+  color: #dc2626 !important;
+}
+
+.ranking-outside-capacity .ranking-col-score {
+  color: #dc2626 !important;
+}
+
+.swal2-popup .scc-picker-wrap {
+  text-align: left;
+}
+
+.swal2-popup .scc-picker-label {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: #374151;
+}
+
+.swal2-popup .scc-picker-help {
+  margin-top: 0.45rem;
+  font-size: 0.78rem;
+  color: #6b7280;
+  line-height: 1.35;
+}
+
+.swal2-popup .select2-container {
+  width: 100% !important;
+}
+
+.swal2-container .select2-dropdown {
+  z-index: 21001;
+}
+
+@media (min-width: 992px) {
+  .program-ranking-left-col {
+    padding-right: 1.2rem;
+  }
+
+  .program-ranking-right-col {
+    border-left: 1px solid #d9dee3;
+    padding-left: 1.2rem;
+  }
 }
 
 @media (max-width: 991.98px) {
@@ -460,6 +577,28 @@ if ($activeBatchId) {
 
   .programs-card-body {
     max-height: 50vh;
+  }
+
+  .program-ranking-modal-dialog {
+    width: calc(100vw - 1rem);
+    max-width: calc(100vw - 1rem);
+  }
+
+  .ranking-list-header,
+  .ranking-list-row {
+    grid-template-columns: 42px 78px minmax(120px, 1.6fr) 64px 52px 62px;
+    gap: 0.45rem;
+    padding: 0.14rem 0;
+    font-size: 0.8rem;
+    min-width: 560px;
+  }
+
+  .program-ranking-right-col {
+    border-left: none;
+    padding-left: 0;
+    padding-top: 0.75rem;
+    margin-top: 0.75rem !important;
+    border-top: 1px solid #d9dee3;
   }
 }
 
@@ -513,7 +652,7 @@ if ($activeBatchId) {
           <strong>
             <?= htmlspecialchars($pc_program); ?>
             <?php if (!empty($pc_major)): ?>
-              – <?= htmlspecialchars($pc_major); ?>
+              - <?= htmlspecialchars($pc_major); ?>
             <?php endif; ?>
           </strong>
           under
@@ -544,8 +683,17 @@ if ($activeBatchId) {
   <div class="card-body">
 
     <!-- QUALIFIED COUNT -->
-<div class="mb-4 d-flex justify-content-between align-items-center">
-  <small class="text-muted">Use the header search bar to find students.</small>
+<div class="mb-4 d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <small class="text-muted d-block">Use the header search bar to find students.</small>
+    <small class="text-muted d-block" id="activeCutoffInfo">
+      <?php if ($globalSatCutoffActive): ?>
+        Global SAT cutoff is active: showing SAT <?= number_format((int) $globalSatCutoffMin); ?> - <?= number_format((int) $globalSatCutoffMax); ?>.
+      <?php else: ?>
+        Program SAT cutoff filtering is active.
+      <?php endif; ?>
+    </small>
+  </div>
   <div class="ms-3">
     <span class="badge bg-label-success fs-6" id="qualifiedCountBadge">
       0 Qualified
@@ -676,7 +824,7 @@ if ($activeBatchId) {
 <!-- PROGRAM RANKING MODAL -->
 <!-- ========================================================= -->
 <div class="modal fade" id="programRankingModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+  <div class="modal-dialog program-ranking-modal-dialog modal-dialog-centered modal-dialog-scrollable">
     <div class="modal-content">
 
       <div class="modal-header">
@@ -689,7 +837,10 @@ if ($activeBatchId) {
 
       <div class="modal-body">
         <div class="d-flex justify-content-end gap-2 mb-3">
-          <button type="button" class="btn btn-label-secondary" id="printRankingBtn">
+          <button type="button" class="btn btn-outline-primary" id="addEcRegularBtn">
+            <i class="bx bx-plus-circle me-1"></i> Add SCC (Regular)
+          </button>
+          <button type="button" class="btn btn-outline-secondary" id="printRankingBtn">
             <i class="bx bx-printer me-1"></i> Print
           </button>
           <a href="#" class="btn btn-success" id="exportRankingBtn">
@@ -707,53 +858,22 @@ if ($activeBatchId) {
         </div>
 
         <div class="d-none" id="programRankingTableWrap">
-          <div class="mb-4">
-            <div class="d-flex justify-content-between align-items-center mb-2">
-              <h6 class="mb-0 text-uppercase fw-bold text-primary">REGULAR + SCC List</h6>
-              <button type="button" class="btn btn-sm btn-label-primary" id="addEcRegularBtn">
-                + SCC (Regular)
-              </button>
-            </div>
-            <div class="table-responsive">
-              <table class="table table-bordered table-striped align-middle mb-0" id="programRankingRegularTable">
-                <thead class="table-light">
-                  <tr>
-                    <th style="width: 80px;">Rank</th>
-                    <th style="width: 150px;">Examinee #</th>
-                    <th>Student Name</th>
-                    <th style="width: 170px;">Classification</th>
-                    <th style="width: 120px;">SAT</th>
-                    <th style="width: 130px;">Final Score</th>
-                    <th>Encoded By</th>
-                  </tr>
-                </thead>
-                <tbody></tbody>
-              </table>
-            </div>
+          <div class="small text-muted mb-3">
+            <span class="fw-semibold text-danger">Red rows</span> are outside capacity but still shown in the list.
           </div>
-
-          <div>
-            <div class="d-flex justify-content-between align-items-center mb-2">
-              <h6 class="mb-0 text-uppercase fw-bold text-success">ETG List</h6>
-              <button type="button" class="btn btn-sm btn-label-success" id="addEcEtgBtn">
-                + SCC (ETG)
-              </button>
+          <div class="row g-0">
+            <div class="col-12 col-lg-6 program-ranking-left-col">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="mb-0 text-uppercase fw-bold text-primary">REGULAR + SCC List</h6>
+              </div>
+              <div id="programRankingRegularList" class="ranking-list"></div>
             </div>
-            <div class="table-responsive">
-              <table class="table table-bordered table-striped align-middle mb-0" id="programRankingEtgTable">
-                <thead class="table-light">
-                  <tr>
-                    <th style="width: 80px;">Rank</th>
-                    <th style="width: 150px;">Examinee #</th>
-                    <th>Student Name</th>
-                    <th style="width: 170px;">Classification</th>
-                    <th style="width: 120px;">SAT</th>
-                    <th style="width: 130px;">Final Score</th>
-                    <th>Encoded By</th>
-                  </tr>
-                </thead>
-                <tbody></tbody>
-              </table>
+
+            <div class="col-12 col-lg-6 program-ranking-right-col mt-3 mt-lg-0">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="mb-0 text-uppercase fw-bold text-success">ETG List</h6>
+              </div>
+              <div id="programRankingEtgList" class="ranking-list"></div>
             </div>
           </div>
         </div>
@@ -909,11 +1029,10 @@ if ($activeBatchId) {
 
     <select name="etg_class_id"
             id="etg_class_id"
-            class="form-select"
-            required>
+            class="form-select">
 
       <!-- DEFAULT FOR REGULAR -->
-      <option value="">Select ETG Class</option>
+      <option value="">NONE</option>
 
       <!-- ETG OPTIONS -->
       <?php foreach ($etgClasses as $etg): ?>
@@ -935,7 +1054,16 @@ if ($activeBatchId) {
           <div class="row mb-3">
             <div class="col-md-6 mb-3 mb-md-0">
               <label class="form-label">Mobile Number <span class="text-danger">*</span></label>
-              <input type="text" name="mobile_number" class="form-control" required>
+              <input
+                type="text"
+                name="mobile_number"
+                class="form-control"
+                required
+                maxlength="11"
+                pattern="0[0-9]{10}"
+                inputmode="numeric"
+                placeholder="09XXXXXXXXX"
+              >
             </div>
 
             <div class="col-md-6">
@@ -1180,6 +1308,7 @@ document.addEventListener("DOMContentLoaded", function () {
   const legacySearchInput = document.getElementById("studentSearch");
   const searchInput = navbarSearchInput || legacySearchInput;
   const loadingIndicator = document.getElementById("loadingIndicator");
+  const cutoffInfoEl = document.getElementById("activeCutoffInfo");
 
   let page = 1;
   let isLoading = false;
@@ -1314,10 +1443,10 @@ function buildStudentCardHtml(student, buttonHtml) {
 
 function createStudentCard(student) {
 
-  let buttonHtml = ''; // ✅ MOVE THIS TO TOP
+  let buttonHtml = ''; // Keep action UI deterministic by status order
 
   // =========================================
-  // 0️⃣ TRANSFER PENDING → SHOW ACCEPT / REJECT
+  // 0) TRANSFER PENDING - show Accept / Reject actions
   // =========================================
   if (student.transfer_pending) {
 
@@ -1345,7 +1474,7 @@ function createStudentCard(student) {
   }
 
   // =========================================
-  // 1️⃣ NO INTERVIEW YET
+  // 1) NO INTERVIEW YET
   // =========================================
   if (!student.has_interview) {
 
@@ -1367,7 +1496,7 @@ function createStudentCard(student) {
   }
 
   // =========================================
-  // 2️⃣ HAS INTERVIEW & OWNER
+  // 2) HAS INTERVIEW & OWNER
   // =========================================
   else if (student.can_edit) {
 
@@ -1413,7 +1542,7 @@ function createStudentCard(student) {
   }
 
   // =========================================
-  // 3️⃣ VIEW ONLY
+  // 3) VIEW ONLY
   // =========================================
   else {
 
@@ -1455,7 +1584,21 @@ function createStudentCard(student) {
             container.innerHTML = '';
           }
 
-          // ✅ Update Qualified Count Badge
+          if (cutoffInfoEl && !ownerActionFilter) {
+            const appliedCutoff = Number(data.applied_cutoff ?? 0);
+            const globalActive = Boolean(data.global_cutoff_active);
+            const globalCutoffMin = Number(data.global_cutoff_min ?? data.global_cutoff_value ?? 0);
+            const globalCutoffMax = Number(data.global_cutoff_max ?? 0);
+            const programCutoff = Number(data.program_cutoff ?? 0);
+
+            if (globalActive) {
+              cutoffInfoEl.innerText = `Global SAT cutoff is active: showing SAT ${globalCutoffMin.toLocaleString()} - ${globalCutoffMax.toLocaleString()} (program cutoff: ${programCutoff.toLocaleString()}).`;
+            } else {
+              cutoffInfoEl.innerText = `Program SAT cutoff is active: showing SAT >= ${appliedCutoff.toLocaleString()}.`;
+            }
+          }
+
+          // Update qualified count badge
           if (typeof data.total !== 'undefined') {
             const badge = document.getElementById('qualifiedCountBadge');
             const labelMap = {
@@ -1496,7 +1639,7 @@ function createStudentCard(student) {
       });
   }
 
-// 🔥 Make loadStudents globally accessible
+// Make loadStudents globally accessible
 window.loadStudents = loadStudents;
 
   // Infinite Scroll
@@ -1536,17 +1679,18 @@ const programRankingMetaEl    = document.getElementById('programRankingMeta');
 const programRankingLoadingEl = document.getElementById('programRankingLoading');
 const programRankingEmptyEl   = document.getElementById('programRankingEmpty');
 const programRankingTableWrap = document.getElementById('programRankingTableWrap');
-const programRankingRegularBody = document.querySelector('#programRankingRegularTable tbody');
-const programRankingEtgBody     = document.querySelector('#programRankingEtgTable tbody');
+const programRankingRegularList = document.getElementById('programRankingRegularList');
+const programRankingEtgList     = document.getElementById('programRankingEtgList');
 const exportRankingBtn        = document.getElementById('exportRankingBtn');
 const printRankingBtn         = document.getElementById('printRankingBtn');
 const addEcRegularBtn         = document.getElementById('addEcRegularBtn');
-const addEcEtgBtn             = document.getElementById('addEcEtgBtn');
+const sccCandidatesEndpoint   = 'fetch_scc_regular_candidates.php';
 
-let currentRankingProgramId = 0;
-let currentRankingProgramName = '';
-let currentRankingRows = [];
-let currentRankingQuota = null;
+  let currentRankingProgramId = 0;
+  let currentRankingProgramName = '';
+  let currentRankingRows = [];
+  let currentRankingQuota = null;
+  const printActorName = <?= json_encode((string) ($pc_fullname ?? ''), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP); ?>;
 
 const programRankingModal = programRankingModalEl
   ? new bootstrap.Modal(programRankingModalEl)
@@ -1582,138 +1726,152 @@ function isRegularClassification(row) {
   return String(row?.classification || '').toUpperCase() === 'REGULAR';
 }
 
-function getCutoffValue(quota) {
-  if (!quota || quota.cutoff_score === null || quota.cutoff_score === undefined) {
+function getCapacityLimit(sectionKey) {
+  if (!currentRankingQuota || currentRankingQuota.enabled !== true) {
     return null;
   }
 
-  const cutoff = Number(quota.cutoff_score);
-  return Number.isFinite(cutoff) ? cutoff : null;
-}
-
-function getEcEligibleRows(sourceType) {
-  const targetType = String(sourceType || '').toUpperCase();
-  const cutoff = getCutoffValue(currentRankingQuota);
-  const ecCapacity = Number(currentRankingQuota?.endorsement_capacity ?? 0);
-  const ecSelected = Number(currentRankingQuota?.endorsement_selected ?? 0);
-  const ecRemaining = Math.max(0, ecCapacity - ecSelected);
-
-  if (ecCapacity <= 0 || ecRemaining <= 0) {
-    return [];
+  if (sectionKey === 'regular') {
+    return Math.max(0, Number(currentRankingQuota.regular_slots ?? 0));
   }
 
-  return currentRankingRows.filter((row) => {
-    if (row?.is_endorsement) return false;
+  if (sectionKey === 'endorsement') {
+    return Math.max(0, Number(currentRankingQuota.endorsement_capacity ?? 0));
+  }
 
-    const isRegular = isRegularClassification(row);
-    const isTarget = targetType === 'REGULAR' ? isRegular : !isRegular;
-    if (!isTarget) return false;
+  if (sectionKey === 'etg') {
+    return Math.max(0, Number(currentRankingQuota.etg_slots ?? 0));
+  }
 
-    const sat = Number(row?.sat_score ?? 0);
-    if (cutoff !== null && sat < cutoff) {
-      return false;
-    }
-
-    return true;
-  });
+  return null;
 }
 
-function buildRankingRowHtml(row, rankDisplay, { isEndorsement = false } = {}) {
-  const rowClass = isEndorsement ? 'ranking-ec-row' : '';
+function buildRankingRowHtml(row, rankDisplay, { isEndorsement = false, isOutsideCapacity = false } = {}) {
+  const rowClass = [isEndorsement ? 'ranking-ec-row' : '', isOutsideCapacity ? 'ranking-outside-capacity' : '']
+    .filter(Boolean)
+    .join(' ');
+  const rawClassification = String(row.classification || 'REGULAR').toUpperCase();
   const classificationText = isEndorsement
-    ? `SCC - ${escapeHtml(row.classification || 'REGULAR')}`
-    : escapeHtml(row.classification || 'REGULAR');
+    ? 'SCC'
+    : (rawClassification.startsWith('ETG') ? 'ETG' : 'R');
 
-  const rankHtml = isEndorsement
-    ? `<span class="ranking-ec-badge">SCC ${rankDisplay}</span>`
-    : `<span class="fw-semibold">${rankDisplay}</span>`;
+  const rankHtml = `<span class="fw-semibold">${rankDisplay}</span>`;
 
   return `
-    <tr class="${rowClass}">
-      <td>${rankHtml}</td>
-      <td>${escapeHtml(row.examinee_number || '')}</td>
-      <td class="text-uppercase">${escapeHtml(row.full_name || '')}</td>
-      <td class="fw-semibold">${classificationText}</td>
-      <td>${escapeHtml(row.sat_score ?? '')}</td>
-      <td class="fw-semibold text-warning">${escapeHtml(row.final_score ?? '')}</td>
-      <td>${escapeHtml(row.encoded_by || 'N/A')}</td>
-    </tr>
+    <div class="ranking-list-row ${rowClass}">
+      <div class="ranking-col-rank">${rankHtml}</div>
+      <div class="ranking-col-examinee">${escapeHtml(row.examinee_number || '')}</div>
+      <div class="ranking-col-name">${escapeHtml(row.full_name || '')}</div>
+      <div class="ranking-col-class">${escapeHtml(classificationText)}</div>
+      <div class="ranking-col-sat">${escapeHtml(row.sat_score ?? '')}</div>
+      <div class="ranking-col-score">${escapeHtml(row.final_score ?? '')}</div>
+    </div>
   `;
 }
 
-function renderRankingTable(bodyEl, rows, emptyMessage) {
-  if (!bodyEl) return;
+function buildRankingListHeaderHtml() {
+  return `
+    <div class="ranking-list-header">
+      <div>Rank</div>
+      <div>Examinee #</div>
+      <div>Student Name</div>
+      <div>Class</div>
+      <div>SAT</div>
+      <div>Score</div>
+    </div>
+  `;
+}
+
+function renderRankingList(listEl, rows, emptyMessage, { capacityLimit = null } = {}) {
+  if (!listEl) return;
 
   if (!rows.length) {
-    bodyEl.innerHTML = `
-      <tr>
-        <td colspan="7" class="text-center text-muted py-3">${escapeHtml(emptyMessage)}</td>
-      </tr>
-    `;
+    listEl.innerHTML = `${buildRankingListHeaderHtml()}<div class="ranking-list-empty">${escapeHtml(emptyMessage)}</div>`;
     return;
   }
 
-  bodyEl.innerHTML = rows.map((row, index) => buildRankingRowHtml(row, index + 1)).join('');
+  const rowsHtml = rows
+    .map((row, index) => {
+      const isOutsideCapacity = capacityLimit !== null && index >= capacityLimit;
+      return buildRankingRowHtml(row, index + 1, { isOutsideCapacity });
+    })
+    .join('');
+
+  listEl.innerHTML = `${buildRankingListHeaderHtml()}${rowsHtml}`;
 }
 
 function renderRegularWithEcTable(regularRows, endorsementRows) {
-  if (!programRankingRegularBody) return;
+  if (!programRankingRegularList) return;
 
   if (!regularRows.length && !endorsementRows.length) {
-    programRankingRegularBody.innerHTML = `
-      <tr>
-        <td colspan="7" class="text-center text-muted py-3">No regular or SCC students.</td>
-      </tr>
-    `;
+    programRankingRegularList.innerHTML = `${buildRankingListHeaderHtml()}<div class="ranking-list-empty">No regular or SCC students.</div>`;
     return;
   }
 
-  let html = '';
-  if (regularRows.length) {
-    html += regularRows.map((row, index) => buildRankingRowHtml(row, index + 1)).join('');
+  const configuredRegularLimit = getCapacityLimit('regular');
+  const configuredEndorsementLimit = getCapacityLimit('endorsement');
+  const regularSlots = configuredRegularLimit !== null ? Math.max(0, configuredRegularLimit) : null;
+  const endorsementLimit = configuredEndorsementLimit !== null ? Math.max(0, configuredEndorsementLimit) : null;
+  const regularWithSccCapacity = regularSlots !== null
+    ? regularSlots + (endorsementLimit !== null ? endorsementLimit : 0)
+    : null;
+
+  let html = buildRankingListHeaderHtml();
+  let rankCounter = 1;
+
+  const appendRegularRow = (row) => {
+    const isOutsideCapacity = regularWithSccCapacity !== null && rankCounter > regularWithSccCapacity;
+    html += buildRankingRowHtml(row, rankCounter, { isOutsideCapacity });
+    rankCounter += 1;
+  };
+
+  const appendSccRow = (row, sccIndex) => {
+    const outsideByRegularAndSccSlots = regularWithSccCapacity !== null && rankCounter > regularWithSccCapacity;
+    const outsideBySccCapacity = endorsementLimit !== null && sccIndex >= endorsementLimit;
+    html += buildRankingRowHtml(row, rankCounter, {
+      isEndorsement: true,
+      isOutsideCapacity: outsideByRegularAndSccSlots || outsideBySccCapacity
+    });
+    rankCounter += 1;
+  };
+
+  if (regularSlots !== null) {
+    // SCC takes the tail of regular capacity. Displaced regular rows go after SCC.
+    const sccInRegularSlots = Math.min(
+      endorsementRows.length,
+      regularSlots,
+      endorsementLimit !== null ? endorsementLimit : endorsementRows.length
+    );
+    const regularInsideSlots = Math.max(0, regularSlots - sccInRegularSlots);
+    const regularInsideRows = regularRows.slice(0, regularInsideSlots);
+    const regularOutsideRows = regularRows.slice(regularInsideSlots);
+
+    regularInsideRows.forEach((row) => appendRegularRow(row));
+    endorsementRows.forEach((row, sccIndex) => appendSccRow(row, sccIndex));
+    regularOutsideRows.forEach((row) => appendRegularRow(row));
+  } else {
+    regularRows.forEach((row) => appendRegularRow(row));
+    endorsementRows.forEach((row, sccIndex) => appendSccRow(row, sccIndex));
   }
 
-  if (endorsementRows.length) {
-    html += `
-      <tr class="table-warning">
-        <td colspan="7" class="fw-semibold text-uppercase small">SCC Students (Pinned below regular)</td>
-      </tr>
-    `;
-    html += endorsementRows
-      .map((row, index) => buildRankingRowHtml(row, index + 1, { isEndorsement: true }))
-      .join('');
-  }
-
-  programRankingRegularBody.innerHTML = html;
+  programRankingRegularList.innerHTML = html;
 }
 
 function refreshEcButtons() {
-  const regularEligible = getEcEligibleRows('REGULAR');
-  const etgEligible = getEcEligibleRows('ETG');
   const ecCapacity = Number(currentRankingQuota?.endorsement_capacity ?? 0);
   const ecSelected = Number(currentRankingQuota?.endorsement_selected ?? 0);
   const ecRemaining = Math.max(0, ecCapacity - ecSelected);
 
   if (addEcRegularBtn) {
-    addEcRegularBtn.disabled = regularEligible.length === 0;
+    const canAddScc = currentRankingProgramId > 0 && ecCapacity > 0 && ecRemaining > 0;
+    addEcRegularBtn.disabled = !canAddScc;
     addEcRegularBtn.title = addEcRegularBtn.disabled
       ? (ecCapacity <= 0
           ? 'SCC capacity is 0.'
           : (ecRemaining <= 0
               ? 'SCC is full.'
-              : 'No Regular students meet SAT cutoff.'))
-      : `Add SCC from ${regularEligible.length} eligible Regular student(s).`;
-  }
-
-  if (addEcEtgBtn) {
-    addEcEtgBtn.disabled = etgEligible.length === 0;
-    addEcEtgBtn.title = addEcEtgBtn.disabled
-      ? (ecCapacity <= 0
-          ? 'SCC capacity is 0.'
-          : (ecRemaining <= 0
-              ? 'SCC is full.'
-              : 'No ETG students meet SAT cutoff.'))
-      : `Add SCC from ${etgEligible.length} eligible ETG student(s).`;
+              : 'No active program selected.'))
+      : `Add SCC from student interview list (${ecRemaining} slot${ecRemaining === 1 ? '' : 's'} remaining).`;
   }
 }
 
@@ -1735,7 +1893,9 @@ function renderRankingRows(rows) {
   );
 
   renderRegularWithEcTable(regularRows, endorsementRows);
-  renderRankingTable(programRankingEtgBody, etgRows, 'No ETG ranked students.');
+  renderRankingList(programRankingEtgList, etgRows, 'No ETG ranked students.', {
+    capacityLimit: getCapacityLimit('etg')
+  });
   refreshEcButtons();
 
   return {
@@ -1759,8 +1919,12 @@ function buildRankingMeta(grouped, quota) {
   const regularSlots = Number(quota.regular_slots ?? 0);
   const etgSlots = Number(quota.etg_slots ?? 0);
   const ecSlots = Number(quota.endorsement_capacity ?? 0);
+  const regularShown = Number(quota.regular_shown ?? Math.min(regularCount, regularSlots));
+  const endorsementShown = Number(quota.endorsement_shown ?? Math.min(endorsementCount, ecSlots));
+  const etgShown = Number(quota.etg_shown ?? Math.min(etgCount, etgSlots));
+  const shownTotal = regularShown + endorsementShown + etgShown;
 
-  return `Shown ${total}/${capacity} | REGULAR: ${regularCount}/${regularSlots} | SCC: ${endorsementCount}/${ecSlots} | ETG: ${etgCount}/${etgSlots}`;
+  return `Shown ${shownTotal}/${capacity} | REGULAR: ${regularShown}/${regularSlots} | SCC: ${endorsementShown}/${ecSlots} | ETG: ${etgShown}/${etgSlots}`;
 }
 
 function setRankingState({ loading = false, empty = false, showTable = false }) {
@@ -1795,33 +1959,107 @@ function toggleEndorsement(interviewId, action) {
 
 function openAddEcPicker(sourceType) {
   const targetType = String(sourceType || '').toUpperCase();
-  const candidates = getEcEligibleRows(targetType);
-
-  if (!candidates.length) {
-    const typeLabel = targetType === 'REGULAR' ? 'Regular' : 'ETG';
-    Swal.fire('No Eligible Students', `No ${typeLabel} students are eligible for SCC.`, 'info');
+  if (targetType !== 'REGULAR') {
+    Swal.fire('Unavailable', 'Only Regular students can be added to SCC from this action.', 'info');
     return;
   }
 
-  const inputOptions = {};
-  candidates.forEach((row) => {
-    const interviewId = Number(row?.interview_id || 0);
-    if (!interviewId) return;
-    const label = `${row.examinee_number || ''} - ${(row.full_name || '').toUpperCase()} | SAT: ${row.sat_score ?? ''} | SCORE: ${row.final_score ?? ''}`;
-    inputOptions[String(interviewId)] = label;
-  });
+  const ecCapacity = Number(currentRankingQuota?.endorsement_capacity ?? 0);
+  const ecSelected = Number(currentRankingQuota?.endorsement_selected ?? 0);
+  const ecRemaining = Math.max(0, ecCapacity - ecSelected);
+
+  if (ecCapacity <= 0) {
+    Swal.fire('SCC Capacity', 'SCC capacity is 0. Configure SCC capacity first.', 'info');
+    return;
+  }
+
+  if (ecRemaining <= 0) {
+    Swal.fire('SCC Full', 'SCC capacity is full.', 'info');
+    return;
+  }
+
+  let pickerSelect = null;
 
   Swal.fire({
-    title: targetType === 'REGULAR' ? 'Add SCC from Regular List' : 'Add SCC from ETG List',
-    input: 'select',
-    inputOptions,
-    inputPlaceholder: 'Select student',
+    title: 'Add SCC (Regular)',
+    html: `
+      <div class="scc-picker-wrap">
+        <label for="sccRegularPicker" class="scc-picker-label">Select student</label>
+        <select id="sccRegularPicker"></select>
+        <div class="scc-picker-help">
+          All individuals selected under SCC are required to participate in the program interview.
+        </div>
+      </div>
+    `,
     showCancelButton: true,
     confirmButtonText: 'Add SCC',
     cancelButtonText: 'Cancel',
-    inputValidator: (value) => {
-      if (!value) return 'Please select a student.';
-      return null;
+    focusConfirm: false,
+    target: programRankingModalEl || document.body,
+    didOpen: () => {
+      const swalContainer = Swal.getContainer();
+      if (swalContainer) {
+        swalContainer.style.zIndex = '20000';
+      }
+
+      const selectEl = document.getElementById('sccRegularPicker');
+      if (!selectEl || typeof $ === 'undefined' || !$.fn || !$.fn.select2) {
+        return;
+      }
+
+      pickerSelect = $(selectEl);
+      pickerSelect.select2({
+        width: '100%',
+        dropdownParent: $(Swal.getPopup()),
+        placeholder: 'Search examinee # or student name',
+        allowClear: true,
+        minimumInputLength: 0,
+        ajax: {
+          url: sccCandidatesEndpoint,
+          dataType: 'json',
+          delay: 250,
+          data: (params) => ({
+            program_id: currentRankingProgramId,
+            q: params.term || '',
+            page: params.page || 1
+          }),
+          processResults: (data) => {
+            const results = (data && data.success && Array.isArray(data.results)) ? data.results : [];
+            return {
+              results,
+              pagination: {
+                more: Boolean(data?.pagination?.more)
+              }
+            };
+          }
+        },
+        language: {
+          noResults: () => 'No outside-ranked regular candidate found.',
+          searching: () => 'Searching...'
+        }
+      });
+
+      pickerSelect.on('select2:open', () => {
+        const searchField = document.querySelector('.select2-container--open .select2-search__field');
+        if (searchField) searchField.focus();
+      });
+
+      pickerSelect.select2('open');
+    },
+    willClose: () => {
+      if (pickerSelect && pickerSelect.data('select2')) {
+        pickerSelect.select2('destroy');
+      }
+      pickerSelect = null;
+    },
+    preConfirm: () => {
+      const selectedValue = pickerSelect && pickerSelect.length ? pickerSelect.val() : '';
+      const interviewId = Number(selectedValue || 0);
+      if (!interviewId) {
+        Swal.showValidationMessage('Please select a student.');
+        return false;
+      }
+      return interviewId;
     }
   }).then((result) => {
     if (!result.isConfirmed || !result.value) return;
@@ -1857,7 +2095,6 @@ function loadProgramRanking(programId, programName) {
   }
 
   if (addEcRegularBtn) addEcRegularBtn.disabled = true;
-  if (addEcEtgBtn) addEcEtgBtn.disabled = true;
 
   if (exportRankingBtn) {
     exportRankingBtn.href = `export_program_ranking.php?program_id=${programId}`;
@@ -1891,7 +2128,7 @@ function loadProgramRanking(programId, programName) {
           if (capacity <= 0) {
             programRankingEmptyEl.textContent = 'No ranking shown because absorptive capacity is set to 0.';
           } else {
-            programRankingEmptyEl.textContent = 'No ranked students matched the configured Regular/SCC/ETG slots.';
+            programRankingEmptyEl.textContent = 'No ranked students found for this program.';
           }
         }
         refreshEcButtons();
@@ -1914,7 +2151,6 @@ function loadProgramRanking(programId, programName) {
       }
 
       if (addEcRegularBtn) addEcRegularBtn.disabled = true;
-      if (addEcEtgBtn) addEcEtgBtn.disabled = true;
     });
 }
 
@@ -1947,10 +2183,6 @@ if (addEcRegularBtn) {
   addEcRegularBtn.addEventListener('click', () => openAddEcPicker('REGULAR'));
 }
 
-if (addEcEtgBtn) {
-  addEcEtgBtn.addEventListener('click', () => openAddEcPicker('ETG'));
-}
-
 if (printRankingBtn) {
   printRankingBtn.addEventListener('click', function () {
     if (!currentRankingRows.length) {
@@ -1965,6 +2197,7 @@ if (printRankingBtn) {
     }
 
     const now = new Date().toLocaleString();
+    const printedBy = String(printActorName || '').trim() || 'N/A';
     const metaText = programRankingMetaEl ? programRankingMetaEl.textContent : '';
     const tableHtml = programRankingTableWrap ? programRankingTableWrap.innerHTML : '';
 
@@ -1975,19 +2208,64 @@ if (printRankingBtn) {
         <meta charset="utf-8">
         <title>Program Ranking - ${currentRankingProgramName}</title>
         <style>
-          body { font-family: Arial, sans-serif; padding: 20px; color: #1f2d3d; }
+          @page { size: A4 portrait; margin: 16mm 14mm; }
+          body { font-family: Arial, sans-serif; color: #1f2d3d; }
           h2 { margin: 0 0 6px 0; font-size: 20px; }
           .meta { margin-bottom: 14px; color: #6c757d; font-size: 13px; }
-          table { width: 100%; border-collapse: collapse; }
-          th, td { border: 1px solid #d9dee3; padding: 8px; font-size: 12px; }
-          th { background: #f5f7fa; text-align: left; }
+          .meta-inline { margin-bottom: 10px; color: #6c757d; font-size: 13px; }
+          .meta-inline .sep { padding: 0 6px; color: #9aa3af; }
+          .btn { display: none !important; }
+          .ranking-list { border: none; background: transparent; }
+          .ranking-list-header, .ranking-list-row {
+            display: grid;
+            grid-template-columns: 52px 96px minmax(220px, 2.2fr) 72px 62px 74px;
+            gap: 10px;
+            align-items: center;
+            padding: 3px 0;
+          }
+          .ranking-list-header {
+            background: transparent;
+            border-bottom: none;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #111827;
+          }
+          .ranking-list-row { border-top: none; font-size: 16px; color: #111827; }
+          .ranking-list-row .ranking-col-name { text-transform: uppercase; }
+          .ranking-list-row .ranking-col-score { color: #111827; font-weight: 500; }
+          .ranking-list-label {
+            padding: 3px 0;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: #111827;
+            background: transparent;
+            border-top: none;
+          }
+          .ranking-list-empty { padding: 8px 0; font-size: 12px; color: #64748b; }
+          .ranking-ec-row { background: #fff8e1; }
+          .ranking-outside-capacity { color: #b91c1c !important; }
+          .ranking-outside-capacity .ranking-col-score { color: #b91c1c !important; }
+          .print-disclaimer {
+            margin-top: 24px;
+            padding-top: 12px;
+            border-top: 1px solid #d1d5db;
+            text-align: center;
+            font-size: 12px;
+            letter-spacing: 0.08em;
+            color: #6b7280;
+            font-weight: 700;
+          }
         </style>
       </head>
       <body>
         <h2>Program Ranking - ${currentRankingProgramName}</h2>
-        <div class="meta">Generated: ${now}</div>
+        <div class="meta-inline">Generated: ${now}<span class="sep">|</span>Printed by: ${escapeHtml(printedBy)}</div>
         <div class="meta">${escapeHtml(metaText)}</div>
         ${tableHtml}
+        <div class="print-disclaimer">NOT OFFICIAL</div>
       </body>
       </html>
     `);
@@ -2207,7 +2485,7 @@ if (studentModal) {
       enforceLockedFirstChoice(true);
 
       document.getElementById('classification').value = 'REGULAR';
-      syncEtgUI();
+      syncEtgUI({ preserveExisting: false });
 
       return;
     }
@@ -2225,7 +2503,9 @@ if (studentModal) {
 
         // populate
         document.getElementById('interview_id').value = record.interview_id;
-        document.getElementById('classification').value = record.classification;
+        const classificationValue = String(record.classification || 'REGULAR').toUpperCase();
+        document.getElementById('classification').value =
+          (classificationValue === 'ETG') ? 'ETG' : 'REGULAR';
 
         document.querySelector('[name="mobile_number"]').value = record.mobile_number || '';
         setProgramChoiceValue('first_choice', assignedProgramId > 0 ? assignedProgramId : record.first_choice);
@@ -2233,11 +2513,10 @@ if (studentModal) {
         setProgramChoiceValue('third_choice', record.third_choice);
         document.querySelector('[name="shs_track_id"]').value  = record.shs_track_id || '';
 
-        if (record.classification === 'ETG') {
-          document.getElementById('etg_class_id').value = record.etg_class_id || '';
-        }
+        document.getElementById('etg_class_id').value =
+          (record.etg_class_id && Number(record.etg_class_id) > 0) ? String(record.etg_class_id) : '';
 
-        syncEtgUI();
+        syncEtgUI({ preserveExisting: true });
 
         // OWNER CHECK
 if (data.is_owner) {
@@ -2357,36 +2636,35 @@ if (studentViewModal) {
 
         // Simple list fields
         document.getElementById('v_classification').innerText =
-          record.classification || '—';
+          String(record.classification || 'REGULAR').toUpperCase();
 
-        // ETG class (only meaningful if ETG)
-        if (record.classification === 'ETG' && record.etg_class_id) {
-          // Pull label from existing select options in the manage modal (no extra queries)
+        // ETG class can be recorded for both REGULAR and ETG classification
+        if (record.etg_class_id && Number(record.etg_class_id) > 0) {
           const opt = document.querySelector(`#etg_class_id option[value="${record.etg_class_id}"]`);
-          document.getElementById('v_etg_class').innerText = opt ? opt.textContent.trim() : '—';
+          document.getElementById('v_etg_class').innerText = opt ? opt.textContent.trim() : 'NONE';
         } else {
-          document.getElementById('v_etg_class').innerText = '—';
+          document.getElementById('v_etg_class').innerText = 'NONE';
         }
 
         document.getElementById('v_mobile_number').innerText =
-          record.mobile_number || '—';
+          record.mobile_number || '--';
 
         // Program choices: pull label from existing select options in manage modal
         const p1 = document.querySelector(`[name="first_choice"] option[value="${record.first_choice}"]`);
         const p2 = document.querySelector(`[name="second_choice"] option[value="${record.second_choice}"]`);
         const p3 = document.querySelector(`[name="third_choice"] option[value="${record.third_choice}"]`);
 
-        document.getElementById('v_first_choice').innerText  = p1 ? p1.textContent.trim().toUpperCase() : '—';
-        document.getElementById('v_second_choice').innerText = p2 ? p2.textContent.trim().toUpperCase() : '—';
-        document.getElementById('v_third_choice').innerText  = p3 ? p3.textContent.trim().toUpperCase() : '—';
+        document.getElementById('v_first_choice').innerText  = p1 ? p1.textContent.trim().toUpperCase() : '--';
+        document.getElementById('v_second_choice').innerText = p2 ? p2.textContent.trim().toUpperCase() : '--';
+        document.getElementById('v_third_choice').innerText  = p3 ? p3.textContent.trim().toUpperCase() : '--';
 
         // SHS Track label from existing select options
         const t = document.querySelector(`[name="shs_track_id"] option[value="${record.shs_track_id}"]`);
-        document.getElementById('v_shs_track').innerText = t ? t.textContent.trim() : '—';
+        document.getElementById('v_shs_track').innerText = t ? t.textContent.trim() : '--';
 
         // Datetime
         document.getElementById('v_interview_datetime').innerText =
-          record.interview_datetime || '—';
+          record.interview_datetime || '--';
 
       })
       .catch(() => {
@@ -2399,39 +2677,30 @@ if (studentViewModal) {
 
 
 // ==============================================
-// ETG CLASS RULES
-// - If REGULAR: etg_class_id becomes "not required" and hidden
-// - If ETG: show dropdown and required
+// ETG class rules:
+// - REGULAR: ETG class is optional (can be NONE or a class)
+// - ETG: ETG class is required
 // ==============================================
-function syncEtgUI() {
+function syncEtgUI(options = {}) {
 
   const classificationEl = document.getElementById('classification');
   const etgSelectEl      = document.getElementById('etg_class_id');
 
   if (!classificationEl || !etgSelectEl) return;
 
-  if (classificationEl.value === 'ETG') {
+  const preserveExisting = Boolean(options.preserveExisting);
+  const classification = String(classificationEl.value || 'REGULAR').toUpperCase();
 
-    // Enable dropdown
-    etgSelectEl.disabled = false;
-    etgSelectEl.required = true;
+  etgSelectEl.disabled = false;
+  etgSelectEl.required = (classification === 'ETG');
 
-    // If currently REGULAR, switch to first ETG option
-    if (!etgSelectEl.value) {
-        if (etgSelectEl.options.length > 1) {
-            etgSelectEl.selectedIndex = 1;
-        }
+  if (classification === 'ETG' && !etgSelectEl.value) {
+    const firstEtgOption = Array.from(etgSelectEl.options).find((opt) => String(opt.value).trim() !== '');
+    if (firstEtgOption) {
+      etgSelectEl.value = firstEtgOption.value;
     }
-
-
-  } else {
-
-    // Set to REGULAR
+  } else if (classification === 'REGULAR' && !preserveExisting) {
     etgSelectEl.value = '';
-
-    // Disable dropdown
-    etgSelectEl.disabled = true;
-    etgSelectEl.required = false;
   }
 }
 
@@ -2442,6 +2711,14 @@ function syncEtgUI() {
 const classificationElHook = document.getElementById('classification');
 if (classificationElHook) {
   classificationElHook.addEventListener('change', syncEtgUI);
+}
+
+const mobileInputEl = document.querySelector('#studentInterviewForm [name="mobile_number"]');
+if (mobileInputEl) {
+  mobileInputEl.addEventListener('input', function () {
+    const digitsOnly = String(this.value || '').replace(/\D/g, '').slice(0, 11);
+    this.value = digitsOnly;
+  });
 }
 
 
@@ -2458,7 +2735,38 @@ if (interviewForm) {
 
     e.preventDefault();
 
+    const classificationEl = document.getElementById('classification');
+    const etgClassEl = document.getElementById('etg_class_id');
+    const mobileEl = interviewForm.querySelector('[name="mobile_number"]');
+
+    const classificationValue = String(classificationEl?.value || 'REGULAR').toUpperCase();
+    const etgClassValue = String(etgClassEl?.value || '').trim();
+    const mobileValue = String(mobileEl?.value || '').trim();
+
+    if (!/^0\d{10}$/.test(mobileValue)) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Invalid Mobile Number',
+        text: 'Mobile number must be 11 digits and start with 0.'
+      });
+      if (mobileEl) mobileEl.focus();
+      return;
+    }
+
+    if (classificationValue === 'ETG' && !etgClassValue) {
+      Swal.fire({
+        icon: 'error',
+        title: 'ETG Class Required',
+        text: 'Please select an ETG classification for ETG students.'
+      });
+      if (etgClassEl) etgClassEl.focus();
+      return;
+    }
+
     const formData = new FormData(interviewForm);
+    formData.set('classification', classificationValue);
+    formData.set('mobile_number', mobileValue);
+    formData.set('etg_class_id', etgClassValue);
 
     fetch('save_interview.php', {
       method: 'POST',
@@ -2480,7 +2788,7 @@ if (interviewForm) {
       const modal = bootstrap.Modal.getInstance(document.getElementById('studentModal'));
       modal.hide();
 
-// 🔥 RELOAD LIST PROPERLY AFTER SAVE
+// Reload list after save
 page = 1;
 hasMore = true;
 loadStudents(true);

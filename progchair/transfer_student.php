@@ -7,6 +7,7 @@
  */
 
 require_once '../config/db.php';
+require_once '../config/system_controls.php';
 session_start();
 
 /* ======================================================
@@ -82,6 +83,11 @@ if (!$student || empty($student['interview_id'])) {
     header('Location: index.php');
     exit;
 }
+
+$globalSatCutoffState = get_global_sat_cutoff_state($conn);
+$globalSatCutoffMin = isset($globalSatCutoffState['min']) ? (int) $globalSatCutoffState['min'] : null;
+$globalSatCutoffMax = isset($globalSatCutoffState['max']) ? (int) $globalSatCutoffState['max'] : null;
+$globalSatCutoffActive = (bool) ($globalSatCutoffState['active'] ?? false);
 
 
 /**
@@ -295,6 +301,14 @@ $programs = $stmtProg->get_result();
 
 <?php endif; ?>
 
+<?php if ($globalSatCutoffActive): ?>
+<div class="alert alert-info mb-4">
+    Global SAT cutoff override is active: only students with SAT
+    <strong><?= number_format((int) $globalSatCutoffMin); ?> - <?= number_format((int) $globalSatCutoffMax); ?></strong>
+    can be transferred.
+</div>
+<?php endif; ?>
+
 
 <!-- ================= PROGRAM LIST ================= -->
 <form method="POST" action="process_transfer.php" <?= $hasPendingTransfer ? 'style="pointer-events:none; opacity:0.6;"' : ''; ?>>
@@ -329,15 +343,24 @@ $programs = $stmtProg->get_result();
 <?php while ($row = $programs->fetch_assoc()): 
 
     $sat = (int)$student['sat_score'];
-    $cutoff = (int)$row['cutoff_score'];
-    $qualified = $sat >= $cutoff;
+    $programCutoff = isset($row['cutoff_score']) ? (int) $row['cutoff_score'] : null;
+    $effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalSatCutoffActive, $globalSatCutoffMin);
+    $effectiveCutoffLabel = ($effectiveCutoff !== null) ? number_format((int) $effectiveCutoff) : 'N/A';
+    $qualified = ($effectiveCutoff === null) ? true : ($sat >= $effectiveCutoff);
+    $qualificationNote = 'SAT BELOW CUT-OFF';
+
+    if ($globalSatCutoffActive) {
+        $qualified = ($sat >= (int) $globalSatCutoffMin && $sat <= (int) $globalSatCutoffMax);
+        $effectiveCutoffLabel = number_format((int) $globalSatCutoffMin) . ' - ' . number_format((int) $globalSatCutoffMax);
+        $qualificationNote = 'SAT OUTSIDE CUT-OFF RANGE';
+    }
 
 ?>
 
 <div class="col-md-4 mb-3">
   <div class="card program-card p-3 <?= !$qualified ? 'border border-danger opacity-50' : ''; ?>"
        data-qualified="<?= $qualified ? '1' : '0'; ?>"
-       data-cutoff="<?= $cutoff; ?>"
+       data-cutoff="<?= htmlspecialchars($effectiveCutoffLabel); ?>"
        onclick="selectProgram(<?= $row['program_id']; ?>, this)">
 
         <small class="text-muted">
@@ -357,7 +380,7 @@ $programs = $stmtProg->get_result();
         <div class="mt-2">
 
             <span class="badge <?= $qualified ? 'bg-label-success' : 'bg-label-danger'; ?>">
-                CUT-OFF: <?= $cutoff; ?>
+                CUT-OFF: <?= htmlspecialchars($effectiveCutoffLabel); ?>
             </span>
 
             <span class="badge bg-label-primary ms-2">
@@ -366,7 +389,14 @@ $programs = $stmtProg->get_result();
 
             <?php if (!$qualified): ?>
                 <div class="text-danger small mt-1">
-                    SAT BELOW CUT-OFF
+                    <?= htmlspecialchars($qualificationNote); ?>
+                </div>
+            <?php endif; ?>
+
+            <?php if ($globalSatCutoffActive): ?>
+                <div class="text-muted small mt-1">
+                    Program Cut-Off: <?= number_format((int) ($programCutoff ?? 0)); ?> |
+                    Global Override: <?= number_format((int) $globalSatCutoffMin); ?> - <?= number_format((int) $globalSatCutoffMax); ?>
                 </div>
             <?php endif; ?>
 
@@ -422,7 +452,7 @@ function selectProgram(programId, element) {
     Swal.fire({
       icon: 'warning',
       title: 'Not Qualified',
-      text: 'Student SAT score is below the required cut-off.',
+      text: 'Student SAT score is outside the required cut-off filter.',
     });
 
     return;

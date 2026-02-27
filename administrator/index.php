@@ -19,10 +19,31 @@ if (empty($_SESSION['admin_login_lock_csrf'])) {
 $adminLoginLockCsrf = (string) $_SESSION['admin_login_lock_csrf'];
 $nonAdminLoginLocked = is_non_admin_login_locked($conn);
 
+if (empty($_SESSION['admin_global_cutoff_csrf'])) {
+    try {
+        $_SESSION['admin_global_cutoff_csrf'] = bin2hex(random_bytes(32));
+    } catch (Throwable $e) {
+        $_SESSION['admin_global_cutoff_csrf'] = sha1(uniqid('admin_global_cutoff_csrf_', true));
+    }
+}
+
+$adminGlobalCutoffCsrf = (string) $_SESSION['admin_global_cutoff_csrf'];
+$globalSatCutoffState = get_global_sat_cutoff_state($conn);
+$globalSatCutoffEnabled = (bool) ($globalSatCutoffState['enabled'] ?? false);
+$globalSatCutoffMin = isset($globalSatCutoffState['min']) ? (int) $globalSatCutoffState['min'] : null;
+$globalSatCutoffMax = isset($globalSatCutoffState['max']) ? (int) $globalSatCutoffState['max'] : null;
+$globalSatCutoffActive = (bool) ($globalSatCutoffState['active'] ?? false);
+
 $loginLockFlash = null;
 if (isset($_SESSION['admin_login_lock_flash']) && is_array($_SESSION['admin_login_lock_flash'])) {
     $loginLockFlash = $_SESSION['admin_login_lock_flash'];
     unset($_SESSION['admin_login_lock_flash']);
+}
+
+$globalCutoffFlash = null;
+if (isset($_SESSION['admin_global_cutoff_flash']) && is_array($_SESSION['admin_global_cutoff_flash'])) {
+    $globalCutoffFlash = $_SESSION['admin_global_cutoff_flash'];
+    unset($_SESSION['admin_global_cutoff_flash']);
 }
 
 function table_column_exists(mysqli $conn, string $table, string $column): bool
@@ -612,6 +633,18 @@ $overallInterviewTrendSeries = [
         border-color: #abefc6;
       }
 
+      .admin-login-chip.global-active {
+        background: #eff8ff;
+        color: #175cd3;
+        border-color: #b2ddff;
+      }
+
+      .admin-login-chip.global-inactive {
+        background: #f4f7fc;
+        color: #475467;
+        border-color: #d0d5dd;
+      }
+
       @media (max-width: 575.98px) {
         .admin-login-control {
           width: 100%;
@@ -659,6 +692,11 @@ $overallInterviewTrendSeries = [
   <?php if ($loginLockFlash): ?>
     <div class="alert alert-<?= htmlspecialchars((string) ($loginLockFlash['type'] ?? 'info')); ?> mb-3" role="alert">
       <?= htmlspecialchars((string) ($loginLockFlash['message'] ?? '')); ?>
+    </div>
+  <?php endif; ?>
+  <?php if ($globalCutoffFlash): ?>
+    <div class="alert alert-<?= htmlspecialchars((string) ($globalCutoffFlash['type'] ?? 'info')); ?> mb-3" role="alert">
+      <?= htmlspecialchars((string) ($globalCutoffFlash['message'] ?? '')); ?>
     </div>
   <?php endif; ?>
 
@@ -711,6 +749,19 @@ $overallInterviewTrendSeries = [
                       <?= $nonAdminLoginLocked ? 'Unlock Login' : 'Lock Login'; ?>
                     </button>
                   </form>
+                </div>
+                <div class="admin-login-control">
+                  <span class="admin-login-chip <?= $globalSatCutoffActive ? 'global-active' : 'global-inactive'; ?>">
+                    Global SAT: <?= $globalSatCutoffActive ? (number_format((int) $globalSatCutoffMin) . ' - ' . number_format((int) $globalSatCutoffMax)) : 'Disabled'; ?>
+                  </span>
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-outline-secondary"
+                    data-bs-toggle="modal"
+                    data-bs-target="#globalCutoffModal"
+                  >
+                    Set Global Range
+                  </button>
                 </div>
               </div>
             </div>
@@ -834,6 +885,72 @@ $overallInterviewTrendSeries = [
   </div>
 </div>
 
+<div class="modal fade" id="globalCutoffModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <form method="POST" action="save_global_cutoff.php">
+        <div class="modal-header">
+          <h5 class="modal-title">Global SAT Cutoff Range</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($adminGlobalCutoffCsrf); ?>" />
+
+          <div class="form-check form-switch mb-3">
+            <input
+              class="form-check-input"
+              type="checkbox"
+              id="globalCutoffEnabledInput"
+              name="global_cutoff_enabled"
+              value="1"
+              <?= $globalSatCutoffEnabled ? 'checked' : ''; ?>
+            />
+            <label class="form-check-label" for="globalCutoffEnabledInput">
+              Enable global SAT cutoff override
+            </label>
+          </div>
+
+          <div class="row g-2">
+            <div class="col-6">
+              <label class="form-label" for="globalCutoffMinInput">Minimum SAT Score</label>
+              <input
+                type="number"
+                class="form-control"
+                id="globalCutoffMinInput"
+                name="global_cutoff_min"
+                min="0"
+                max="9999"
+                step="1"
+                value="<?= $globalSatCutoffMin !== null ? (int) $globalSatCutoffMin : ''; ?>"
+              />
+            </div>
+            <div class="col-6">
+              <label class="form-label" for="globalCutoffMaxInput">Maximum SAT Score</label>
+              <input
+                type="number"
+                class="form-control"
+                id="globalCutoffMaxInput"
+                name="global_cutoff_max"
+                min="0"
+                max="9999"
+                step="1"
+                value="<?= $globalSatCutoffMax !== null ? (int) $globalSatCutoffMax : ''; ?>"
+              />
+            </div>
+            <small class="text-muted d-block mt-2">
+              When enabled, this range overrides per-program cutoff visibility for Administrator and Program Chair lists.
+            </small>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Cutoff</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
             <!-- / Content -->
 
             <!-- Footer -->
@@ -887,6 +1004,23 @@ document.addEventListener("DOMContentLoaded", function () {
   const campusStatusProgramsWrapEl = document.getElementById('campusStatusProgramsWrap');
   const campusStatusEmptyStateEl = document.getElementById('campusStatusEmptyState');
   const campusCardEls = document.querySelectorAll('.admin-campus-card[data-campus-id]');
+  const globalCutoffEnabledInput = document.getElementById('globalCutoffEnabledInput');
+  const globalCutoffMinInput = document.getElementById('globalCutoffMinInput');
+  const globalCutoffMaxInput = document.getElementById('globalCutoffMaxInput');
+
+  function syncGlobalCutoffControls() {
+    if (!globalCutoffEnabledInput || !globalCutoffMinInput || !globalCutoffMaxInput) return;
+    const enabled = globalCutoffEnabledInput.checked;
+    globalCutoffMinInput.disabled = !enabled;
+    globalCutoffMaxInput.disabled = !enabled;
+    globalCutoffMinInput.required = enabled;
+    globalCutoffMaxInput.required = enabled;
+  }
+
+  if (globalCutoffEnabledInput && globalCutoffMinInput && globalCutoffMaxInput) {
+    globalCutoffEnabledInput.addEventListener('change', syncGlobalCutoffControls);
+    syncGlobalCutoffControls();
+  }
 
   function escapeHtml(value) {
     return String(value ?? '')

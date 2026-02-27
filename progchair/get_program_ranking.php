@@ -7,6 +7,7 @@
  */
 
 require_once '../config/db.php';
+require_once '../config/system_controls.php';
 require_once 'endorsement_helpers.php';
 session_start();
 
@@ -82,6 +83,20 @@ if (!$program) {
     exit;
 }
 
+$programCutoff = $program['cutoff_score'] !== null ? (int) $program['cutoff_score'] : null;
+$globalSatCutoffState = get_global_sat_cutoff_state($conn);
+$globalSatCutoffEnabled = (bool) ($globalSatCutoffState['enabled'] ?? false);
+$globalSatCutoffMin = isset($globalSatCutoffState['min']) ? (int) $globalSatCutoffState['min'] : null;
+$globalSatCutoffMax = isset($globalSatCutoffState['max']) ? (int) $globalSatCutoffState['max'] : null;
+$globalSatCutoffActive = (bool) ($globalSatCutoffState['active'] ?? false);
+$effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalSatCutoffActive, $globalSatCutoffMin);
+$cutoffWhereSql = '';
+if ($globalSatCutoffActive) {
+    $cutoffWhereSql = ' AND pr.sat_score BETWEEN ? AND ?';
+} elseif ($effectiveCutoff !== null) {
+    $cutoffWhereSql = ' AND pr.sat_score >= ?';
+}
+
 $rankingSql = "
     SELECT
         si.interview_id,
@@ -110,6 +125,7 @@ $rankingSql = "
     WHERE COALESCE(NULLIF(si.program_id, 0), NULLIF(si.first_choice, 0)) = ?
       AND si.status = 'active'
       AND si.final_score IS NOT NULL
+      {$cutoffWhereSql}
     ORDER BY
         classification_group ASC,
         si.final_score DESC,
@@ -128,7 +144,13 @@ if (!$stmtRanking) {
     exit;
 }
 
-$stmtRanking->bind_param("i", $programId);
+if ($globalSatCutoffActive) {
+    $stmtRanking->bind_param("iii", $programId, $globalSatCutoffMin, $globalSatCutoffMax);
+} elseif ($effectiveCutoff !== null) {
+    $stmtRanking->bind_param("ii", $programId, $effectiveCutoff);
+} else {
+    $stmtRanking->bind_param("i", $programId);
+}
 $stmtRanking->execute();
 $resultRanking = $stmtRanking->get_result();
 
@@ -214,12 +236,26 @@ $filteredEtgRows = array_values(array_filter($allEtgRows, function (array $row) 
     return !isset($endorsementIds[(int) ($row['interview_id'] ?? 0)]);
 }));
 
+$regularRows = $filteredRegularRows;
+$etgRows = $filteredEtgRows;
+
+$regularEffectiveSlots = null;
+$endorsementInRegularSlots = 0;
+$endorsementSelectedCount = count($endorsementRows);
+
 if ($quotaEnabled) {
-    $regularRows = array_slice($filteredRegularRows, 0, $regularSlots);
-    $etgRows = array_slice($filteredEtgRows, 0, $etgSlots);
+    $regularSlotsCount = max(0, (int) $regularSlots);
+    $endorsementSlotsCount = max(0, (int) $endorsementCapacity);
+    $endorsementInRegularSlots = min($endorsementSelectedCount, $regularSlotsCount, $endorsementSlotsCount);
+    $regularEffectiveSlots = max(0, $regularSlotsCount - $endorsementInRegularSlots);
+
+    $regularShownCount = min(count($regularRows), $regularEffectiveSlots);
+    $etgShownCount = min(count($etgRows), max(0, (int) $etgSlots));
+    $endorsementShownCount = min($endorsementSelectedCount, min($regularSlotsCount, $endorsementSlotsCount));
 } else {
-    $regularRows = $filteredRegularRows;
-    $etgRows = $filteredEtgRows;
+    $regularShownCount = count($regularRows);
+    $etgShownCount = count($etgRows);
+    $endorsementShownCount = $endorsementSelectedCount;
 }
 
 foreach ($regularRows as &$regularRow) {
@@ -242,18 +278,26 @@ echo json_encode([
     ],
     'quota' => [
         'enabled' => $quotaEnabled,
-        'cutoff_score' => $program['cutoff_score'] !== null ? (int) $program['cutoff_score'] : null,
+        'cutoff_score' => $effectiveCutoff,
+        'program_cutoff_score' => $programCutoff,
+        'global_cutoff_enabled' => $globalSatCutoffEnabled,
+        'global_cutoff_value' => $globalSatCutoffMin,
+        'global_cutoff_min' => $globalSatCutoffMin,
+        'global_cutoff_max' => $globalSatCutoffMax,
+        'global_cutoff_active' => $globalSatCutoffActive,
         'absorptive_capacity' => $absorptiveCapacity,
         'base_capacity' => $baseCapacity,
         'endorsement_capacity' => $endorsementCapacity,
-        'endorsement_selected' => count($endorsementRows),
+        'endorsement_selected' => $endorsementSelectedCount,
         'regular_slots' => $regularSlots,
+        'regular_effective_slots' => $regularEffectiveSlots,
+        'endorsement_in_regular_slots' => $endorsementInRegularSlots,
         'etg_slots' => $etgSlots,
         'regular_candidates' => count($filteredRegularRows),
         'etg_candidates' => count($filteredEtgRows),
-        'regular_shown' => count($regularRows),
-        'endorsement_shown' => count($endorsementRows),
-        'etg_shown' => count($etgRows)
+        'regular_shown' => $regularShownCount,
+        'endorsement_shown' => $endorsementShownCount,
+        'etg_shown' => $etgShownCount
     ],
     'rows' => $rows
 ]);

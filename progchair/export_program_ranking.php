@@ -7,6 +7,7 @@
  */
 
 require_once '../config/db.php';
+require_once '../config/system_controls.php';
 require_once 'endorsement_helpers.php';
 session_start();
 
@@ -66,6 +67,20 @@ if (!$program) {
     exit;
 }
 
+$programCutoff = $program['cutoff_score'] !== null ? (int) $program['cutoff_score'] : null;
+$globalSatCutoffState = get_global_sat_cutoff_state($conn);
+$globalSatCutoffEnabled = (bool) ($globalSatCutoffState['enabled'] ?? false);
+$globalSatCutoffMin = isset($globalSatCutoffState['min']) ? (int) $globalSatCutoffState['min'] : null;
+$globalSatCutoffMax = isset($globalSatCutoffState['max']) ? (int) $globalSatCutoffState['max'] : null;
+$globalSatCutoffActive = (bool) ($globalSatCutoffState['active'] ?? false);
+$effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalSatCutoffActive, $globalSatCutoffMin);
+$cutoffWhereSql = '';
+if ($globalSatCutoffActive) {
+    $cutoffWhereSql = ' AND pr.sat_score BETWEEN ? AND ?';
+} elseif ($effectiveCutoff !== null) {
+    $cutoffWhereSql = ' AND pr.sat_score >= ?';
+}
+
 $rankingSql = "
     SELECT
         si.interview_id,
@@ -94,6 +109,7 @@ $rankingSql = "
     WHERE COALESCE(NULLIF(si.program_id, 0), NULLIF(si.first_choice, 0)) = ?
       AND si.status = 'active'
       AND si.final_score IS NOT NULL
+      {$cutoffWhereSql}
     ORDER BY
         classification_group ASC,
         si.final_score DESC,
@@ -108,7 +124,13 @@ if (!$stmtRanking) {
     exit;
 }
 
-$stmtRanking->bind_param("i", $programId);
+if ($globalSatCutoffActive) {
+    $stmtRanking->bind_param("iii", $programId, $globalSatCutoffMin, $globalSatCutoffMax);
+} elseif ($effectiveCutoff !== null) {
+    $stmtRanking->bind_param("ii", $programId, $effectiveCutoff);
+} else {
+    $stmtRanking->bind_param("i", $programId);
+}
 $stmtRanking->execute();
 $resultRanking = $stmtRanking->get_result();
 
@@ -209,6 +231,14 @@ $output = fopen('php://output', 'w');
 fputcsv($output, ['Program Ranking']);
 fputcsv($output, ['Program', $programLabel]);
 fputcsv($output, ['Generated', date('Y-m-d H:i:s')]);
+if ($globalSatCutoffActive) {
+    fputcsv($output, [
+        'Applied SAT Cutoff',
+        'Global Override: SAT ' . (int) $globalSatCutoffMin . ' - ' . (int) $globalSatCutoffMax
+    ]);
+} elseif ($effectiveCutoff !== null) {
+    fputcsv($output, ['Applied SAT Cutoff', 'Program Cutoff: SAT >= ' . (int) $effectiveCutoff]);
+}
 if ($quotaEnabled) {
     $quotaSummary = sprintf(
         'Capacity: %d | Base: %d | Regular: %d/%d | SCC: %d/%d | ETG: %d/%d',

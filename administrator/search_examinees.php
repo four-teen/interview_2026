@@ -1,5 +1,6 @@
 <?php
 require_once '../config/db.php';
+require_once '../config/system_controls.php';
 session_start();
 
 header('Content-Type: application/json');
@@ -27,6 +28,11 @@ if (strlen($query) > 100) {
 }
 
 $like = '%' . $query . '%';
+$globalSatCutoffState = get_global_sat_cutoff_state($conn);
+$globalSatCutoffMin = isset($globalSatCutoffState['min']) ? (int) $globalSatCutoffState['min'] : null;
+$globalSatCutoffMax = isset($globalSatCutoffState['max']) ? (int) $globalSatCutoffState['max'] : null;
+$globalSatCutoffActive = (bool) ($globalSatCutoffState['active'] ?? false);
+$cutoffWhereSql = $globalSatCutoffActive ? ' AND pr.sat_score BETWEEN ? AND ?' : '';
 
 $sql = "
     SELECT
@@ -37,9 +43,12 @@ $sql = "
         pr.qualitative_text,
         pr.preferred_program
     FROM tbl_placement_results pr
-    WHERE pr.examinee_number LIKE ?
-       OR pr.full_name LIKE ?
-       OR pr.preferred_program LIKE ?
+    WHERE (
+            pr.examinee_number LIKE ?
+         OR pr.full_name LIKE ?
+         OR pr.preferred_program LIKE ?
+    )
+      {$cutoffWhereSql}
     ORDER BY pr.created_at DESC, pr.id DESC
     LIMIT 50
 ";
@@ -54,7 +63,11 @@ if (!$stmt) {
     exit;
 }
 
-$stmt->bind_param('sss', $like, $like, $like);
+if ($globalSatCutoffActive) {
+    $stmt->bind_param('sssii', $like, $like, $like, $globalSatCutoffMin, $globalSatCutoffMax);
+} else {
+    $stmt->bind_param('sss', $like, $like, $like);
+}
 $stmt->execute();
 $result = $stmt->get_result();
 

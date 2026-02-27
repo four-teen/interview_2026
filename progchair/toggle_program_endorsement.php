@@ -4,6 +4,7 @@
  */
 
 require_once '../config/db.php';
+require_once '../config/system_controls.php';
 require_once 'endorsement_helpers.php';
 session_start();
 
@@ -45,6 +46,9 @@ $programSql = "
     SELECT
         p.program_id,
         pc.cutoff_score,
+        pc.absorptive_capacity,
+        pc.regular_percentage,
+        pc.etg_percentage,
         COALESCE(pc.endorsement_capacity, 0) AS endorsement_capacity
     FROM tbl_program p
     INNER JOIN tbl_college c
@@ -80,13 +84,43 @@ if (!$program) {
     exit;
 }
 
-$cutoffScore = $program['cutoff_score'] !== null ? (int) $program['cutoff_score'] : null;
 $endorsementCapacity = max(0, (int) ($program['endorsement_capacity'] ?? 0));
+$programCutoff = $program['cutoff_score'] !== null ? (int) $program['cutoff_score'] : null;
+$globalCutoffState = get_global_sat_cutoff_state($conn);
+$globalCutoffMin = isset($globalCutoffState['min']) ? (int) $globalCutoffState['min'] : null;
+$globalCutoffMax = isset($globalCutoffState['max']) ? (int) $globalCutoffState['max'] : null;
+$globalCutoffActive = (bool) ($globalCutoffState['active'] ?? false);
+$effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalCutoffActive, $globalCutoffMin);
 
-// Validate interview row belongs to selected program ranking pool and has scored SAT.
+$quotaEnabled = false;
+$regularSlots = null;
+if (
+    $program['absorptive_capacity'] !== null &&
+    $program['regular_percentage'] !== null &&
+    $program['etg_percentage'] !== null
+) {
+    $absorptiveCapacity = max(0, (int) $program['absorptive_capacity']);
+    $regularPercentage = round((float) $program['regular_percentage'], 2);
+    $etgPercentage = round((float) $program['etg_percentage'], 2);
+    $baseCapacity = max(0, $absorptiveCapacity - $endorsementCapacity);
+
+    if (
+        $regularPercentage >= 0 &&
+        $regularPercentage <= 100 &&
+        $etgPercentage >= 0 &&
+        $etgPercentage <= 100 &&
+        abs(($regularPercentage + $etgPercentage) - 100) <= 0.01
+    ) {
+        $quotaEnabled = true;
+        $regularSlots = max(0, (int) round($baseCapacity * ($regularPercentage / 100)));
+    }
+}
+
+// Validate interview row belongs to selected program ranking pool and is scored.
 $studentSql = "
     SELECT
         si.interview_id,
+        si.classification,
         pr.sat_score
     FROM tbl_student_interview si
     INNER JOIN tbl_placement_results pr
@@ -121,8 +155,6 @@ if (!$student) {
     exit;
 }
 
-$satScore = (int) ($student['sat_score'] ?? 0);
-
 if ($action === 'ADD') {
     if ($endorsementCapacity <= 0) {
         echo json_encode([
@@ -132,13 +164,15 @@ if ($action === 'ADD') {
         exit;
     }
 
-    if ($cutoffScore !== null && $satScore < $cutoffScore) {
+    $classification = strtoupper(trim((string) ($student['classification'] ?? 'REGULAR')));
+    if ($classification !== 'REGULAR') {
         echo json_encode([
             'success' => false,
-            'message' => 'Student SAT score is below the program cutoff.'
+            'message' => 'Only Regular students can be added to SCC from this action.'
         ]);
         exit;
     }
+    $satScore = (int) ($student['sat_score'] ?? 0);
 
     $countSql = "
         SELECT COUNT(*) AS total
@@ -194,6 +228,84 @@ if ($action === 'ADD') {
             ]);
             exit;
         }
+    }
+
+    $isInRegularRankingList = false;
+    if ($quotaEnabled) {
+        $regularSlotsCount = max(0, (int) $regularSlots);
+        $sccInRegularSlots = min($currentEndorsed, $regularSlotsCount, $endorsementCapacity);
+        $limit = max(0, $regularSlotsCount - $sccInRegularSlots);
+        if ($limit > 0) {
+            $rankedSql = "
+                SELECT si_rank.interview_id
+                FROM tbl_student_interview si_rank
+                INNER JOIN tbl_placement_results pr_rank
+                    ON si_rank.placement_result_id = pr_rank.id
+                LEFT JOIN tbl_program_endorsements pe_rank
+                    ON pe_rank.program_id = ?
+                   AND pe_rank.interview_id = si_rank.interview_id
+                WHERE COALESCE(NULLIF(si_rank.program_id, 0), NULLIF(si_rank.first_choice, 0)) = ?
+                  AND si_rank.status = 'active'
+                  AND si_rank.final_score IS NOT NULL
+                  AND UPPER(COALESCE(si_rank.classification, 'REGULAR')) = 'REGULAR'
+                  AND pe_rank.endorsement_id IS NULL
+            ";
+            if ($globalCutoffActive) {
+                $rankedSql .= " AND pr_rank.sat_score BETWEEN ? AND ? ";
+            } elseif ($effectiveCutoff !== null) {
+                $rankedSql .= " AND pr_rank.sat_score >= ? ";
+            }
+            $rankedSql .= "
+                ORDER BY
+                    si_rank.final_score DESC,
+                    pr_rank.sat_score DESC,
+                    pr_rank.full_name ASC
+                LIMIT ?
+            ";
+
+            $stmtRanked = $conn->prepare($rankedSql);
+            if (!$stmtRanked) {
+                http_response_code(500);
+                echo json_encode([
+                    'success' => false,
+                    'message' => 'Server error (ranked regular validation).'
+                ]);
+                exit;
+            }
+
+            if ($globalCutoffActive) {
+                $stmtRanked->bind_param("iiiii", $programId, $programId, $globalCutoffMin, $globalCutoffMax, $limit);
+            } elseif ($effectiveCutoff !== null) {
+                $stmtRanked->bind_param("iiii", $programId, $programId, $effectiveCutoff, $limit);
+            } else {
+                $stmtRanked->bind_param("iii", $programId, $programId, $limit);
+            }
+            $stmtRanked->execute();
+            $rankedResult = $stmtRanked->get_result();
+            while ($rankedRow = $rankedResult->fetch_assoc()) {
+                if ((int) ($rankedRow['interview_id'] ?? 0) === $interviewId) {
+                    $isInRegularRankingList = true;
+                    break;
+                }
+            }
+            $stmtRanked->close();
+        }
+    } else {
+        if ($globalCutoffActive) {
+            $isInRegularRankingList = ($satScore >= $globalCutoffMin && $satScore <= $globalCutoffMax);
+        } elseif ($effectiveCutoff === null) {
+            $isInRegularRankingList = true;
+        } else {
+            $isInRegularRankingList = $satScore >= $effectiveCutoff;
+        }
+    }
+
+    if ($isInRegularRankingList) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'Student is already covered by the regular ranking list. SCC is for outside-ranked regular cases.'
+        ]);
+        exit;
     }
 
     if ($currentEndorsed >= $endorsementCapacity) {

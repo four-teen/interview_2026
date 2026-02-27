@@ -1,5 +1,6 @@
 <?php
 require_once '../config/db.php';
+require_once '../config/system_controls.php';
 session_start();
 
 if (!isset($_SESSION['logged_in']) || (($_SESSION['role'] ?? '') !== 'administrator')) {
@@ -15,6 +16,10 @@ $profileFilter = trim((string) ($_GET['profile_status'] ?? ''));
 $profileFilter = in_array($profileFilter, ['complete', 'incomplete', 'none'], true) ? $profileFilter : '';
 $credentialFilter = trim((string) ($_GET['credential_status'] ?? ''));
 $credentialFilter = in_array($credentialFilter, ['active', 'inactive', 'needs_change', 'none'], true) ? $credentialFilter : '';
+$globalSatCutoffState = get_global_sat_cutoff_state($conn);
+$globalSatCutoffMin = isset($globalSatCutoffState['min']) ? (int) $globalSatCutoffState['min'] : null;
+$globalSatCutoffMax = isset($globalSatCutoffState['max']) ? (int) $globalSatCutoffState['max'] : null;
+$globalSatCutoffActive = (bool) ($globalSatCutoffState['active'] ?? false);
 
 $campusOptions = [];
 $campusOptionSql = "
@@ -69,6 +74,13 @@ if ($credentialFilter === 'active') {
     $where[] = 'sc.must_change_password = 1';
 } elseif ($credentialFilter === 'none') {
     $where[] = 'sc.credential_id IS NULL';
+}
+
+if ($globalSatCutoffActive) {
+    $where[] = 'pr.sat_score BETWEEN ? AND ?';
+    $types .= 'ii';
+    $params[] = $globalSatCutoffMin;
+    $params[] = $globalSatCutoffMax;
 }
 
 $sql = "
@@ -208,6 +220,24 @@ foreach ($rows as $row) {
       .st-table td, .st-table th {
         vertical-align: middle;
       }
+
+      .rank-detail-row {
+        margin-bottom: 0.45rem;
+      }
+
+      .rank-detail-label {
+        font-size: 0.74rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #7d8aa3;
+      }
+
+      .rank-detail-value {
+        font-size: 1rem;
+        font-weight: 600;
+        color: #2f3f59;
+      }
     </style>
   </head>
   <body>
@@ -226,6 +256,11 @@ foreach ($rows as $row) {
               <p class="text-muted mb-4">
                 Read-only visibility of student interview status, credentials, profile progress, and transfer queue.
               </p>
+              <?php if ($globalSatCutoffActive): ?>
+                <div class="alert alert-info py-2 mb-3">
+                  Global SAT cutoff is active: showing students with SAT <?= number_format((int) $globalSatCutoffMin); ?> - <?= number_format((int) $globalSatCutoffMax); ?>.
+                </div>
+              <?php endif; ?>
 
               <div class="row g-3 mb-4">
                 <div class="col-md-3 col-6">
@@ -325,12 +360,13 @@ foreach ($rows as $row) {
                           <th class="text-center">Profile</th>
                           <th class="text-center">Credential</th>
                           <th class="text-center">Transfer</th>
+                          <th class="text-center">Action</th>
                         </tr>
                       </thead>
                       <tbody>
                         <?php if (empty($rows)): ?>
                           <tr>
-                            <td colspan="8" class="text-center text-muted py-4">
+                            <td colspan="9" class="text-center text-muted py-4">
                               No student records found.
                             </td>
                           </tr>
@@ -397,11 +433,67 @@ foreach ($rows as $row) {
                                   <span class="badge bg-label-success">Clear</span>
                                 <?php endif; ?>
                               </td>
+                              <td class="text-center">
+                                <button
+                                  type="button"
+                                  class="btn btn-sm btn-outline-primary js-view-rank"
+                                  data-interview-id="<?= (int) ($row['interview_id'] ?? 0); ?>"
+                                >
+                                  View Rank
+                                </button>
+                              </td>
                             </tr>
                           <?php endforeach; ?>
                         <?php endif; ?>
                       </tbody>
                     </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="modal fade" id="studentRankModal" tabindex="-1" aria-hidden="true">
+              <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                  <div class="modal-header">
+                    <h5 class="modal-title">Student Current Rank</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                  </div>
+                  <div class="modal-body">
+                    <div id="studentRankLoading" class="text-center py-4 d-none">
+                      <div class="spinner-border text-primary" role="status"></div>
+                      <div class="small text-muted mt-2">Loading rank details...</div>
+                    </div>
+                    <div id="studentRankError" class="alert alert-danger d-none mb-0"></div>
+                    <div id="studentRankBody" class="d-none">
+                      <div class="rank-detail-row">
+                        <div class="rank-detail-label">Student</div>
+                        <div class="rank-detail-value" id="rankStudentName">--</div>
+                      </div>
+                      <div class="rank-detail-row">
+                        <div class="rank-detail-label">Examinee #</div>
+                        <div class="rank-detail-value" id="rankExaminee">--</div>
+                      </div>
+                      <div class="rank-detail-row">
+                        <div class="rank-detail-label">Program</div>
+                        <div class="rank-detail-value" id="rankProgram">--</div>
+                      </div>
+                      <div class="rank-detail-row">
+                        <div class="rank-detail-label">List</div>
+                        <div class="rank-detail-value" id="rankPool">--</div>
+                      </div>
+                      <div class="rank-detail-row">
+                        <div class="rank-detail-label">Current Rank</div>
+                        <div class="rank-detail-value" id="rankValue">--</div>
+                      </div>
+                      <div class="rank-detail-row">
+                        <div class="rank-detail-label">Capacity Status</div>
+                        <div class="rank-detail-value" id="rankCapacityLabel">--</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
                   </div>
                 </div>
               </div>
@@ -422,5 +514,86 @@ foreach ($rows as $row) {
     <script src="../assets/vendor/libs/perfect-scrollbar/perfect-scrollbar.js"></script>
     <script src="../assets/vendor/js/menu.js"></script>
     <script src="../assets/js/main.js"></script>
+    <script>
+      (function () {
+        const modalEl = document.getElementById('studentRankModal');
+        if (!modalEl) return;
+
+        const rankModal = new bootstrap.Modal(modalEl);
+        const loadingEl = document.getElementById('studentRankLoading');
+        const errorEl = document.getElementById('studentRankError');
+        const bodyEl = document.getElementById('studentRankBody');
+
+        const fieldStudent = document.getElementById('rankStudentName');
+        const fieldExaminee = document.getElementById('rankExaminee');
+        const fieldProgram = document.getElementById('rankProgram');
+        const fieldPool = document.getElementById('rankPool');
+        const fieldRank = document.getElementById('rankValue');
+        const fieldCapacity = document.getElementById('rankCapacityLabel');
+
+        function setState(state) {
+          if (loadingEl) loadingEl.classList.toggle('d-none', state !== 'loading');
+          if (errorEl) errorEl.classList.toggle('d-none', state !== 'error');
+          if (bodyEl) bodyEl.classList.toggle('d-none', state !== 'ready');
+        }
+
+        function setError(message) {
+          if (errorEl) {
+            errorEl.textContent = message || 'Failed to load rank details.';
+          }
+          setState('error');
+        }
+
+        function fillRankData(payload) {
+          const student = payload && payload.student ? payload.student : {};
+          const ranking = payload && payload.ranking ? payload.ranking : {};
+
+          if (fieldStudent) fieldStudent.textContent = student.full_name || '--';
+          if (fieldExaminee) fieldExaminee.textContent = student.examinee_number || '--';
+          if (fieldProgram) fieldProgram.textContent = student.program_display || '--';
+          if (fieldPool) fieldPool.textContent = ranking.pool_label || '--';
+          if (fieldRank) fieldRank.textContent = ranking.rank_display || (ranking.message || '--');
+          if (fieldCapacity) {
+            if (ranking.outside_capacity === true) {
+              fieldCapacity.innerHTML = '<span class="badge bg-label-danger">Outside Capacity</span>';
+            } else if (ranking.outside_capacity === false) {
+              fieldCapacity.innerHTML = '<span class="badge bg-label-success">Within Capacity</span>';
+            } else {
+              fieldCapacity.textContent = 'Not Available';
+            }
+          }
+        }
+
+        async function loadRank(interviewId) {
+          setState('loading');
+          rankModal.show();
+
+          try {
+            const response = await fetch('get_student_program_rank.php?interview_id=' + encodeURIComponent(String(interviewId || 0)), {
+              headers: { Accept: 'application/json' }
+            });
+            const data = await response.json();
+            if (!data || !data.success) {
+              throw new Error((data && data.message) || 'Unable to load rank.');
+            }
+
+            fillRankData(data);
+            setState('ready');
+          } catch (error) {
+            setError((error && error.message) ? error.message : 'Unable to load rank.');
+          }
+        }
+
+        document.querySelectorAll('.js-view-rank').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const interviewId = Number(btn.getAttribute('data-interview-id') || 0);
+            if (interviewId <= 0) {
+              return;
+            }
+            loadRank(interviewId);
+          });
+        });
+      })();
+    </script>
   </body>
 </html>

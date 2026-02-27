@@ -49,8 +49,8 @@ if ($programId <= 0) {
 $interviewId        = isset($_POST['interview_id']) ? (int) $_POST['interview_id'] : 0;
 $placementResultId  = (int) ($_POST['placement_result_id'] ?? 0);
 $examineeNumber     = trim($_POST['examinee_number'] ?? '');
-$classification     = trim($_POST['classification'] ?? '');
-$etgClassId         = $_POST['etg_class_id'] ?? null;
+$classification     = strtoupper(trim($_POST['classification'] ?? ''));
+$etgClassInput      = $_POST['etg_class_id'] ?? '';
 $mobileNumber       = trim($_POST['mobile_number'] ?? '');
 $firstChoice        = $programId; // Force first choice to account's assigned program
 $secondChoice       = (int) ($_POST['second_choice'] ?? 0);
@@ -77,12 +77,81 @@ if (
 
 
 // ======================================================
-// HANDLE REGULAR → NULL ETG
+// CLASSIFICATION + ETG CLASS RULES
+// - REGULAR: ETG class may be NONE or selected
+// - ETG: ETG class is required
 // ======================================================
-if ($classification === 'REGULAR') {
-    $etgClassId = null;
-} else {
-    $etgClassId = !empty($etgClassId) ? (int) $etgClassId : null;
+if (!in_array($classification, ['REGULAR', 'ETG'], true)) {
+    echo json_encode([
+        'success' => false,
+        'message' => 'Invalid classification.'
+    ]);
+    exit;
+}
+
+if (!preg_match('/^0\d{10}$/', $mobileNumber)) {
+    echo json_encode([
+        'success' => false,
+        'message' => 'Mobile number must be 11 digits and start with 0.'
+    ]);
+    exit;
+}
+
+$etgClassId = 0;
+if ($etgClassInput !== '' && $etgClassInput !== null) {
+    if (!ctype_digit((string) $etgClassInput)) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'Invalid ETG classification.'
+        ]);
+        exit;
+    }
+
+    $etgClassId = (int) $etgClassInput;
+    if ($etgClassId <= 0) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'Invalid ETG classification.'
+        ]);
+        exit;
+    }
+
+    $etgCheckStmt = $conn->prepare("
+        SELECT etgclassid
+        FROM tbl_etg_class
+        WHERE etgclassid = ?
+        LIMIT 1
+    ");
+
+    if (!$etgCheckStmt) {
+        error_log('SQL Prepare Failed (validate etg_class_id): ' . $conn->error);
+        http_response_code(500);
+        echo json_encode([
+            'success' => false,
+            'message' => 'Failed to validate ETG classification.'
+        ]);
+        exit;
+    }
+
+    $etgCheckStmt->bind_param("i", $etgClassId);
+    $etgCheckStmt->execute();
+    $etgCheckResult = $etgCheckStmt->get_result();
+
+    if ($etgCheckResult->num_rows === 0) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'Selected ETG classification does not exist.'
+        ]);
+        exit;
+    }
+}
+
+if ($classification === 'ETG' && $etgClassId <= 0) {
+    echo json_encode([
+        'success' => false,
+        'message' => 'ETG classification is required for ETG students.'
+    ]);
+    exit;
 }
 
 
@@ -106,7 +175,7 @@ if ($interviewId === 0) {
             third_choice,
             shs_track_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, 0), ?, ?, ?, ?, ?)
     ";
 
     $stmt = $conn->prepare($sql);
@@ -122,7 +191,7 @@ if ($interviewId === 0) {
     }
 
     $stmt->bind_param(
-        "isiiissiiiii",
+        "isiiisisiiii",
         $placementResultId,
         $examineeNumber,
         $programChairId,
@@ -215,7 +284,7 @@ $updateSql = "
     UPDATE tbl_student_interview
     SET
         classification = ?,
-        etg_class_id   = ?,
+        etg_class_id   = NULLIF(?, 0),
         mobile_number  = ?,
         first_choice   = ?,
         second_choice  = ?,
@@ -238,7 +307,7 @@ if (!$updateStmt) {
 }
 
 $updateStmt->bind_param(
-    "sissiiii",
+    "sisiiiii",
     $classification,
     $etgClassId,
     $mobileNumber,
