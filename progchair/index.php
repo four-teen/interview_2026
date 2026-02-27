@@ -1782,22 +1782,15 @@ function buildRankingListHeaderHtml() {
   `;
 }
 
-function renderRankingList(listEl, rows, emptyMessage, { capacityLimit = null } = {}) {
-  if (!listEl) return;
+function renderRankingTable(bodyEl, rows, emptyMessage) {
+  if (!bodyEl) return;
 
   if (!rows.length) {
     listEl.innerHTML = `${buildRankingListHeaderHtml()}<div class="ranking-list-empty">${escapeHtml(emptyMessage)}</div>`;
     return;
   }
 
-  const rowsHtml = rows
-    .map((row, index) => {
-      const isOutsideCapacity = capacityLimit !== null && index >= capacityLimit;
-      return buildRankingRowHtml(row, index + 1, { isOutsideCapacity });
-    })
-    .join('');
-
-  listEl.innerHTML = `${buildRankingListHeaderHtml()}${rowsHtml}`;
+  bodyEl.innerHTML = rows.map((row, index) => buildRankingRowHtml(row, index + 1)).join('');
 }
 
 function renderRegularWithEcTable(regularRows, endorsementRows) {
@@ -1808,50 +1801,20 @@ function renderRegularWithEcTable(regularRows, endorsementRows) {
     return;
   }
 
-  const configuredRegularLimit = getCapacityLimit('regular');
-  const configuredEndorsementLimit = getCapacityLimit('endorsement');
-  const regularSlots = configuredRegularLimit !== null ? Math.max(0, configuredRegularLimit) : null;
-  const endorsementLimit = configuredEndorsementLimit !== null ? Math.max(0, configuredEndorsementLimit) : null;
-  const regularWithSccCapacity = regularSlots !== null
-    ? regularSlots + (endorsementLimit !== null ? endorsementLimit : 0)
-    : null;
+  let html = '';
+  if (regularRows.length) {
+    html += regularRows.map((row, index) => buildRankingRowHtml(row, index + 1)).join('');
+  }
 
-  let html = buildRankingListHeaderHtml();
-  let rankCounter = 1;
-
-  const appendRegularRow = (row) => {
-    const isOutsideCapacity = regularWithSccCapacity !== null && rankCounter > regularWithSccCapacity;
-    html += buildRankingRowHtml(row, rankCounter, { isOutsideCapacity });
-    rankCounter += 1;
-  };
-
-  const appendSccRow = (row, sccIndex) => {
-    const outsideByRegularAndSccSlots = regularWithSccCapacity !== null && rankCounter > regularWithSccCapacity;
-    const outsideBySccCapacity = endorsementLimit !== null && sccIndex >= endorsementLimit;
-    html += buildRankingRowHtml(row, rankCounter, {
-      isEndorsement: true,
-      isOutsideCapacity: outsideByRegularAndSccSlots || outsideBySccCapacity
-    });
-    rankCounter += 1;
-  };
-
-  if (regularSlots !== null) {
-    // SCC takes the tail of regular capacity. Displaced regular rows go after SCC.
-    const sccInRegularSlots = Math.min(
-      endorsementRows.length,
-      regularSlots,
-      endorsementLimit !== null ? endorsementLimit : endorsementRows.length
-    );
-    const regularInsideSlots = Math.max(0, regularSlots - sccInRegularSlots);
-    const regularInsideRows = regularRows.slice(0, regularInsideSlots);
-    const regularOutsideRows = regularRows.slice(regularInsideSlots);
-
-    regularInsideRows.forEach((row) => appendRegularRow(row));
-    endorsementRows.forEach((row, sccIndex) => appendSccRow(row, sccIndex));
-    regularOutsideRows.forEach((row) => appendRegularRow(row));
-  } else {
-    regularRows.forEach((row) => appendRegularRow(row));
-    endorsementRows.forEach((row, sccIndex) => appendSccRow(row, sccIndex));
+  if (endorsementRows.length) {
+    html += `
+      <tr class="table-warning">
+        <td colspan="7" class="fw-semibold text-uppercase small">SCC Students (Pinned below regular)</td>
+      </tr>
+    `;
+    html += endorsementRows
+      .map((row, index) => buildRankingRowHtml(row, index + 1, { isEndorsement: true }))
+      .join('');
   }
 
   programRankingRegularList.innerHTML = html;
@@ -1893,9 +1856,7 @@ function renderRankingRows(rows) {
   );
 
   renderRegularWithEcTable(regularRows, endorsementRows);
-  renderRankingList(programRankingEtgList, etgRows, 'No ETG ranked students.', {
-    capacityLimit: getCapacityLimit('etg')
-  });
+  renderRankingTable(programRankingEtgBody, etgRows, 'No ETG ranked students.');
   refreshEcButtons();
 
   return {
