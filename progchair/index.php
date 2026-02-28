@@ -519,8 +519,20 @@ if ($activeBatchId) {
   color: #64748b;
 }
 
-.ranking-ec-row {
-  background-color: transparent !important;
+.ranking-scc-row {
+  color: #15803d !important;
+}
+
+.ranking-scc-row .ranking-col-score {
+  color: #15803d !important;
+}
+
+.ranking-etg-row {
+  color: #2563eb !important;
+}
+
+.ranking-etg-row .ranking-col-score {
+  color: #2563eb !important;
 }
 
 .ranking-outside-capacity {
@@ -860,21 +872,10 @@ if ($activeBatchId) {
           <div class="small text-muted mb-3">
             <span class="fw-semibold text-danger">Red rows</span> are outside capacity but still shown in the list.
           </div>
-          <div class="row g-0">
-            <div class="col-12 col-lg-6 program-ranking-left-col">
-              <div class="d-flex justify-content-between align-items-center mb-2">
-                <h6 class="mb-0 text-uppercase fw-bold text-primary">REGULAR + SCC List</h6>
-              </div>
-              <div id="programRankingRegularList" class="ranking-list"></div>
-            </div>
-
-            <div class="col-12 col-lg-6 program-ranking-right-col mt-3 mt-lg-0">
-              <div class="d-flex justify-content-between align-items-center mb-2">
-                <h6 class="mb-0 text-uppercase fw-bold text-success">ETG List</h6>
-              </div>
-              <div id="programRankingEtgList" class="ranking-list"></div>
-            </div>
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h6 class="mb-0 text-uppercase fw-bold text-primary">Ranking List</h6>
           </div>
+          <div id="programRankingRegularList" class="ranking-list"></div>
         </div>
       </div>
 
@@ -1678,7 +1679,6 @@ const programRankingLoadingEl = document.getElementById('programRankingLoading')
 const programRankingEmptyEl   = document.getElementById('programRankingEmpty');
 const programRankingTableWrap = document.getElementById('programRankingTableWrap');
 const programRankingRegularList = document.getElementById('programRankingRegularList');
-const programRankingEtgList     = document.getElementById('programRankingEtgList');
 const exportRankingBtn        = document.getElementById('exportRankingBtn');
 const printRankingBtn         = document.getElementById('printRankingBtn');
 const addEcRegularBtn         = document.getElementById('addEcRegularBtn');
@@ -1724,34 +1724,31 @@ function isRegularClassification(row) {
   return String(row?.classification || '').toUpperCase() === 'REGULAR';
 }
 
-function getCapacityLimit(sectionKey) {
-  if (!currentRankingQuota || currentRankingQuota.enabled !== true) {
-    return null;
+function splitRowsByCapacity(rows, limit, quotaEnabled) {
+  if (!quotaEnabled) {
+    return {
+      insideRows: rows,
+      outsideRows: []
+    };
   }
 
-  if (sectionKey === 'regular') {
-    return Math.max(0, Number(currentRankingQuota.regular_slots ?? 0));
-  }
-
-  if (sectionKey === 'endorsement') {
-    return Math.max(0, Number(currentRankingQuota.endorsement_capacity ?? 0));
-  }
-
-  if (sectionKey === 'etg') {
-    return Math.max(0, Number(currentRankingQuota.etg_slots ?? 0));
-  }
-
-  return null;
+  const safeLimit = Math.max(0, Number(limit ?? 0));
+  return {
+    insideRows: rows.slice(0, safeLimit),
+    outsideRows: rows.slice(safeLimit)
+  };
 }
 
-function buildRankingRowHtml(row, rankDisplay, { isEndorsement = false, isOutsideCapacity = false } = {}) {
-  const rowClass = [isEndorsement ? 'ranking-ec-row' : '', isOutsideCapacity ? 'ranking-outside-capacity' : '']
+function buildRankingRowHtml(row, rankDisplay, { section = 'regular', isOutsideCapacity = false } = {}) {
+  const sectionClass = section === 'scc'
+    ? 'ranking-scc-row'
+    : (section === 'etg' ? 'ranking-etg-row' : '');
+  const rowClass = [sectionClass, isOutsideCapacity ? 'ranking-outside-capacity' : '']
     .filter(Boolean)
     .join(' ');
-  const rawClassification = String(row.classification || 'REGULAR').toUpperCase();
-  const classificationText = isEndorsement
+  const classificationText = section === 'scc'
     ? 'SCC'
-    : (rawClassification.startsWith('ETG') ? 'ETG' : 'R');
+    : (section === 'etg' ? 'ETG' : 'R');
 
   const rankHtml = `<span class="fw-semibold">${rankDisplay}</span>`;
 
@@ -1780,82 +1777,39 @@ function buildRankingListHeaderHtml() {
   `;
 }
 
-function renderRankingTable(listEl, rows, emptyMessage, options = {}) {
-  if (!listEl) return;
-
-  if (!rows.length) {
-    listEl.innerHTML = `${buildRankingListHeaderHtml()}<div class="ranking-list-empty">${escapeHtml(emptyMessage)}</div>`;
-    return;
-  }
-
-  const capacityLimitRaw = options && Object.prototype.hasOwnProperty.call(options, 'capacityLimit')
-    ? Number(options.capacityLimit)
-    : null;
-  const capacityLimit = Number.isFinite(capacityLimitRaw) ? Math.max(0, capacityLimitRaw) : null;
-
-  const rowsHtml = rows.map((row, index) => {
-    const rank = index + 1;
-    const isOutsideCapacity = capacityLimit !== null && rank > capacityLimit;
-    return buildRankingRowHtml(row, rank, { isOutsideCapacity });
-  }).join('');
-  listEl.innerHTML = `${buildRankingListHeaderHtml()}${rowsHtml}`;
-}
-
-function renderRegularWithEcTable(regularRows, endorsementRows) {
+function renderCapacityOrderedTable(regularRows, endorsementRows, etgRows) {
   if (!programRankingRegularList) return;
 
-  if (!regularRows.length && !endorsementRows.length) {
-    programRankingRegularList.innerHTML = `${buildRankingListHeaderHtml()}<div class="ranking-list-empty">No regular or SCC students.</div>`;
+  if (!regularRows.length && !endorsementRows.length && !etgRows.length) {
+    programRankingRegularList.innerHTML = `${buildRankingListHeaderHtml()}<div class="ranking-list-empty">No ranked students.</div>`;
     return;
   }
 
   const quotaEnabled = Boolean(currentRankingQuota && currentRankingQuota.enabled === true);
-  const regularSlotsRaw = Number(currentRankingQuota?.regular_slots ?? 0);
-  const endorsementLimitRaw = Number(currentRankingQuota?.endorsement_capacity ?? 0);
-  const regularEffectiveSlotsRaw = Number(currentRankingQuota?.regular_effective_slots ?? NaN);
-  const endorsementInRegularSlotsRaw = Number(currentRankingQuota?.endorsement_in_regular_slots ?? NaN);
+  const regularLimit = Math.max(0, Number(currentRankingQuota?.regular_slots ?? 0));
+  const endorsementLimit = Math.max(0, Number(currentRankingQuota?.endorsement_capacity ?? 0));
+  const etgLimit = Math.max(0, Number(currentRankingQuota?.etg_slots ?? 0));
 
-  const regularSlots = quotaEnabled ? Math.max(0, regularSlotsRaw) : null;
-  const endorsementLimit = quotaEnabled ? Math.max(0, endorsementLimitRaw) : null;
-  const endorsementInRegularSlots = quotaEnabled
-    ? (Number.isFinite(endorsementInRegularSlotsRaw)
-        ? Math.max(0, endorsementInRegularSlotsRaw)
-        : Math.min(endorsementRows.length, regularSlots, endorsementLimit))
-    : 0;
-  const regularInsideSlots = quotaEnabled
-    ? (Number.isFinite(regularEffectiveSlotsRaw)
-        ? Math.max(0, regularEffectiveSlotsRaw)
-        : Math.max(0, regularSlots - endorsementInRegularSlots))
-    : regularRows.length;
-  const leftCapacity = quotaEnabled ? (regularSlots + endorsementLimit) : null;
+  const regularSplit = splitRowsByCapacity(regularRows, regularLimit, quotaEnabled);
+  const endorsementSplit = splitRowsByCapacity(endorsementRows, endorsementLimit, quotaEnabled);
+  const etgSplit = splitRowsByCapacity(etgRows, etgLimit, quotaEnabled);
 
-  const regularInsideRows = quotaEnabled ? regularRows.slice(0, regularInsideSlots) : regularRows;
-  const regularOutsideRows = quotaEnabled ? regularRows.slice(regularInsideSlots) : [];
+  const orderedRows = [
+    ...regularSplit.insideRows.map((row) => ({ row, section: 'regular', isOutsideCapacity: false })),
+    ...endorsementSplit.insideRows.map((row) => ({ row, section: 'scc', isOutsideCapacity: false })),
+    ...etgSplit.insideRows.map((row) => ({ row, section: 'etg', isOutsideCapacity: false })),
+    ...regularSplit.outsideRows.map((row) => ({ row, section: 'regular', isOutsideCapacity: true })),
+    ...endorsementSplit.outsideRows.map((row) => ({ row, section: 'scc', isOutsideCapacity: true })),
+    ...etgSplit.outsideRows.map((row) => ({ row, section: 'etg', isOutsideCapacity: true }))
+  ];
 
   let html = buildRankingListHeaderHtml();
-  let rankCounter = 1;
-  let endorsementCounter = 0;
-
-  const appendRow = (row, { isEndorsement = false } = {}) => {
-    if (isEndorsement) {
-      endorsementCounter += 1;
-    }
-
-    const outsideByLeftCapacity = leftCapacity !== null && rankCounter > leftCapacity;
-    const outsideByEndorsementCap = isEndorsement && endorsementLimit !== null && endorsementCounter > endorsementLimit;
-    const isOutsideCapacity = outsideByLeftCapacity || outsideByEndorsementCap;
-
-    html += buildRankingRowHtml(row, rankCounter, {
-      isEndorsement,
-      isOutsideCapacity
+  orderedRows.forEach((entry, index) => {
+    html += buildRankingRowHtml(entry.row, index + 1, {
+      section: entry.section,
+      isOutsideCapacity: entry.isOutsideCapacity
     });
-
-    rankCounter += 1;
-  };
-
-  regularInsideRows.forEach((row) => appendRow(row));
-  endorsementRows.forEach((row) => appendRow(row, { isEndorsement: true }));
-  regularOutsideRows.forEach((row) => appendRow(row));
+  });
 
   programRankingRegularList.innerHTML = html;
 }
@@ -1895,10 +1849,7 @@ function renderRankingRows(rows) {
     rows.filter(row => !isRegularClassification(row) && !row.is_endorsement)
   );
 
-  renderRegularWithEcTable(regularRows, endorsementRows);
-  renderRankingTable(programRankingEtgList, etgRows, 'No ETG ranked students.', {
-    capacityLimit: getCapacityLimit('etg')
-  });
+  renderCapacityOrderedTable(regularRows, endorsementRows, etgRows);
   refreshEcButtons();
 
   return {
@@ -1918,16 +1869,14 @@ function buildRankingMeta(grouped, quota) {
     return `${total} ranked student${total === 1 ? '' : 's'} | REGULAR: ${regularCount} | SCC: ${endorsementCount} | ETG: ${etgCount}`;
   }
 
-  const capacity = Number(quota.absorptive_capacity ?? 0);
-  const regularSlots = Number(quota.regular_slots ?? 0);
-  const etgSlots = Number(quota.etg_slots ?? 0);
-  const ecSlots = Number(quota.endorsement_capacity ?? 0);
-  const regularShown = Number(quota.regular_shown ?? Math.min(regularCount, regularSlots));
-  const endorsementShown = Number(quota.endorsement_shown ?? Math.min(endorsementCount, ecSlots));
-  const etgShown = Number(quota.etg_shown ?? Math.min(etgCount, etgSlots));
-  const shownTotal = regularShown + endorsementShown + etgShown;
+  const regularSlots = Math.max(0, Number(quota.regular_slots ?? 0));
+  const etgSlots = Math.max(0, Number(quota.etg_slots ?? 0));
+  const ecSlots = Math.max(0, Number(quota.endorsement_capacity ?? 0));
+  const regularUsed = Math.min(regularCount, regularSlots);
+  const endorsementUsed = Math.min(endorsementCount, ecSlots);
+  const etgUsed = Math.min(etgCount, etgSlots);
 
-  return `Shown ${shownTotal}/${capacity} | REGULAR: ${regularShown}/${regularSlots} | SCC: ${endorsementShown}/${ecSlots} | ETG: ${etgShown}/${etgSlots}`;
+  return `Capacity: REGULAR: ${regularUsed}/${regularSlots} | SCC: ${endorsementUsed}/${ecSlots} | ETG: ${etgUsed}/${etgSlots}`;
 }
 
 function setRankingState({ loading = false, empty = false, showTable = false }) {
@@ -2248,7 +2197,10 @@ if (printRankingBtn) {
             border-top: none;
           }
           .ranking-list-empty { padding: 8px 0; font-size: 12px; color: #64748b; }
-          .ranking-ec-row { background: #fff8e1; }
+          .ranking-scc-row { color: #15803d !important; }
+          .ranking-scc-row .ranking-col-score { color: #15803d !important; }
+          .ranking-etg-row { color: #2563eb !important; }
+          .ranking-etg-row .ranking-col-score { color: #2563eb !important; }
           .ranking-outside-capacity { color: #b91c1c !important; }
           .ranking-outside-capacity .ranking-col-score { color: #b91c1c !important; }
           .print-disclaimer {

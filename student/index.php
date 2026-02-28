@@ -1647,27 +1647,32 @@ if ($firstChoiceId > 0 && $hasScoredInterview) {
             return !isset($endorsementIds[(int) ($row['interview_id'] ?? 0)]);
         }));
 
-        $etgPosition = null;
-        if ($studentClassGroup === 'ETG') {
-            $etgPositionCursor = 1;
-            foreach ($filteredEtgRows as $etgRow) {
-                if ((string) ($etgRow['examinee_number'] ?? '') === $currentExaminee) {
-                    $etgPosition = $etgPositionCursor;
-                    break;
-                }
-                $etgPositionCursor++;
-            }
-        }
-
         if ($firstChoiceQuotaEnabled) {
-            $regularRows = array_slice($filteredRegularRows, 0, (int) $firstChoiceRegularSlots);
-            $etgRows = array_slice($filteredEtgRows, 0, (int) $firstChoiceEtgSlots);
+            $regularLimit = max(0, (int) $firstChoiceRegularSlots);
+            $endorsementLimit = max(0, (int) $firstChoiceEndorsementCapacity);
+            $etgLimit = max(0, (int) $firstChoiceEtgSlots);
+
+            $regularInsideRows = array_slice($filteredRegularRows, 0, $regularLimit);
+            $regularOutsideRows = array_slice($filteredRegularRows, $regularLimit);
+
+            $endorsementInsideRows = array_slice($endorsementRows, 0, $endorsementLimit);
+            $endorsementOutsideRows = array_slice($endorsementRows, $endorsementLimit);
+
+            $etgInsideRows = array_slice($filteredEtgRows, 0, $etgLimit);
+            $etgOutsideRows = array_slice($filteredEtgRows, $etgLimit);
+
+            $rankingRows = array_merge(
+                $regularInsideRows,
+                $endorsementInsideRows,
+                $etgInsideRows,
+                $regularOutsideRows,
+                $endorsementOutsideRows,
+                $etgOutsideRows
+            );
         } else {
-            $regularRows = $filteredRegularRows;
-            $etgRows = $filteredEtgRows;
+            $rankingRows = array_merge($filteredRegularRows, $endorsementRows, $filteredEtgRows);
         }
 
-        $rankingRows = array_merge($regularRows, $endorsementRows, $etgRows);
         $position = 1;
         foreach ($rankingRows as $rankRow) {
             if ((string) ($rankRow['examinee_number'] ?? '') === $currentExaminee) {
@@ -1676,30 +1681,7 @@ if ($firstChoiceId > 0 && $hasScoredInterview) {
             }
             $position++;
         }
-
-        // Keep a deterministic rank even when the student falls outside configured display slots.
-        if ($firstChoiceRank === null) {
-            $fallbackRows = array_merge($filteredRegularRows, $endorsementRows, $filteredEtgRows);
-            $position = 1;
-            foreach ($fallbackRows as $rankRow) {
-                if ((string) ($rankRow['examinee_number'] ?? '') === $currentExaminee) {
-                    $firstChoiceRank = $position;
-                    break;
-                }
-                $position++;
-            }
-        }
-
-        if ($firstChoiceQuotaEnabled && $studentClassGroup === 'ETG' && $etgPosition !== null) {
-            // ETG rank is offset by reserved regular slots.
-            $firstChoiceRank = (int) $firstChoiceRegularSlots + $etgPosition;
-        }
     }
-}
-
-if ($firstChoiceRank !== null && $firstChoiceEndorsementCapacity > 0) {
-    // Student-facing rank keeps SCC seats hidden, but reserves them at the top count.
-    $firstChoiceRank = $firstChoiceRank + $firstChoiceEndorsementCapacity;
 }
 
 $firstChoiceRankTotal = ($firstChoiceAbsorptiveCapacity !== null)
