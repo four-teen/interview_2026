@@ -178,6 +178,13 @@ if (!function_exists('global_sat_cutoff_value_control_key')) {
     }
 }
 
+if (!function_exists('global_sat_cutoff_ranges_control_key')) {
+    function global_sat_cutoff_ranges_control_key(): string
+    {
+        return 'global_sat_cutoff_ranges';
+    }
+}
+
 if (!function_exists('is_global_sat_cutoff_enabled')) {
     function is_global_sat_cutoff_enabled(mysqli $conn): bool
     {
@@ -199,16 +206,190 @@ if (!function_exists('get_global_sat_cutoff_value')) {
     }
 }
 
+if (!function_exists('normalize_sat_cutoff_ranges')) {
+    function normalize_sat_cutoff_ranges(array $ranges): ?array
+    {
+        $normalized = [];
+
+        foreach ($ranges as $range) {
+            if (!is_array($range) || !array_key_exists('min', $range) || !array_key_exists('max', $range)) {
+                return null;
+            }
+
+            if (!is_numeric($range['min']) || !is_numeric($range['max'])) {
+                return null;
+            }
+
+            $min = (int) $range['min'];
+            $max = (int) $range['max'];
+
+            if ($min < 0 || $max < 0 || $min > 9999 || $max > 9999 || $min > $max) {
+                return null;
+            }
+
+            $normalized[] = [
+                'min' => $min,
+                'max' => $max
+            ];
+        }
+
+        if (empty($normalized)) {
+            return [];
+        }
+
+        usort($normalized, static function (array $left, array $right): int {
+            if ($left['min'] === $right['min']) {
+                return $left['max'] <=> $right['max'];
+            }
+
+            return $left['min'] <=> $right['min'];
+        });
+
+        $merged = [];
+        foreach ($normalized as $range) {
+            if (empty($merged)) {
+                $merged[] = $range;
+                continue;
+            }
+
+            $lastIndex = count($merged) - 1;
+            $lastRange = $merged[$lastIndex];
+
+            if ($range['min'] <= ($lastRange['max'] + 1)) {
+                if ($range['max'] > $lastRange['max']) {
+                    $merged[$lastIndex]['max'] = $range['max'];
+                }
+                continue;
+            }
+
+            $merged[] = $range;
+        }
+
+        return $merged;
+    }
+}
+
+if (!function_exists('parse_sat_cutoff_ranges_text')) {
+    function parse_sat_cutoff_ranges_text(string $rawRanges, ?bool &$isValid = null): array
+    {
+        $isValid = true;
+        $rawRanges = trim($rawRanges);
+
+        if ($rawRanges === '') {
+            return [];
+        }
+
+        $segments = preg_split('/[\r\n,]+/', $rawRanges);
+        if (!is_array($segments)) {
+            $isValid = false;
+            return [];
+        }
+
+        $parsedRanges = [];
+        foreach ($segments as $segment) {
+            $segment = trim((string) $segment);
+            if ($segment === '') {
+                continue;
+            }
+
+            if (!preg_match('/^(\d+)\s*-\s*(\d+)$/', $segment, $matches)) {
+                $isValid = false;
+                return [];
+            }
+
+            $min = (int) ($matches[1] ?? 0);
+            $max = (int) ($matches[2] ?? 0);
+
+            $parsedRanges[] = [
+                'min' => $min,
+                'max' => $max
+            ];
+        }
+
+        $normalized = normalize_sat_cutoff_ranges($parsedRanges);
+        if ($normalized === null) {
+            $isValid = false;
+            return [];
+        }
+
+        return $normalized;
+    }
+}
+
+if (!function_exists('serialize_sat_cutoff_ranges')) {
+    function serialize_sat_cutoff_ranges(array $ranges): string
+    {
+        $normalized = normalize_sat_cutoff_ranges($ranges);
+        if ($normalized === null || empty($normalized)) {
+            return '';
+        }
+
+        $parts = [];
+        foreach ($normalized as $range) {
+            $parts[] = ((int) $range['min']) . '-' . ((int) $range['max']);
+        }
+
+        return implode(',', $parts);
+    }
+}
+
+if (!function_exists('format_sat_cutoff_ranges_for_display')) {
+    function format_sat_cutoff_ranges_for_display(array $ranges, string $separator = ', '): string
+    {
+        $normalized = normalize_sat_cutoff_ranges($ranges);
+        if ($normalized === null || empty($normalized)) {
+            return '';
+        }
+
+        $parts = [];
+        foreach ($normalized as $range) {
+            $parts[] = ((int) $range['min']) . '-' . ((int) $range['max']);
+        }
+
+        return implode($separator, $parts);
+    }
+}
+
+if (!function_exists('get_global_sat_cutoff_ranges')) {
+    function get_global_sat_cutoff_ranges(mysqli $conn): array
+    {
+        $value = trim(get_system_control_value($conn, global_sat_cutoff_ranges_control_key(), ''));
+        $isValid = true;
+        $ranges = parse_sat_cutoff_ranges_text($value, $isValid);
+
+        if (!$isValid) {
+            return [];
+        }
+
+        return $ranges;
+    }
+}
+
 if (!function_exists('get_global_sat_cutoff_state')) {
     function get_global_sat_cutoff_state(mysqli $conn): array
     {
         $enabled = is_global_sat_cutoff_enabled($conn);
         $value = get_global_sat_cutoff_value($conn);
-        $active = $enabled && $value !== null;
+        $ranges = get_global_sat_cutoff_ranges($conn);
+
+        // Backward compatibility: legacy single-value cutoff behaves as [value-9999].
+        if ($enabled && empty($ranges) && $value !== null) {
+            $ranges = [
+                [
+                    'min' => max(0, (int) $value),
+                    'max' => 9999
+                ]
+            ];
+        }
+
+        $active = $enabled && (!empty($ranges) || $value !== null);
+        $rangeText = format_sat_cutoff_ranges_for_display($ranges, ', ');
 
         return [
             'enabled' => $enabled,
             'value' => $value,
+            'ranges' => $ranges,
+            'range_text' => $rangeText,
             'active' => $active
         ];
     }
@@ -234,16 +415,41 @@ if (!function_exists('set_global_sat_cutoff_state')) {
         mysqli $conn,
         bool $enabled,
         ?int $cutoffValue,
-        ?int $updatedBy = null
+        ?int $updatedBy = null,
+        ?array $cutoffRanges = null
     ): bool {
+        $normalizedRanges = [];
+
         if (!$enabled) {
             $cutoffValue = null;
-        } elseif ($cutoffValue === null || $cutoffValue < 0) {
-            return false;
+            $normalizedRanges = [];
+        } elseif ($cutoffRanges !== null) {
+            $normalizedRanges = normalize_sat_cutoff_ranges($cutoffRanges);
+            if ($normalizedRanges === null || empty($normalizedRanges)) {
+                return false;
+            }
+
+            // Keep legacy single-value key aligned for existing consumers.
+            $cutoffValue = (int) $normalizedRanges[0]['min'];
+        } else {
+            if ($cutoffValue === null || $cutoffValue < 0 || $cutoffValue > 9999) {
+                return false;
+            }
+
+            $cutoffValue = max(0, (int) $cutoffValue);
+            $normalizedRanges = [
+                [
+                    'min' => $cutoffValue,
+                    'max' => 9999
+                ]
+            ];
         }
 
         $enabledValue = $enabled ? '1' : '0';
         $cutoffControlValue = ($enabled && $cutoffValue !== null) ? (string) ((int) $cutoffValue) : '';
+        $rangesControlValue = ($enabled && !empty($normalizedRanges))
+            ? serialize_sat_cutoff_ranges($normalizedRanges)
+            : '';
 
         $conn->begin_transaction();
         try {
@@ -265,6 +471,16 @@ if (!function_exists('set_global_sat_cutoff_state')) {
             );
             if (!$savedValue) {
                 throw new RuntimeException('Failed saving global SAT cutoff value.');
+            }
+
+            $savedRanges = set_system_control_value(
+                $conn,
+                global_sat_cutoff_ranges_control_key(),
+                $rangesControlValue,
+                $updatedBy
+            );
+            if (!$savedRanges) {
+                throw new RuntimeException('Failed saving global SAT cutoff ranges.');
             }
 
             $conn->commit();

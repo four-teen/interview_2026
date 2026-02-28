@@ -1,0 +1,372 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Program Chair Module User Manual</title>
+  <style>
+    :root {
+      --ink: #0f172a;
+      --muted: #475569;
+      --line: #cbd5e1;
+      --brand: #14532d;
+      --brand-soft: #dcfce7;
+      --paper: #ffffff;
+      --bg: #f8fafc;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Arial, sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.45;
+    }
+    .page {
+      width: 8.27in;
+      min-height: 11.69in;
+      margin: 0.25in auto;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      padding: 0.55in 0.6in;
+    }
+    h1, h2, h3 { margin: 0.15rem 0 0.4rem; line-height: 1.25; }
+    h1 { font-size: 1.45rem; color: var(--brand); }
+    h2 { font-size: 1.05rem; border-bottom: 1px solid var(--line); padding-bottom: 0.2rem; margin-top: 1rem; }
+    h3 { font-size: 0.95rem; margin-top: 0.8rem; }
+    p { margin: 0.2rem 0 0.45rem; }
+    ol, ul { margin: 0.2rem 0 0.55rem 1.1rem; }
+    li { margin: 0.15rem 0; }
+    .lead {
+      background: var(--brand-soft);
+      border: 1px solid #86efac;
+      border-left: 5px solid var(--brand);
+      padding: 0.5rem 0.6rem;
+      border-radius: 8px;
+      margin: 0.6rem 0 0.8rem;
+    }
+    .note {
+      background: #eff6ff;
+      border: 1px solid #93c5fd;
+      padding: 0.45rem 0.55rem;
+      border-radius: 8px;
+      color: #1e3a8a;
+      margin: 0.4rem 0;
+    }
+    .tip {
+      background: #fff7ed;
+      border: 1px solid #fdba74;
+      padding: 0.45rem 0.55rem;
+      border-radius: 8px;
+      color: #9a3412;
+      margin: 0.4rem 0;
+    }
+    .image-box {
+      border: 1px dashed #94a3b8;
+      background: #f8fafc;
+      border-radius: 8px;
+      padding: 0.45rem;
+      margin: 0.4rem 0 0.6rem;
+    }
+    .image-box h4 {
+      margin: 0 0 0.35rem;
+      font-size: 0.85rem;
+      color: #334155;
+      font-weight: 600;
+    }
+    .flow {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.84rem;
+      margin: 0.2rem 0;
+    }
+    .flow td {
+      border: 1px solid var(--line);
+      padding: 0.28rem 0.35rem;
+      text-align: center;
+      vertical-align: middle;
+    }
+    .flow .arrow { width: 36px; font-weight: 700; color: #64748b; }
+    .foot {
+      margin-top: 0.9rem;
+      padding-top: 0.4rem;
+      border-top: 1px solid var(--line);
+      font-size: 0.78rem;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+    }
+    .screenshot-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.84rem;
+      margin-top: 0.3rem;
+    }
+    .screenshot-table th,
+    .screenshot-table td {
+      border: 1px solid var(--line);
+      padding: 0.3rem 0.35rem;
+      text-align: left;
+      vertical-align: top;
+    }
+    .screenshot-table th {
+      background: #f1f5f9;
+    }
+    .section-break {
+      page-break-before: always;
+      break-before: page;
+    }
+    .shot {
+      margin: 0.5rem 0 0.85rem;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #fff;
+    }
+    .shot img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .shot figcaption {
+      font-size: 0.8rem;
+      color: var(--muted);
+      padding: 0.35rem 0.45rem;
+      border-top: 1px solid var(--line);
+      background: #f8fafc;
+    }
+    .placeholder-shot {
+      border: 1px dashed #94a3b8;
+      border-radius: 8px;
+      background: #f8fafc;
+      min-height: 130px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      color: #475569;
+      font-size: 0.82rem;
+      padding: 0.5rem;
+      margin: 0.35rem 0;
+    }
+
+    @media print {
+      @page { size: A4; margin: 12mm; }
+      body { background: #fff; }
+      .page {
+        width: auto;
+        min-height: auto;
+        margin: 0;
+        border: 0;
+        padding: 0;
+      }
+      .section-break {
+        page-break-before: always;
+        break-before: page;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <h1>Program Chair Module User Manual</h1>
+    <div class="lead">
+      This manual covers the Program Chair module only, starting from login at <strong>http://localhost/interview/</strong>.
+    </div>
+
+    <h2>1. Login (Program Chair)</h2>
+    <ol>
+      <li>Open <strong>http://localhost/interview/</strong>.</li>
+      <li>Click <strong>Authorized Google Sign-In</strong>.</li>
+      <li>Sign in with your official SKSU Google account.</li>
+      <li>If your role is Program Chair and your program is unlocked, you are redirected to <code>progchair/index.php</code>.</li>
+    </ol>
+
+    <div class="note">
+      <strong>Common login notes:</strong> non-admin login lock, per-program lock, and inactive account status can block Program Chair access.
+    </div>
+    <figure class="shot">
+      <img src="images/01-login-page.png" alt="Login page screenshot" />
+      <figcaption>Screenshot 1: Login page at <code>http://localhost/interview/</code>.</figcaption>
+    </figure>
+
+    <div class="image-box">
+      <h4>Process Image 1: Quick Process Map</h4>
+      <table class="flow" aria-label="Program chair process map">
+        <tr><td>Login via Google</td><td class="arrow">→</td><td>Program Chair Dashboard</td><td class="arrow">→</td><td>Find Student</td></tr>
+        <tr><td>Create/Update Details</td><td class="arrow">→</td><td>Enter Scores</td><td class="arrow">→</td><td>Transfer (Optional)</td></tr>
+        <tr><td>Pending/Unscored/Needs Review</td><td class="arrow">→</td><td>Process Queue</td><td class="arrow">→</td><td>Activity Logs</td></tr>
+      </table>
+    </div>
+
+    <h2>2. Dashboard Overview</h2>
+    <ul>
+      <li>Student workspace (search, qualified list, scrolling cards).</li>
+      <li>Cutoff info (global SAT range or program SAT cutoff).</li>
+      <li>Program cards (cutoff, scored count, capacity).</li>
+      <li>Sidebar action cards: Pending Transfers, Unscored, Needs Review, Activity Logs.</li>
+    </ul>
+
+    <h2>3. Main Workflow</h2>
+
+    <h3>3.1 Find Student</h3>
+    <ol>
+      <li>Use top search bar (examinee number or name).</li>
+      <li>Click available action on the student card.</li>
+    </ol>
+    <ul>
+      <li><strong>Manage</strong>: no interview yet.</li>
+      <li><strong>Manage Details</strong>: interview exists and you are owner.</li>
+      <li><strong>View Details</strong>: interview exists but not owned by your account.</li>
+      <li><strong>Accept/Reject</strong>: pending transfer for your program.</li>
+    </ul>
+
+    <h3>3.2 Create/Update Interview Details</h3>
+    <ol>
+      <li>Open <strong>Manage</strong> or <strong>Manage Details</strong>.</li>
+      <li>Fill required fields: classification, ETG class (if ETG), mobile number, SHS track, 2nd and 3rd choice.</li>
+      <li>Click <strong>Save</strong>.</li>
+    </ol>
+    <ul>
+      <li>1st choice is forced to the assigned Program Chair program.</li>
+      <li>Only owner Program Chair can update the record.</li>
+      <li>First save auto-provisions student portal credentials.</li>
+    </ul>
+
+    <h3>3.3 Enter Interview Scores</h3>
+    <ol>
+      <li>Click <strong>Enter Scores</strong> from student details modal.</li>
+      <li>Input component scores and save.</li>
+    </ol>
+    <ul>
+      <li>SAT score is auto-loaded and not editable.</li>
+      <li>Final score is computed server-side.</li>
+      <li>Only owner Program Chair can save/update scores.</li>
+      <li>Actions are recorded in Activity Logs.</li>
+    </ul>
+
+    <div class="section-break"></div>
+
+    <h3>3.4 Transfer Student</h3>
+    <ol>
+      <li>Click <strong>Transfer</strong> on a student card.</li>
+      <li>Review summary on transfer page.</li>
+      <li>Select target program and submit request.</li>
+    </ol>
+    <ul>
+      <li>Only same-campus programs are listed.</li>
+      <li>Cannot create a new transfer while one is pending.</li>
+      <li>Global SAT cutoff override applies when active.</li>
+    </ul>
+
+    <h3>3.5 Approve/Reject Incoming Transfers</h3>
+    <ol>
+      <li>Open <strong>Pending Transfers</strong>.</li>
+      <li>Review request details.</li>
+      <li>Approve or Reject.</li>
+    </ol>
+    <p>On approval, interview ownership and assigned program move to the receiving Program Chair/program.</p>
+
+    <h3>3.6 Ranking, SCC, and Export</h3>
+    <ol>
+      <li>Click a program card in right panel.</li>
+      <li>In ranking modal, review list, add SCC (Regular), print, or export Excel.</li>
+    </ol>
+    <ul>
+      <li>SCC accepts only REGULAR students.</li>
+      <li>SCC follows endorsement capacity.</li>
+      <li>Students already covered by regular ranking cannot be added through SCC.</li>
+    </ul>
+
+    <h3>3.7 My Actions Queue</h3>
+    <ul>
+      <li><strong>Pending Transfers</strong>: incoming transfer approvals.</li>
+      <li><strong>Unscored</strong>: owned interviews with no final score yet.</li>
+      <li><strong>Needs Review</strong>: owned scored interviews without pending transfer.</li>
+    </ul>
+    <div class="tip"><strong>Recommended daily order:</strong> 1) Pending Transfers, 2) Unscored, 3) Needs Review.</div>
+
+    <h3>3.8 Activity Logs</h3>
+    <ol>
+      <li>Open <strong>Activity Logs</strong>.</li>
+      <li>Review trend chart and table.</li>
+      <li>Track SCORE_SAVE, SCORE_UPDATE, FINAL_SCORE_UPDATE events.</li>
+    </ol>
+
+    <div class="image-box">
+      <h4>Process Image 2: Operational Sequence</h4>
+      <table class="flow" aria-label="Operational sequence">
+        <tr><td>Program Chair</td><td class="arrow">→</td><td>Interview System</td><td class="arrow">→</td><td>Database</td></tr>
+        <tr><td>Login</td><td class="arrow">→</td><td>Validate role/locks</td><td class="arrow">→</td><td>Authorize</td></tr>
+        <tr><td>Manage + Score</td><td class="arrow">→</td><td>Compute + Save</td><td class="arrow">→</td><td>Store + Audit</td></tr>
+        <tr><td>Transfer Action</td><td class="arrow">→</td><td>Approve/Reject</td><td class="arrow">→</td><td>Update ownership</td></tr>
+      </table>
+    </div>
+
+    <h2>4. Screenshot Checklist</h2>
+    <p>Embedded screenshots:</p>
+    <figure class="shot">
+      <img src="images/01-login-page.png" alt="Login page with Google sign-in" />
+      <figcaption>Screenshot 1: Login page (<code>/index.php</code>).</figcaption>
+    </figure>
+    <figure class="shot">
+      <img src="images/02-dashboard.png" alt="Program Chair dashboard" />
+      <figcaption>Screenshot 2: Program Chair dashboard (<code>/progchair/index.php</code>).</figcaption>
+    </figure>
+    <div class="placeholder-shot">Screenshot 3 missing: Student card actions<br><code>docs/images/03-student-actions.png</code></div>
+    <figure class="shot">
+      <img src="images/04-student-details-modal.png" alt="Student details verification modal" />
+      <figcaption>Screenshot 4: Student Details Verification modal.</figcaption>
+    </figure>
+    <figure class="shot">
+      <img src="images/05-interview-scoring.png" alt="Interview scoring page" />
+      <figcaption>Screenshot 5: Interview scoring page (<code>/progchair/interview_scores.php</code>).</figcaption>
+    </figure>
+    <figure class="shot">
+      <img src="images/06-transfer-page.png" alt="Transfer page" />
+      <figcaption>Screenshot 6: Transfer page (<code>/progchair/transfer_student.php</code>).</figcaption>
+    </figure>
+    <figure class="shot">
+      <img src="images/07-pending-transfers.png" alt="Pending transfers page" />
+      <figcaption>Screenshot 7: Pending transfers page (<code>/progchair/pending_transfers.php</code>).</figcaption>
+    </figure>
+    <figure class="shot">
+      <img src="images/08-program-ranking-modal.png" alt="Program ranking modal" />
+      <figcaption>Screenshot 8: Program Ranking modal.</figcaption>
+    </figure>
+    <figure class="shot">
+      <img src="images/09-activity-logs.png" alt="Activity logs page" />
+      <figcaption>Screenshot 9: Activity logs page (<code>/progchair/activity_logs.php</code>).</figcaption>
+    </figure>
+
+    <table class="screenshot-table" aria-label="Screenshot checklist">
+      <thead><tr><th>#</th><th>Screen</th><th>Path</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Login page with Google sign-in</td><td><code>/index.php</code></td></tr>
+        <tr><td>2</td><td>Program Chair dashboard</td><td><code>/progchair/index.php</code></td></tr>
+        <tr><td>3</td><td>Student card actions</td><td><code>/progchair/index.php</code></td></tr>
+        <tr><td>4</td><td>Student Details Verification modal</td><td><code>/progchair/index.php</code></td></tr>
+        <tr><td>5</td><td>Interview scoring page</td><td><code>/progchair/interview_scores.php</code></td></tr>
+        <tr><td>6</td><td>Transfer page</td><td><code>/progchair/transfer_student.php</code></td></tr>
+        <tr><td>7</td><td>Pending Transfers page</td><td><code>/progchair/pending_transfers.php</code></td></tr>
+        <tr><td>8</td><td>Program Ranking modal</td><td><code>/progchair/index.php</code></td></tr>
+        <tr><td>9</td><td>Activity Logs page</td><td><code>/progchair/activity_logs.php</code></td></tr>
+      </tbody>
+    </table>
+
+    <h2>5. Quick Troubleshooting</h2>
+    <ul>
+      <li><strong>Cannot login:</strong> check account status, non-admin lock, and your program lock.</li>
+      <li><strong>Student not visible:</strong> verify latest batch and cutoff configuration.</li>
+      <li><strong>Cannot edit details:</strong> only interview owner can edit.</li>
+      <li><strong>Cannot transfer:</strong> resolve existing pending transfer first.</li>
+      <li><strong>Cannot add SCC:</strong> student must be REGULAR and SCC capacity available.</li>
+    </ul>
+
+    <div class="foot">
+      <span>SKSU Interview System - Program Chair Manual</span>
+      <span>Print Date: <script>document.write(new Date().toLocaleDateString());</script></span>
+    </div>
+  </main>
+</body>
+</html>

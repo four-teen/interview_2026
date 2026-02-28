@@ -28,6 +28,13 @@ if ($googleLoginNonce === '' || $googleLoginCsrf === '' || $studentLoginCsrf ===
     $_SESSION['student_login_csrf'] = $studentLoginCsrf;
 }
 $nonAdminLoginLocked = is_non_admin_login_locked($conn);
+$globalSatCutoffState = get_global_sat_cutoff_state($conn);
+$globalSatCutoffActive = (bool) ($globalSatCutoffState['active'] ?? false);
+$globalSatCutoffRangeText = trim((string) ($globalSatCutoffState['range_text'] ?? ''));
+$globalSatCutoffLabel = 'Global SAT cutoff is active.';
+if ($globalSatCutoffRangeText !== '') {
+    $globalSatCutoffLabel = 'Global SAT cutoff is active. Accepted SAT range: ' . $globalSatCutoffRangeText . '.';
+}
 ?>
 <!DOCTYPE html>
 <html
@@ -186,6 +193,14 @@ $nonAdminLoginLocked = is_non_admin_login_locked($conn);
         color: #8a4a07;
       }
 
+      .login-alert-cutoff {
+        background: #e8f5e9;
+        border-color: #1b5e20;
+        color: #1b5e20;
+        text-align: center;
+        font-weight: 600;
+      }
+
       .login-divider {
         text-align: center;
         margin: 1rem 0 0.9rem;
@@ -333,6 +348,11 @@ $nonAdminLoginLocked = is_non_admin_login_locked($conn);
   <div class="alert alert-warning small login-alert" role="alert">
     Student and Program Chair login is temporarily locked by the administrator.
     Administrator login remains available.
+  </div>
+<?php endif; ?>
+<?php if ($globalSatCutoffActive): ?>
+  <div class="alert small login-alert login-alert-cutoff" role="alert">
+    <?= htmlspecialchars($globalSatCutoffLabel); ?>
   </div>
 <?php endif; ?>
 

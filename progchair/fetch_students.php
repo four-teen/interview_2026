@@ -12,6 +12,26 @@ session_start();
 
 header('Content-Type: application/json');
 
+function build_sat_range_condition_sql(array $ranges, string $columnExpression): string
+{
+    $clauses = [];
+    foreach ($ranges as $range) {
+        if (!is_array($range) || !array_key_exists('min', $range) || !array_key_exists('max', $range)) {
+            continue;
+        }
+
+        $min = (int) $range['min'];
+        $max = (int) $range['max'];
+
+        if ($min < 0 || $max < 0 || $min > $max) {
+            continue;
+        }
+
+        $clauses[] = '(' . $columnExpression . ' BETWEEN ' . $min . ' AND ' . $max . ')';
+    }
+
+    return implode(' OR ', $clauses);
+}
 
 // ======================================================
 // STEP 0 – BASIC GUARD (Program Chair Only)
@@ -59,8 +79,15 @@ $stmtCutoff->bind_param("i", $assignedProgramId);
 $stmtCutoff->execute();
 $cutoffResult = $stmtCutoff->get_result();
 
+$globalSatCutoffState = get_global_sat_cutoff_state($conn);
+$globalSatCutoffEnabled = (bool) ($globalSatCutoffState['enabled'] ?? false);
+$globalSatCutoffValue = isset($globalSatCutoffState['value']) ? (int) $globalSatCutoffState['value'] : null;
+$globalSatCutoffRanges = is_array($globalSatCutoffState['ranges'] ?? null) ? $globalSatCutoffState['ranges'] : [];
+$globalSatCutoffRangeText = trim((string) ($globalSatCutoffState['range_text'] ?? ''));
+$globalSatCutoffRangeActive = $globalSatCutoffEnabled && !empty($globalSatCutoffRanges);
+
 // If no cutoff set → program not active → no students visible
-if ($cutoffResult->num_rows === 0) {
+if ($cutoffResult->num_rows === 0 && !$globalSatCutoffRangeActive) {
     echo json_encode([
         'success' => true,
         'data' => [],
@@ -69,12 +96,28 @@ if ($cutoffResult->num_rows === 0) {
     exit;
 }
 
-$cutoffRow = $cutoffResult->fetch_assoc();
-$programCutoff = (int) $cutoffRow['cutoff_score'];
-$globalSatCutoffState = get_global_sat_cutoff_state($conn);
-$globalSatCutoffEnabled = (bool) ($globalSatCutoffState['enabled'] ?? false);
-$globalSatCutoffValue = isset($globalSatCutoffState['value']) ? (int) $globalSatCutoffState['value'] : null;
+$programCutoff = null;
+if ($cutoffResult->num_rows > 0) {
+    $cutoffRow = $cutoffResult->fetch_assoc();
+    if ($cutoffRow && $cutoffRow['cutoff_score'] !== null && $cutoffRow['cutoff_score'] !== '') {
+        $programCutoff = (int) $cutoffRow['cutoff_score'];
+    }
+}
+
+if ($programCutoff === null && !$globalSatCutoffRangeActive) {
+    echo json_encode([
+        'success' => true,
+        'data' => [],
+        'total' => 0
+    ]);
+    exit;
+}
+
 $effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalSatCutoffEnabled, $globalSatCutoffValue);
+
+if ($globalSatCutoffRangeActive && $globalSatCutoffRangeText === '') {
+    $globalSatCutoffRangeText = format_sat_cutoff_ranges_for_display($globalSatCutoffRanges, ', ');
+}
 
 
 // ======================================================
@@ -108,17 +151,41 @@ $activeBatchId = $batchResult->fetch_assoc()['upload_batch_id'];
 $uploadedTotal = 0;
 $qualifiedByCutoffTotal = 0;
 
+$scoreWhereSql = '';
+$batchQualifiedExpr = '';
+
+if ($globalSatCutoffRangeActive) {
+    $batchRangeExpr = build_sat_range_condition_sql($globalSatCutoffRanges, 'sat_score');
+    $listRangeExpr = build_sat_range_condition_sql($globalSatCutoffRanges, 'pr.sat_score');
+
+    if ($batchRangeExpr !== '' && $listRangeExpr !== '') {
+        $batchQualifiedExpr = $batchRangeExpr;
+        $scoreWhereSql = " AND ({$listRangeExpr}) ";
+    } else {
+        $globalSatCutoffRangeActive = false;
+    }
+}
+
+if (!$globalSatCutoffRangeActive) {
+    $batchQualifiedExpr = 'sat_score >= ?';
+    $scoreWhereSql = ' AND pr.sat_score >= ? ';
+}
+
 $batchTotalsSql = "
     SELECT
         COUNT(*) AS uploaded_total,
-        SUM(CASE WHEN sat_score >= ? THEN 1 ELSE 0 END) AS qualified_total
+        SUM(CASE WHEN {$batchQualifiedExpr} THEN 1 ELSE 0 END) AS qualified_total
     FROM tbl_placement_results
     WHERE upload_batch_id = ?
 ";
 
 $stmtBatchTotals = $conn->prepare($batchTotalsSql);
 if ($stmtBatchTotals) {
-    $stmtBatchTotals->bind_param("is", $effectiveCutoff, $activeBatchId);
+    if ($globalSatCutoffRangeActive) {
+        $stmtBatchTotals->bind_param("s", $activeBatchId);
+    } else {
+        $stmtBatchTotals->bind_param("is", $effectiveCutoff, $activeBatchId);
+    }
     $stmtBatchTotals->execute();
     $batchTotalsRow = $stmtBatchTotals->get_result()->fetch_assoc();
     if ($batchTotalsRow) {
@@ -224,7 +291,7 @@ $countSql = "
         LEFT JOIN tbl_student_interview si
             ON pr.examinee_number = si.examinee_number
         WHERE pr.upload_batch_id = ?
-          AND pr.sat_score >= ?
+          {$scoreWhereSql}
           {$searchFilterSql}
           {$ownerActionWhere}
     ";
@@ -242,18 +309,33 @@ if (!$stmtCount) {
 }
 
 if ($searchFilterSql !== '') {
-    $stmtCount->bind_param(
-        "sis",
-        $activeBatchId,
-        $effectiveCutoff,
-        $searchParam
-    );
+    if ($globalSatCutoffRangeActive) {
+        $stmtCount->bind_param(
+            "ss",
+            $activeBatchId,
+            $searchParam
+        );
+    } else {
+        $stmtCount->bind_param(
+            "sis",
+            $activeBatchId,
+            $effectiveCutoff,
+            $searchParam
+        );
+    }
 } else {
-    $stmtCount->bind_param(
-        "si",
-        $activeBatchId,
-        $effectiveCutoff
-    );
+    if ($globalSatCutoffRangeActive) {
+        $stmtCount->bind_param(
+            "s",
+            $activeBatchId
+        );
+    } else {
+        $stmtCount->bind_param(
+            "si",
+            $activeBatchId,
+            $effectiveCutoff
+        );
+    }
 }
 
 $stmtCount->execute();
@@ -300,7 +382,7 @@ $sql = "
         AND th.to_program_id = ?
 
     WHERE pr.upload_batch_id = ?
-      AND pr.sat_score >= ?
+      {$scoreWhereSql}
       {$searchFilterSql}
       {$ownerActionWhere}
 
@@ -321,24 +403,45 @@ if (!$stmt) {
     exit;
 }
 if ($searchFilterSql !== '') {
-    $stmt->bind_param(
-        "isisii",
-        $assignedProgramId,
-        $activeBatchId,
-        $effectiveCutoff,
-        $searchParam,
-        $limit,
-        $offset
-    );
+    if ($globalSatCutoffRangeActive) {
+        $stmt->bind_param(
+            "issii",
+            $assignedProgramId,
+            $activeBatchId,
+            $searchParam,
+            $limit,
+            $offset
+        );
+    } else {
+        $stmt->bind_param(
+            "isisii",
+            $assignedProgramId,
+            $activeBatchId,
+            $effectiveCutoff,
+            $searchParam,
+            $limit,
+            $offset
+        );
+    }
 } else {
-    $stmt->bind_param(
-        "isiii",
-        $assignedProgramId,
-        $activeBatchId,
-        $effectiveCutoff,
-        $limit,
-        $offset
-    );
+    if ($globalSatCutoffRangeActive) {
+        $stmt->bind_param(
+            "isii",
+            $assignedProgramId,
+            $activeBatchId,
+            $limit,
+            $offset
+        );
+    } else {
+        $stmt->bind_param(
+            "isiii",
+            $assignedProgramId,
+            $activeBatchId,
+            $effectiveCutoff,
+            $limit,
+            $offset
+        );
+    }
 }
 
 $stmt->execute();
@@ -391,10 +494,12 @@ echo json_encode([
     'uploaded_total' => $uploadedTotal,
     'qualified_total' => $qualifiedByCutoffTotal,
     'program_cutoff' => $programCutoff,
-    'applied_cutoff' => $effectiveCutoff,
+    'applied_cutoff' => $globalSatCutoffRangeActive ? null : $effectiveCutoff,
     'global_cutoff_enabled' => $globalSatCutoffEnabled,
     'global_cutoff_value' => $globalSatCutoffValue,
-    'global_cutoff_active' => ($globalSatCutoffEnabled && $globalSatCutoffValue !== null)
+    'global_cutoff_ranges' => $globalSatCutoffRanges,
+    'global_cutoff_range_text' => $globalSatCutoffRangeText,
+    'global_cutoff_active' => $globalSatCutoffRangeActive
 ]);
 
 exit;

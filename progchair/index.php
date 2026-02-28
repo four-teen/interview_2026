@@ -18,8 +18,13 @@ error_reporting(E_ALL);
 $assignedCampusId  = $_SESSION['campus_id'];
 $assignedProgramId = $_SESSION['program_id'];
 $globalSatCutoffState = get_global_sat_cutoff_state($conn);
-$globalSatCutoffValue = isset($globalSatCutoffState['value']) ? (int) $globalSatCutoffState['value'] : null;
-$globalSatCutoffActive = (bool) ($globalSatCutoffState['active'] ?? false);
+$globalSatCutoffRanges = is_array($globalSatCutoffState['ranges'] ?? null) ? $globalSatCutoffState['ranges'] : [];
+$globalSatCutoffRangeText = trim((string) ($globalSatCutoffState['range_text'] ?? ''));
+$globalSatCutoffActive = (bool) ($globalSatCutoffState['enabled'] ?? false) && !empty($globalSatCutoffRanges);
+
+if ($globalSatCutoffActive && $globalSatCutoffRangeText === '') {
+    $globalSatCutoffRangeText = format_sat_cutoff_ranges_for_display($globalSatCutoffRanges, ', ');
+}
 
 function table_column_exists(mysqli $conn, string $table, string $column): bool
 {
@@ -97,6 +102,18 @@ $resultProgram = $stmtProgram->get_result();
 
 while ($row = $resultProgram->fetch_assoc()) {
     $programs[] = $row;
+}
+
+$assignedProgramCutoff = null;
+foreach ($programs as $programRow) {
+    if ((int) ($programRow['program_id'] ?? 0) !== (int) $assignedProgramId) {
+        continue;
+    }
+
+    if ($programRow['cutoff_score'] !== null && $programRow['cutoff_score'] !== '') {
+        $assignedProgramCutoff = (int) $programRow['cutoff_score'];
+    }
+    break;
 }
 
 // ======================================================
@@ -699,9 +716,11 @@ if ($activeBatchId) {
     <small class="text-muted d-block">Use the header search bar to find students.</small>
     <small class="text-muted d-block" id="activeCutoffInfo">
       <?php if ($globalSatCutoffActive): ?>
-        Global SAT cutoff is active: showing SAT >= <?= number_format((int) $globalSatCutoffValue); ?>.
+        Global SAT cutoff is active: showing SAT range <?= htmlspecialchars($globalSatCutoffRangeText); ?>.
+      <?php elseif ($assignedProgramCutoff !== null): ?>
+        Program SAT cutoff is active: showing SAT >= <?= number_format((int) $assignedProgramCutoff); ?>.
       <?php else: ?>
-        Program SAT cutoff filtering is active.
+        Program SAT cutoff is not configured for this program.
       <?php endif; ?>
     </small>
   </div>
@@ -1585,15 +1604,17 @@ function createStudentCard(student) {
           }
 
           if (cutoffInfoEl && !ownerActionFilter) {
-            const appliedCutoff = Number(data.applied_cutoff ?? 0);
             const globalActive = Boolean(data.global_cutoff_active);
-            const globalCutoff = Number(data.global_cutoff_value ?? 0);
-            const programCutoff = Number(data.program_cutoff ?? 0);
+            const globalRangeText = String(data.global_cutoff_range_text || '').trim();
+            const appliedCutoff = Number(data.applied_cutoff ?? 0);
+            const hasAppliedCutoff = data.applied_cutoff !== null && data.applied_cutoff !== '' && Number.isFinite(appliedCutoff);
 
-            if (globalActive) {
-              cutoffInfoEl.innerText = `Global SAT cutoff is active: showing SAT >= ${globalCutoff.toLocaleString()} (program cutoff: ${programCutoff.toLocaleString()}).`;
-            } else {
+            if (globalActive && globalRangeText !== '') {
+              cutoffInfoEl.innerText = `Global SAT cutoff is active: showing SAT range ${globalRangeText}.`;
+            } else if (hasAppliedCutoff) {
               cutoffInfoEl.innerText = `Program SAT cutoff is active: showing SAT >= ${appliedCutoff.toLocaleString()}.`;
+            } else {
+              cutoffInfoEl.innerText = 'Program SAT cutoff is not configured for this program.';
             }
           }
 
