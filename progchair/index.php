@@ -2774,12 +2774,31 @@ loadStudents(true);
       if (studentCred && studentCred.username && studentCred.temporary_password) {
         const safeUsername = escapeHtml(studentCred.username);
         const safeTempPassword = escapeHtml(studentCred.temporary_password);
+        const qrPayload = `Student Portal Credentials\nUsername: ${String(studentCred.username)}\nTemporary Password: ${String(studentCred.temporary_password)}`;
+        const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&margin=6&data=${encodeURIComponent(qrPayload)}`;
+        const safeQrUrl = escapeHtml(qrUrl);
         credentialNotice = `
           <div class="alert alert-warning text-start mt-3 mb-0 py-2 px-3">
-            <div class="fw-semibold mb-1">Student Portal Credentials</div>
-            <div><strong>Username:</strong> ${safeUsername}</div>
-            <div><strong>Temporary Password:</strong> ${safeTempPassword}</div>
-            <small class="text-muted">The student must change this password on first login.</small>
+            <div class="d-flex flex-column flex-md-row align-items-start gap-3">
+              <div class="flex-grow-1">
+                <div class="fw-semibold mb-1">Student Portal Credentials</div>
+                <div><strong>Username:</strong> ${safeUsername}</div>
+                <div><strong>Temporary Password:</strong> ${safeTempPassword}</div>
+                <small class="text-muted">The student must change this password on first login.</small>
+              </div>
+              <div class="text-center">
+                <div class="small fw-semibold mb-1">Scan QR Code</div>
+                <img
+                  src="${safeQrUrl}"
+                  alt="Student portal credentials QR code"
+                  width="150"
+                  height="150"
+                  class="rounded border bg-white p-1"
+                  style="max-width: 150px; height: auto;"
+                />
+                <div class="small text-muted mt-1">Use phone camera to view credentials.</div>
+              </div>
+            </div>
           </div>
         `;
       }

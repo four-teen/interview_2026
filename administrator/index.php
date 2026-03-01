@@ -418,6 +418,134 @@ $overallInterviewTrendSeries = [
     'scored' => array_values($dailyScoredTrend)
 ];
 
+$expectedCampusTrendLabels = [];
+$expectedCampusTrendSeries = [];
+$expectedCampusRangeLabel = $globalSatCutoffActive
+    ? 'Filtered by Global SAT range: ' . ($globalSatCutoffRangeText !== '' ? $globalSatCutoffRangeText : 'Configured range')
+    : 'Global SAT range is disabled. Showing all SAT scores.';
+
+$expectedCampusCountsById = [];
+$expectedCampusTokenMap = [];
+$expectedCampusOrder = [];
+
+foreach ($campuses as $campusRow) {
+    $campusId = (int) ($campusRow['campus_id'] ?? 0);
+    if ($campusId <= 0) {
+        continue;
+    }
+
+    $campusCodeRaw = trim((string) ($campusRow['campus_code'] ?? ''));
+    $campusCodeToken = strtoupper((string) preg_replace('/[^A-Z0-9]/', '', $campusCodeRaw));
+    $campusName = trim((string) ($campusRow['campus_name'] ?? ''));
+    $campusNameParts = $campusName !== '' ? preg_split('/\s+/', $campusName) : [];
+    $campusNameFirstWord = (string) ($campusNameParts[0] ?? '');
+    $campusNameToken = strtoupper((string) preg_replace('/[^A-Z0-9]/', '', $campusNameFirstWord));
+
+    if ($campusCodeToken !== '') {
+        $expectedCampusTokenMap[$campusCodeToken] = $campusId;
+    }
+    if ($campusNameToken !== '') {
+        $expectedCampusTokenMap[$campusNameToken] = $campusId;
+    }
+
+    $expectedCampusCountsById[$campusId] = 0;
+    $expectedCampusOrder[] = [
+        'campus_id' => $campusId,
+        'label' => $campusCodeRaw !== '' ? strtoupper($campusCodeRaw) : ($campusName !== '' ? $campusName : ('Campus ' . $campusId))
+    ];
+}
+
+if ($activeBatchId && !empty($expectedCampusOrder)) {
+    $expectedCampusSql = "
+        SELECT preferred_program, sat_score
+        FROM tbl_placement_results
+        WHERE upload_batch_id = ?
+          AND preferred_program IS NOT NULL
+          AND TRIM(preferred_program) <> ''
+    ";
+
+    $expectedCampusStmt = $conn->prepare($expectedCampusSql);
+    if ($expectedCampusStmt) {
+        $expectedCampusStmt->bind_param('s', $activeBatchId);
+        $expectedCampusStmt->execute();
+        $expectedCampusResult = $expectedCampusStmt->get_result();
+
+        while ($expectedRow = $expectedCampusResult->fetch_assoc()) {
+            $preferredProgram = trim((string) ($expectedRow['preferred_program'] ?? ''));
+            if ($preferredProgram === '') {
+                continue;
+            }
+
+            // Preferred program format typically starts with campus prefix, e.g.:
+            // "Tacurong-Bachelor of ...", "ACCESS-Bachelor of ...", "TAC | ..."
+            // Extract only that prefix to map records to campus.
+            $preferredPrefix = $preferredProgram;
+            $preferredPrefixParts = preg_split('/\s*(?:\||-|:)\s*/', $preferredProgram, 2);
+            if (is_array($preferredPrefixParts) && isset($preferredPrefixParts[0])) {
+                $candidatePrefix = trim((string) $preferredPrefixParts[0]);
+                if ($candidatePrefix !== '') {
+                    $preferredPrefix = $candidatePrefix;
+                }
+            }
+
+            $preferredPrefixWords = preg_split('/\s+/', $preferredPrefix);
+            $preferredFirstWord = trim((string) ($preferredPrefixWords[0] ?? $preferredPrefix));
+            $preferredToken = strtoupper((string) preg_replace('/[^A-Z0-9]/', '', $preferredFirstWord));
+            if ($preferredToken === '' || !isset($expectedCampusTokenMap[$preferredToken])) {
+                continue;
+            }
+
+            $satScoreRaw = $expectedRow['sat_score'] ?? null;
+            $satScore = is_numeric($satScoreRaw) ? (float) $satScoreRaw : null;
+
+            if ($globalSatCutoffActive) {
+                $withinRange = false;
+                if ($satScore !== null) {
+                    foreach ($globalSatCutoffRanges as $range) {
+                        $min = (float) ($range['min'] ?? 0);
+                        $max = (float) ($range['max'] ?? 0);
+                        if ($satScore >= $min && $satScore <= $max) {
+                            $withinRange = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!$withinRange) {
+                    continue;
+                }
+            }
+
+            $campusId = (int) $expectedCampusTokenMap[$preferredToken];
+            if (!isset($expectedCampusCountsById[$campusId])) {
+                continue;
+            }
+
+            $expectedCampusCountsById[$campusId]++;
+        }
+
+        $expectedCampusStmt->close();
+    }
+}
+
+$expectedCampusSeriesData = [];
+foreach ($expectedCampusOrder as $campusOrderRow) {
+    $campusId = (int) ($campusOrderRow['campus_id'] ?? 0);
+    if ($campusId <= 0) {
+        continue;
+    }
+
+    $expectedCampusTrendLabels[] = (string) ($campusOrderRow['label'] ?? ('Campus ' . $campusId));
+    $expectedCampusSeriesData[] = (int) ($expectedCampusCountsById[$campusId] ?? 0);
+}
+
+$expectedCampusTrendSeries = [
+    [
+        'name' => 'Expected for Interview',
+        'data' => $expectedCampusSeriesData
+    ]
+];
+
  ?>
 
 <!DOCTYPE html>
@@ -844,6 +972,18 @@ $overallInterviewTrendSeries = [
         </div>
       </div>
 
+      <div class="card mb-4">
+        <div class="card-body">
+          <h5 class="card-title mb-1">
+            Expected Interviews by Campus (Preferred Program)
+          </h5>
+          <small class="text-muted d-block mb-3">
+            <?= htmlspecialchars($expectedCampusRangeLabel); ?>
+          </small>
+          <div id="expectedCampusInterviewChart"></div>
+        </div>
+      </div>
+
     </div>
 
     <!-- ================= RIGHT COLUMN ================= -->
@@ -1056,6 +1196,9 @@ document.addEventListener("DOMContentLoaded", function () {
   const trendCategories = <?php echo json_encode($programTrendLabels); ?>;
   const overallTrendSeries = <?php echo json_encode($overallInterviewTrendSeries); ?>;
   const chartContainer = document.querySelector("#programInterviewTrendChart");
+  const expectedCampusCategories = <?php echo json_encode($expectedCampusTrendLabels); ?>;
+  const expectedCampusSeries = <?php echo json_encode($expectedCampusTrendSeries); ?>;
+  const expectedCampusChartContainer = document.querySelector("#expectedCampusInterviewChart");
   const campusStatusById = <?php echo json_encode($campusProgramStatus); ?>;
   const campusStatusModalEl = document.getElementById('campusStatusModal');
   const campusStatusModalTitleEl = document.getElementById('campusStatusModalTitle');
@@ -1162,84 +1305,149 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   });
 
-  if (!chartContainer) return;
-  const mergedSeries = [];
+  if (chartContainer) {
+    const mergedSeries = [];
 
-  if (overallTrendSeries && Array.isArray(overallTrendSeries.interviewed)) {
-    mergedSeries.push({
-      name: 'Total Interviewed',
-      data: overallTrendSeries.interviewed
-    });
-  }
-
-  if (overallTrendSeries && Array.isArray(overallTrendSeries.scored)) {
-    mergedSeries.push({
-      name: 'Total Scored',
-      data: overallTrendSeries.scored
-    });
-  }
-
-  if (mergedSeries.length === 0) {
-    chartContainer.innerHTML = '<div class="text-muted small py-3">No interview trend data available for the last 15 days.</div>';
-    return;
-  }
-
-  const options = {
-    chart: {
-      type: 'line',
-      height: 350,
-      toolbar: { show: false }
-    },
-    series: mergedSeries,
-    xaxis: {
-      categories: trendCategories,
-      labels: {
-        rotate: -45,
-        hideOverlappingLabels: true
-      }
-    },
-    stroke: {
-      curve: 'smooth',
-      width: mergedSeries.map((seriesRow) => {
-        const name = String(seriesRow.name || '');
-        return (name === 'Total Interviewed' || name === 'Total Scored') ? 3.4 : 2.2;
-      }),
-      dashArray: mergedSeries.map((seriesRow) => {
-        const name = String(seriesRow.name || '');
-        return name === 'Total Scored' ? 4 : 0;
-      })
-    },
-    markers: {
-      size: 4,
-      strokeWidth: 0
-    },
-    colors: ['#ff3e1d', '#1f6bff'],
-    dataLabels: {
-      enabled: false
-    },
-    grid: {
-      strokeDashArray: 4
-    },
-    legend: {
-      position: 'top'
-    },
-    tooltip: {
-      shared: true,
-      intersect: false
-    },
-    yaxis: {
-      title: {
-        text: 'Number of Interviews'
-      }
+    if (overallTrendSeries && Array.isArray(overallTrendSeries.interviewed)) {
+      mergedSeries.push({
+        name: 'Total Interviewed',
+        data: overallTrendSeries.interviewed
+      });
     }
-  };
 
-  const chart = new ApexCharts(
-    chartContainer,
-    options
-  );
+    if (overallTrendSeries && Array.isArray(overallTrendSeries.scored)) {
+      mergedSeries.push({
+        name: 'Total Scored',
+        data: overallTrendSeries.scored
+      });
+    }
 
-  chart.render();
+    if (mergedSeries.length === 0) {
+      chartContainer.innerHTML = '<div class="text-muted small py-3">No interview trend data available for the last 15 days.</div>';
+    } else {
+      const options = {
+        chart: {
+          type: 'line',
+          height: 350,
+          toolbar: { show: false }
+        },
+        series: mergedSeries,
+        xaxis: {
+          categories: trendCategories,
+          labels: {
+            rotate: -45,
+            hideOverlappingLabels: true
+          }
+        },
+        stroke: {
+          curve: 'smooth',
+          width: mergedSeries.map((seriesRow) => {
+            const name = String(seriesRow.name || '');
+            return (name === 'Total Interviewed' || name === 'Total Scored') ? 3.4 : 2.2;
+          }),
+          dashArray: mergedSeries.map((seriesRow) => {
+            const name = String(seriesRow.name || '');
+            return name === 'Total Scored' ? 4 : 0;
+          })
+        },
+        markers: {
+          size: 4,
+          strokeWidth: 0
+        },
+        colors: ['#ff3e1d', '#1f6bff'],
+        dataLabels: {
+          enabled: false
+        },
+        grid: {
+          strokeDashArray: 4
+        },
+        legend: {
+          position: 'top'
+        },
+        tooltip: {
+          shared: true,
+          intersect: false
+        },
+        yaxis: {
+          title: {
+            text: 'Number of Interviews'
+          }
+        }
+      };
+
+      const chart = new ApexCharts(
+        chartContainer,
+        options
+      );
+
+      chart.render();
+    }
+  }
+
+  if (expectedCampusChartContainer) {
+    const hasExpectedCampusData = Array.isArray(expectedCampusSeries)
+      && expectedCampusSeries.some((seriesRow) =>
+        Array.isArray(seriesRow.data) && seriesRow.data.some((value) => toNumber(value) > 0)
+      );
+
+    if (!Array.isArray(expectedCampusCategories) || expectedCampusCategories.length === 0 || !Array.isArray(expectedCampusSeries) || expectedCampusSeries.length === 0) {
+      expectedCampusChartContainer.innerHTML = '<div class="text-muted small py-3">No expected interview data available.</div>';
+    } else {
+      const expectedCampusOptions = {
+        chart: {
+          type: 'line',
+          height: 330,
+          toolbar: { show: false }
+        },
+        series: expectedCampusSeries,
+        xaxis: {
+          categories: expectedCampusCategories,
+          labels: {
+            rotate: 0,
+            hideOverlappingLabels: false
+          }
+        },
+        stroke: {
+          curve: 'smooth',
+          width: 3
+        },
+        markers: {
+          size: 5,
+          strokeWidth: 0
+        },
+        colors: ['#696cff'],
+        dataLabels: {
+          enabled: false
+        },
+        grid: {
+          strokeDashArray: 4
+        },
+        legend: {
+          position: 'top'
+        },
+        tooltip: {
+          shared: true,
+          intersect: false
+        },
+        yaxis: {
+          min: 0,
+          forceNiceScale: true,
+          title: {
+            text: 'Expected Students'
+          }
+        },
+        noData: {
+          text: hasExpectedCampusData ? 'Loading...' : 'No expected interview data available.'
+        }
+      };
+
+      const expectedCampusChart = new ApexCharts(
+        expectedCampusChartContainer,
+        expectedCampusOptions
+      );
+      expectedCampusChart.render();
+    }
+  }
 });
 </script>
 
