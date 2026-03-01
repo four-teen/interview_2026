@@ -113,6 +113,73 @@ if ($overallResult) {
     }
 }
 
+$activeUsers = [];
+$activeUsersSql = "
+  SELECT
+    a.accountid,
+    a.acc_fullname,
+    a.email,
+    a.role,
+    a.status,
+    c.campus_name,
+    COALESCE(
+      NULLIF(pa.assigned_program_display, ''),
+      CASE
+        WHEN p.program_id IS NULL OR p.program_id = 0 THEN '-'
+        ELSE CONCAT(
+          COALESCE(NULLIF(UPPER(TRIM(cp.campus_code)), ''), 'N/A'),
+          ' | ',
+          COALESCE(NULLIF(TRIM(p.program_code), ''), CONCAT('PROGRAM ', p.program_id)),
+          IF(p.program_name IS NOT NULL AND p.program_name <> '', CONCAT(' : ', p.program_name), ''),
+          IF(p.major IS NOT NULL AND p.major <> '', CONCAT(' - ', p.major), '')
+        )
+      END
+    ) AS assigned_program_display
+  FROM tblaccount a
+  LEFT JOIN tbl_campus c
+    ON c.campus_id = a.campus_id
+  LEFT JOIN (
+    SELECT
+      apa.accountid,
+      GROUP_CONCAT(
+        CONCAT(
+          COALESCE(NULLIF(UPPER(TRIM(cpa.campus_code)), ''), 'N/A'),
+          ' | ',
+          COALESCE(NULLIF(TRIM(tp.program_code), ''), CONCAT('PROGRAM ', tp.program_id)),
+          IF(tp.program_name IS NOT NULL AND tp.program_name <> '', CONCAT(' : ', tp.program_name), ''),
+          IF(tp.major IS NOT NULL AND tp.major <> '', CONCAT(' - ', tp.major), '')
+        )
+        ORDER BY cpa.campus_code ASC, tp.program_code ASC, tp.major ASC
+        SEPARATOR ', '
+      ) AS assigned_program_display
+    FROM tbl_account_program_assignments apa
+    INNER JOIN tbl_program tp
+      ON tp.program_id = apa.program_id
+    LEFT JOIN tbl_college tpc
+      ON tpc.college_id = tp.college_id
+    LEFT JOIN tbl_campus cpa
+      ON cpa.campus_id = tpc.campus_id
+    WHERE apa.status = 'active'
+      AND tp.status = 'active'
+    GROUP BY apa.accountid
+  ) pa
+    ON pa.accountid = a.accountid
+  LEFT JOIN tbl_program p
+    ON p.program_id = a.program_id
+  LEFT JOIN tbl_college pc
+    ON pc.college_id = p.college_id
+  LEFT JOIN tbl_campus cp
+    ON cp.campus_id = pc.campus_id
+  WHERE a.status = 'active'
+  ORDER BY COALESCE(c.campus_name, 'Unassigned Campus') ASC, a.acc_fullname ASC
+";
+$activeUsersResult = $conn->query($activeUsersSql);
+if ($activeUsersResult) {
+    while ($row = $activeUsersResult->fetch_assoc()) {
+        $activeUsers[] = $row;
+    }
+}
+
 
 
 session_start();
@@ -179,6 +246,48 @@ $currentAdminId = (int) ($_SESSION['accountid'] ?? 0);
     border-color: #696cff;
     box-shadow: 0 0 0 0.2rem rgba(105, 108, 255, 0.16);
   }
+
+  #activeUsersModal .active-user-program-cell {
+    min-width: 320px;
+  }
+
+  #activeUsersModal .active-user-details-cell {
+    min-width: 260px;
+  }
+
+  #activeUsersModal .active-user-name {
+    font-weight: 600;
+  }
+
+  #activeUsersModal .active-user-meta {
+    margin-top: 0.2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.12rem;
+    font-size: 0.82rem;
+    color: #697a8d;
+  }
+
+  #activeUsersModal .campus-group-row td {
+    background: #f5f7fa;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    font-size: 0.76rem;
+  }
+
+  #activeUsersModal .assigned-program-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  #activeUsersModal .assigned-program-item {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    line-height: 1.3;
+  }
 </style>
 
 </head>
@@ -236,6 +345,14 @@ $currentAdminId = (int) ($_SESSION['accountid'] ?? 0);
 
     <!-- RIGHT: Button -->
     <div class="col-12 col-md-auto text-md-end">
+      <button
+        type="button"
+        class="btn btn-label-primary btn-sm me-1"
+        data-bs-toggle="modal"
+        data-bs-target="#activeUsersModal"
+      >
+        <i class="bx bx-list-ul me-1"></i> Active Users
+      </button>
       <button
         type="button"
         class="btn btn-primary btn-sm"
@@ -574,6 +691,108 @@ $currentAdminId = (int) ($_SESSION['accountid'] ?? 0);
 
       </form>
 
+    </div>
+  </div>
+</div>
+
+<!-- ACTIVE USERS MODAL -->
+<div class="modal fade" id="activeUsersModal" tabindex="-1" aria-labelledby="activeUsersModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="activeUsersModalLabel">
+          Active Users with Assigned Program(s)
+          <span class="text-muted small ms-2">(<?= count($activeUsers); ?> total)</span>
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+
+      <div class="modal-body">
+        <div id="activeUsersPrintArea">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h6 class="mb-0">Account Management - Active Users Report</h6>
+            <small class="text-muted">Generated: <?= date('F j, Y g:i A'); ?></small>
+          </div>
+
+          <div class="table-responsive">
+            <table class="table table-sm table-bordered align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th style="width:56px;">#</th>
+                  <th>User Details</th>
+                  <th>Assigned Program(s)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <?php if (!empty($activeUsers)): ?>
+                  <?php
+                    $activeUserRowNumber = 0;
+                    $currentCampusGroup = '';
+                  ?>
+                  <?php foreach ($activeUsers as $user): ?>
+                    <?php
+                      $campusName = trim((string) ($user['campus_name'] ?? ''));
+                      if ($campusName === '') {
+                          $campusName = 'Unassigned Campus';
+                      }
+                      if ($campusName !== $currentCampusGroup):
+                          $currentCampusGroup = $campusName;
+                    ?>
+                      <tr class="campus-group-row">
+                        <td colspan="3">Campus - <?= htmlspecialchars($currentCampusGroup); ?></td>
+                      </tr>
+                    <?php endif; ?>
+                    <?php $activeUserRowNumber++; ?>
+                    <tr>
+                      <td><?= (int) $activeUserRowNumber; ?></td>
+                      <td class="active-user-details-cell">
+                        <div class="active-user-name"><?= htmlspecialchars((string) ($user['acc_fullname'] ?? '')); ?></div>
+                        <div class="active-user-meta">
+                          <div>Email: <?= htmlspecialchars((string) ($user['email'] ?? '-')); ?></div>
+                          <div>Role: <?= htmlspecialchars((string) ($user['role'] ?? '-')); ?></div>
+                          <div>Campus: <?= htmlspecialchars($campusName); ?></div>
+                        </div>
+                      </td>
+                      <td class="active-user-program-cell">
+                        <?php
+                          $assignedProgramRaw = (string) ($user['assigned_program_display'] ?? '');
+                          $assignedProgramLines = [];
+                          foreach (explode(',', $assignedProgramRaw) as $programPart) {
+                              $programPart = trim($programPart);
+                              if ($programPart !== '' && $programPart !== '-') {
+                                  $assignedProgramLines[] = $programPart;
+                              }
+                          }
+                        ?>
+                        <?php if (!empty($assignedProgramLines)): ?>
+                          <div class="assigned-program-list">
+                            <?php foreach ($assignedProgramLines as $programLine): ?>
+                              <div class="assigned-program-item"><?= htmlspecialchars($programLine); ?></div>
+                            <?php endforeach; ?>
+                          </div>
+                        <?php else: ?>
+                          <span class="text-muted">-</span>
+                        <?php endif; ?>
+                      </td>
+                    </tr>
+                  <?php endforeach; ?>
+                <?php else: ?>
+                  <tr>
+                    <td colspan="3" class="text-center text-muted py-3">No active users found.</td>
+                  </tr>
+                <?php endif; ?>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">Close</button>
+        <button type="button" class="btn btn-primary" id="btnPrintActiveUsers">
+          <i class="bx bx-printer me-1"></i> Print List
+        </button>
+      </div>
     </div>
   </div>
 </div>
@@ -1092,6 +1311,54 @@ $(document).on('change', '#add_program', function () {
 $('#edit_campus').on('change', function () {
   const currentSelected = ($('#edit_program').val() || []).map(v => String(v));
   loadProgramsForSelect($('#edit_program'), currentSelected);
+});
+
+$('#btnPrintActiveUsers').on('click', function () {
+  const reportArea = document.getElementById('activeUsersPrintArea');
+  if (!reportArea) return;
+
+  const printWindow = window.open('', '_blank', 'width=1200,height=800');
+  if (!printWindow) {
+    Swal.fire({
+      icon: 'warning',
+      title: 'Popup blocked',
+      text: 'Please allow popups to print the active users list.'
+    });
+    return;
+  }
+
+  printWindow.document.write(`
+    <!doctype html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <title>Active Users List</title>
+      <style>
+        body { font-family: Arial, sans-serif; margin: 20px; color: #1f2937; }
+        h1 { margin: 0 0 10px; font-size: 20px; }
+        table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        th, td {
+          border: 1px solid #d1d5db;
+          padding: 6px 8px;
+          text-align: left;
+          vertical-align: top;
+          white-space: normal;
+          overflow-wrap: anywhere;
+          word-break: break-word;
+        }
+        th { background: #f3f4f6; }
+        .assigned-program-list { display: flex; flex-direction: column; gap: 4px; }
+        .active-user-meta { font-size: 11px; color: #4b5563; display: flex; flex-direction: column; gap: 2px; }
+        .campus-group-row td { background: #eef2f7; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; }
+      </style>
+    </head>
+    <body>${reportArea.innerHTML}</body>
+    </html>
+  `);
+  printWindow.document.close();
+  printWindow.focus();
+  printWindow.print();
+  printWindow.close();
 });
 
 </script>
