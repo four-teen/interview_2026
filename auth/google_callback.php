@@ -7,6 +7,7 @@ require_once __DIR__ . '/../config/env.php';
 require_once __DIR__ . '/../config/session_security.php';
 require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../config/system_controls.php';
+require_once __DIR__ . '/../config/program_assignments.php';
 
 $APP_DEBUG = getenv('APP_DEBUG') === '1';
 ini_set('display_errors', $APP_DEBUG ? '1' : '0');
@@ -285,16 +286,35 @@ if ($accountRole === 'progchair' && is_non_admin_login_locked($conn)) {
 }
 
 if ($accountRole === 'progchair') {
-    $programId = (int) ($account['program_id'] ?? 0);
-    if ($programId <= 0 || !is_program_login_unlocked($conn, $programId)) {
+    $fallbackProgramId = (int) ($account['program_id'] ?? 0);
+    $assignedProgramIds = get_account_assigned_program_ids(
+        $conn,
+        (int) ($account['accountid'] ?? 0),
+        $fallbackProgramId
+    );
+
+    $accessibleProgramIds = [];
+    foreach ($assignedProgramIds as $candidateProgramId) {
+        $candidateProgramId = (int) $candidateProgramId;
+        if ($candidateProgramId > 0 && is_program_login_unlocked($conn, $candidateProgramId)) {
+            $accessibleProgramIds[] = $candidateProgramId;
+        }
+    }
+
+    if (empty($accessibleProgramIds)) {
         log_auth('Program Chair login blocked by per-program lock', [
             'accountid' => (int) ($account['accountid'] ?? 0),
-            'program_id' => $programId
+            'program_ids' => $assignedProgramIds
         ]);
         json_response(423, [
             'success' => false,
-            'message' => 'Login for your assigned program is currently locked by the administrator.'
+            'message' => 'Login for your assigned program(s) is currently locked by the administrator.'
         ]);
+    }
+
+    $account['assigned_program_ids'] = $accessibleProgramIds;
+    if (!in_array($fallbackProgramId, $accessibleProgramIds, true)) {
+        $account['program_id'] = (int) $accessibleProgramIds[0];
     }
 }
 
@@ -320,6 +340,9 @@ $_SESSION['email'] = $account['email'];
 $_SESSION['role'] = $account['role'];
 $_SESSION['campus_id'] = $account['campus_id'];
 $_SESSION['program_id'] = $account['program_id'];
+$_SESSION['assigned_program_ids'] = ($accountRole === 'progchair')
+    ? normalize_program_id_list((array) ($account['assigned_program_ids'] ?? []))
+    : [];
 
 log_auth('Session created', ['accountid' => (int) $account['accountid'], 'role' => $account['role']]);
 

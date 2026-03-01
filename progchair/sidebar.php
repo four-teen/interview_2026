@@ -65,6 +65,8 @@
           </div>
 
           <?php
+            require_once __DIR__ . '/../config/program_assignments.php';
+
             $sidebarCurrentPage = basename($_SERVER['PHP_SELF'] ?? '');
             $sidebarOwnerAction = strtolower(trim((string)($_GET['owner_action'] ?? ($_GET['open_action'] ?? ''))));
             $allowedSidebarActions = ['pending', 'unscored', 'needs_review'];
@@ -81,7 +83,81 @@
 
             $sidebarAccountId = (int) ($_SESSION['accountid'] ?? 0);
             $sidebarProgramId = (int) ($_SESSION['program_id'] ?? 0);
+            $sidebarAssignedProgramIds = normalize_program_id_list((array) ($_SESSION['assigned_program_ids'] ?? []));
+            $sidebarProgramOptions = [];
+
             if ($sidebarAccountId > 0 && isset($conn) && ($conn instanceof mysqli)) {
+                if (empty($sidebarAssignedProgramIds)) {
+                    $assigned = get_account_assigned_program_ids($conn, $sidebarAccountId, $sidebarProgramId);
+                    $allowed = [];
+                    foreach ($assigned as $assignedProgramId) {
+                        $assignedProgramId = (int) $assignedProgramId;
+                        if ($assignedProgramId > 0 && is_program_login_unlocked($conn, $assignedProgramId)) {
+                            $allowed[] = $assignedProgramId;
+                        }
+                    }
+
+                    $sidebarAssignedProgramIds = normalize_program_id_list($allowed);
+                    $_SESSION['assigned_program_ids'] = $sidebarAssignedProgramIds;
+                }
+
+                if (!empty($sidebarAssignedProgramIds) && !in_array($sidebarProgramId, $sidebarAssignedProgramIds, true)) {
+                    $sidebarProgramId = (int) $sidebarAssignedProgramIds[0];
+                    $_SESSION['program_id'] = $sidebarProgramId;
+                }
+
+                if (!empty($sidebarAssignedProgramIds)) {
+                    $placeholders = implode(',', array_fill(0, count($sidebarAssignedProgramIds), '?'));
+                    $programSql = "
+                        SELECT
+                            program_id,
+                            program_code,
+                            program_name,
+                            major
+                        FROM tbl_program
+                        WHERE program_id IN ($placeholders)
+                        ORDER BY program_name ASC, major ASC
+                    ";
+
+                    $programStmt = $conn->prepare($programSql);
+                    if ($programStmt) {
+                        $types = str_repeat('i', count($sidebarAssignedProgramIds));
+                        $bind = [$types];
+                        foreach ($sidebarAssignedProgramIds as $idx => $programIdValue) {
+                            $bind[] = &$sidebarAssignedProgramIds[$idx];
+                        }
+
+                        if (call_user_func_array([$programStmt, 'bind_param'], $bind)) {
+                            $programStmt->execute();
+                            $programResult = $programStmt->get_result();
+                            while ($programRow = $programResult->fetch_assoc()) {
+                                $programIdValue = (int) ($programRow['program_id'] ?? 0);
+                                if ($programIdValue <= 0) {
+                                    continue;
+                                }
+
+                                $label = trim((string) ($programRow['program_code'] ?? ''));
+                                $major = trim((string) ($programRow['major'] ?? ''));
+                                if ($major !== '') {
+                                    $label .= ' - ' . $major;
+                                }
+                                if ($label === '') {
+                                    $label = trim((string) ($programRow['program_name'] ?? 'PROGRAM ' . $programIdValue));
+                                }
+
+                                $sidebarProgramOptions[] = [
+                                    'program_id' => $programIdValue,
+                                    'label' => $label
+                                ];
+                            }
+                        }
+
+                        $programStmt->close();
+                    }
+                }
+            }
+
+            if ($sidebarAccountId > 0 && $sidebarProgramId > 0 && isset($conn) && ($conn instanceof mysqli)) {
                 $sidebarCountSql = "
                     SELECT
                         (
@@ -136,9 +212,40 @@
             }
 
             $isDashboardActive = ($sidebarCurrentPage === 'index.php' && $sidebarOwnerAction === '');
+            $sidebarSwitchRedirect = $sidebarCurrentPage !== '' ? $sidebarCurrentPage : 'index.php';
+            $sidebarQueryString = trim((string) ($_SERVER['QUERY_STRING'] ?? ''));
+            if ($sidebarQueryString !== '') {
+                $sidebarSwitchRedirect .= '?' . $sidebarQueryString;
+            }
+            $sidebarHasProgramSwitch = count($sidebarProgramOptions) > 1;
           ?>
 
           <style>
+            #layout-menu .sidebar-program-switch-card {
+              margin: 0.42rem 0.2rem;
+              padding: 0.72rem 0.78rem;
+              border: 1px solid #d9dee3;
+              border-radius: 0.75rem;
+              background: #ffffff;
+            }
+
+            #layout-menu .sidebar-program-switch-label {
+              display: block;
+              margin-bottom: 0.4rem;
+              font-size: 0.72rem;
+              font-weight: 600;
+              letter-spacing: 0.04em;
+              text-transform: uppercase;
+              color: #6b7280;
+            }
+
+            #layout-menu .sidebar-program-switch-select {
+              min-height: 2rem;
+              font-size: 0.82rem;
+              font-weight: 600;
+              text-transform: uppercase;
+            }
+
             #layout-menu .sidebar-action-card {
               display: flex;
               align-items: center;
@@ -202,6 +309,39 @@
                 <div>Dashboard</div>
               </a>
             </li>
+
+            <?php if ($sidebarHasProgramSwitch): ?>
+            <li class="menu-header small text-uppercase mt-1">
+              <span class="menu-header-text">Program Switch</span>
+            </li>
+            <li class="menu-item px-2">
+              <div class="sidebar-program-switch-card">
+                <form method="post" action="switch_program.php">
+                  <input type="hidden" name="redirect" value="<?= htmlspecialchars($sidebarSwitchRedirect); ?>">
+                  <label class="sidebar-program-switch-label" for="sidebarProgramSwitchSelect">Active Program</label>
+                  <select
+                    id="sidebarProgramSwitchSelect"
+                    class="form-select form-select-sm sidebar-program-switch-select"
+                    name="program_id"
+                    onchange="this.form.submit()"
+                  >
+                    <?php foreach ($sidebarProgramOptions as $programOption): ?>
+                      <?php $programOptionId = (int) ($programOption['program_id'] ?? 0); ?>
+                      <option
+                        value="<?= $programOptionId; ?>"
+                        <?= $programOptionId === $sidebarProgramId ? 'selected' : ''; ?>
+                      >
+                        <?= htmlspecialchars((string) ($programOption['label'] ?? 'PROGRAM ' . $programOptionId)); ?>
+                      </option>
+                    <?php endforeach; ?>
+                  </select>
+                  <noscript>
+                    <button type="submit" class="btn btn-primary btn-sm w-100 mt-2">Switch Program</button>
+                  </noscript>
+                </form>
+              </div>
+            </li>
+            <?php endif; ?>
 
             <li class="menu-header small text-uppercase mt-1">
               <span class="menu-header-text">My Actions</span>

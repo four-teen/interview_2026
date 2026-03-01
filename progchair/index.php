@@ -214,14 +214,14 @@ $profileSql = "
         co.college_name
     FROM tblaccount a
     LEFT JOIN tbl_campus  c  ON a.campus_id  = c.campus_id
-    LEFT JOIN tbl_program p  ON a.program_id = p.program_id
+    LEFT JOIN tbl_program p  ON p.program_id = ?
     LEFT JOIN tbl_college co ON p.college_id = co.college_id
     WHERE a.accountid = ?
     LIMIT 1
 ";
 
 $stmt = $conn->prepare($profileSql);
-$stmt->bind_param("i", $accountId);
+$stmt->bind_param("ii", $assignedProgramId, $accountId);
 $stmt->execute();
 $profileResult = $stmt->get_result();
 

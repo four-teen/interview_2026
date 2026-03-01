@@ -1,6 +1,9 @@
 <?php
 
 require_once '../../config/db.php';
+require_once '../../config/program_assignments.php';
+
+ensure_account_program_assignments_table($conn);
 
 $LIMIT = 20;
 
@@ -19,11 +22,40 @@ $sql = "
     CONCAT(
       p.program_name,
       IF(p.major IS NOT NULL AND p.major <> '', CONCAT(' – ', p.major), '')
+    ) AS legacy_program_display,
+    COALESCE(pa.assigned_program_ids_csv, CAST(a.program_id AS CHAR)) AS assigned_program_ids_csv,
+    COALESCE(
+      NULLIF(pa.assigned_program_display, ''),
+      CONCAT(
+        p.program_name,
+        IF(p.major IS NOT NULL AND p.major <> '', CONCAT(' - ', p.major), '')
+      )
     ) AS program_display
 
   FROM tblaccount a
   LEFT JOIN tbl_campus c 
     ON a.campus_id = c.campus_id
+
+  LEFT JOIN (
+    SELECT
+      apa.accountid,
+      GROUP_CONCAT(
+        CONCAT(
+          tp.program_code,
+          IF(tp.major IS NOT NULL AND tp.major <> '', CONCAT(' - ', tp.major), '')
+        )
+        ORDER BY tp.program_code ASC, tp.major ASC
+        SEPARATOR ', '
+      ) AS assigned_program_display,
+      GROUP_CONCAT(apa.program_id ORDER BY apa.program_id ASC SEPARATOR ',') AS assigned_program_ids_csv
+    FROM tbl_account_program_assignments apa
+    INNER JOIN tbl_program tp
+      ON tp.program_id = apa.program_id
+    WHERE apa.status = 'active'
+      AND tp.status = 'active'
+    GROUP BY apa.accountid
+  ) pa
+    ON pa.accountid = a.accountid
 
   LEFT JOIN tbl_program p 
     ON a.program_id = p.program_id
@@ -122,11 +154,31 @@ $currentAdminId = (int) ($_SESSION['accountid'] ?? 0);
   <link rel="stylesheet" href="../../assets/vendor/css/theme-default.css" />
   <link rel="stylesheet" href="../../assets/css/demo.css" />
   <link rel="stylesheet" href="../../assets/vendor/libs/perfect-scrollbar/perfect-scrollbar.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" />
   <script src="../../assets/vendor/js/helpers.js"></script>
   <script src="../../assets/js/config.js"></script>
 
 <style>
   .swal2-container { z-index: 20000 !important; }
+
+  #editAccountModal .select2-container,
+  #addAccountModal .select2-container {
+    width: 100% !important;
+  }
+
+  #editAccountModal .select2-container--default .select2-selection--multiple,
+  #addAccountModal .select2-container--default .select2-selection--multiple {
+    min-height: 2.38rem;
+    border: 1px solid #d9dee3;
+    border-radius: 0.375rem;
+    padding: 0.2rem 0.4rem;
+  }
+
+  #editAccountModal .select2-container--default.select2-container--focus .select2-selection--multiple,
+  #addAccountModal .select2-container--default.select2-container--focus .select2-selection--multiple {
+    border-color: #696cff;
+    box-shadow: 0 0 0 0.2rem rgba(105, 108, 255, 0.16);
+  }
 </style>
 
 </head>
@@ -250,6 +302,7 @@ $currentAdminId = (int) ($_SESSION['accountid'] ?? 0);
                                 data-role="<?= $acc['role'] ?>"
                                 data-campus="<?= $acc['campus_id'] ?>"
                                 data-program="<?= $acc['program_id'] ?>"
+                                data-program-ids="<?= htmlspecialchars((string) ($acc['assigned_program_ids_csv'] ?? ''), ENT_QUOTES) ?>"
                                 data-status="<?= $acc['status'] ?>"
                               >
                                 <i class="bx bx-edit-alt me-2"></i> Edit
@@ -412,18 +465,28 @@ $currentAdminId = (int) ($_SESSION['accountid'] ?? 0);
           </div>
 
           <div class="col-md-4">
-            <label class="form-label">Program</label>
-            <select name="program_id" id="add_program" class="form-select">
-              <!-- to be populated from tbl_program -->
-            </select>
-          </div>
-
-          <div class="col-md-4">
             <label class="form-label">Status</label>
             <select name="status" class="form-select">
               <option value="inactive" selected>Inactive</option>
               <option value="active">Active</option>
             </select>
+          </div>
+
+          <div class="col-12">
+            <label class="form-label">Assigned Program(s)</label>
+            <select
+              name="program_ids[]"
+              id="add_program"
+              class="form-select"
+              multiple
+              data-placeholder="Search and select program/major assignments"
+            >
+              <!-- to be populated from tbl_program -->
+            </select>
+            <div class="form-text d-flex justify-content-between align-items-center">
+              <span>Program Chair can be assigned to one or more programs/majors.</span>
+              <span id="addProgramSelectedCount" class="fw-semibold text-muted">0 selected</span>
+            </div>
           </div>
 
         </div>
@@ -480,16 +543,26 @@ $currentAdminId = (int) ($_SESSION['accountid'] ?? 0);
           </div>
 
           <div class="col-md-4">
-            <label class="form-label">Program</label>
-            <select name="program_id" id="edit_program" class="form-select"></select>
-          </div>
-
-          <div class="col-md-4">
             <label class="form-label">Status</label>
             <select name="status" id="edit_status" class="form-select">
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
             </select>
+          </div>
+
+          <div class="col-12">
+            <label class="form-label">Assigned Program(s)</label>
+            <select
+              name="program_ids[]"
+              id="edit_program"
+              class="form-select"
+              multiple
+              data-placeholder="Search and select program/major assignments"
+            ></select>
+            <div class="form-text d-flex justify-content-between align-items-center">
+              <span>Only assigned programs will be available for switching.</span>
+              <span id="editProgramSelectedCount" class="fw-semibold text-muted">0 selected</span>
+            </div>
           </div>
 
         </div>
@@ -571,6 +644,7 @@ $currentAdminId = (int) ($_SESSION['accountid'] ?? 0);
 <script src="../../assets/vendor/libs/perfect-scrollbar/perfect-scrollbar.js"></script>
 <script src="../../assets/vendor/js/menu.js"></script>
 <script src="../../assets/js/main.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
 <?php if (isset($_SESSION['success'])): ?>
@@ -697,12 +771,123 @@ $(document).on('click', '.campus-filter-btn', function () {
 });
 
 
-  /* OPEN EDIT MODAL */
+  function parseProgramIds(rawProgramIds, fallbackProgramId) {
+  const ids = [];
+  const seen = {};
+
+  String(rawProgramIds || '')
+    .split(',')
+    .map(v => v.trim())
+    .forEach(v => {
+      const parsed = parseInt(v, 10);
+      if (Number.isInteger(parsed) && parsed > 0 && !seen[parsed]) {
+        seen[parsed] = true;
+        ids.push(String(parsed));
+      }
+    });
+
+  const fallback = parseInt(fallbackProgramId, 10);
+  if (ids.length === 0 && Number.isInteger(fallback) && fallback > 0) {
+    ids.push(String(fallback));
+  }
+
+  return ids;
+}
+
+function loadProgramsForSelect($select, selectedProgramIds) {
+  $.getJSON('fetch_programs.php', function (data) {
+    let html = '';
+    data.forEach(row => {
+      const campusCodeRaw = String(row.campus_code || '').trim().toUpperCase();
+      const campusCode = campusCodeRaw !== '' ? campusCodeRaw.slice(0, 3) : 'N/A';
+      const programCode = String(row.program_code || '').trim();
+      const programName = String(row.program_name || '').trim();
+      const major = String(row.major || '').trim();
+      let programLabel = '';
+
+      if (programCode !== '') {
+        programLabel = programCode;
+      }
+      if (programName !== '') {
+        programLabel += (programLabel ? ' : ' : '') + programName;
+      }
+      if (major !== '') {
+        programLabel += (programLabel ? ' - ' : '') + major;
+      }
+      if (programLabel === '') {
+        programLabel = `PROGRAM ${row.program_id}`;
+      }
+
+      const label = `${campusCode} | ${programLabel}`;
+      html += `<option value="${row.program_id}">${label}</option>`;
+    });
+    $select.html(html);
+
+    const normalizedSelected = (selectedProgramIds || []).map(v => String(v));
+    $select.val(normalizedSelected);
+    if ($select.is('#edit_program') || $select.is('#add_program')) {
+      $select.trigger('change');
+    }
+    if ($select.is('#edit_program')) {
+      updateEditProgramSelectedCount();
+    }
+    if ($select.is('#add_program')) {
+      updateAddProgramSelectedCount();
+    }
+  });
+}
+
+function updateEditProgramSelectedCount() {
+  const selectedCount = ($('#edit_program').val() || []).length;
+  $('#editProgramSelectedCount').text(`${selectedCount} selected`);
+}
+
+function updateAddProgramSelectedCount() {
+  const selectedCount = ($('#add_program').val() || []).length;
+  $('#addProgramSelectedCount').text(`${selectedCount} selected`);
+}
+
+function initEditProgramSelect2() {
+  const $editProgram = $('#edit_program');
+  if (!$editProgram.length || typeof $.fn.select2 !== 'function') {
+    return;
+  }
+
+  if ($editProgram.data('select2')) {
+    $editProgram.select2('destroy');
+  }
+
+  $editProgram.select2({
+    width: '100%',
+    dropdownParent: $('#editAccountModal'),
+    placeholder: $editProgram.data('placeholder') || 'Search and select program/major assignments',
+    closeOnSelect: false
+  });
+}
+
+function initAddProgramSelect2() {
+  const $addProgram = $('#add_program');
+  if (!$addProgram.length || typeof $.fn.select2 !== 'function') {
+    return;
+  }
+
+  if ($addProgram.data('select2')) {
+    $addProgram.select2('destroy');
+  }
+
+  $addProgram.select2({
+    width: '100%',
+    dropdownParent: $('#addAccountModal'),
+    placeholder: $addProgram.data('placeholder') || 'Search and select program/major assignments',
+    closeOnSelect: false
+  });
+}
+
 /* OPEN EDIT MODAL */
 $(document).on('click', '.btn-edit-account', function () {
-
-  const campusId  = $(this).data('campus');
-  const programId = $(this).data('program');
+  const campusId = $(this).data('campus');
+  const fallbackProgramId = $(this).data('program');
+  const programIds = parseProgramIds($(this).attr('data-program-ids'), fallbackProgramId);
 
   $('#edit_accountid').val($(this).data('id'));
   $('#edit_fullname').val($(this).data('name'));
@@ -710,31 +895,35 @@ $(document).on('click', '.btn-edit-account', function () {
   $('#edit_role').val($(this).data('role'));
   $('#edit_status').val($(this).data('status'));
 
-  /* Load campuses */
   $.getJSON('fetch_campuses.php', function (data) {
-    let html = '<option value="">— None —</option>';
+    let html = '<option value="">- None -</option>';
     data.forEach(row => {
       html += `<option value="${row.campus_id}">${row.campus_name}</option>`;
     });
     $('#edit_campus').html(html).val(campusId);
-  });
-
-  /* Load programs */
-  $.getJSON('fetch_programs.php', function (data) {
-    let html = '<option value="">— None —</option>';
-    data.forEach(row => {
-html += `<option value="${row.program_id}">
-  ${row.program_code}${row.major && row.major !== '' ? ' – ' + row.major : ''}
-</option>`;
-    });
-    $('#edit_program').html(html).val(programId);
+    loadProgramsForSelect($('#edit_program'), programIds);
   });
 
   $('#editAccountModal').modal('show');
 });
 
+$('#editAccountModal').on('shown.bs.modal', function () {
+  initEditProgramSelect2();
+  updateEditProgramSelectedCount();
+});
 
-  /* OPEN DELETE MODAL */
+$('#editAccountModal').on('hidden.bs.modal', function () {
+  const $editProgram = $('#edit_program');
+  if ($editProgram.data('select2')) {
+    $editProgram.select2('destroy');
+  }
+});
+
+$(document).on('change', '#edit_program', function () {
+  updateEditProgramSelectedCount();
+});
+
+/* OPEN DELETE MODAL */
   $(document).on('click', '.btn-delete-account', function () {
     $('#delete_accountid').val($(this).data('id'));
     $('#delete_account_name').text($(this).data('name'));
@@ -871,29 +1060,39 @@ $('#confirmDeleteAccount').on('click', function () {
 });
 
 $('#addAccountModal').on('shown.bs.modal', function () {
+  initAddProgramSelect2();
+  updateAddProgramSelectedCount();
 
-  /* Load campuses */
   $.getJSON('fetch_campuses.php', function (data) {
-    let html = '<option value="">— Select Campus —</option>';
+    let html = '<option value="">- Select Campus -</option>';
     data.forEach(row => {
       html += `<option value="${row.campus_id}">${row.campus_name}</option>`;
     });
     $('#add_campus').html(html);
+    loadProgramsForSelect($('#add_program'), []);
   });
-
-  /* Load programs */
-  $.getJSON('fetch_programs.php', function (data) {
-    let html = '<option value="">— Select Program —</option>';
-    data.forEach(row => {
-      html += `<option value="${row.program_id}">
-        ${row.program_code}${row.major && row.major !== '' ? ' – ' + row.major : ''}
-      </option>`;
-    });
-    $('#add_program').html(html);
-  });
-
 });
 
+$('#addAccountModal').on('hidden.bs.modal', function () {
+  const $addProgram = $('#add_program');
+  if ($addProgram.data('select2')) {
+    $addProgram.select2('destroy');
+  }
+  $('#addProgramSelectedCount').text('0 selected');
+});
+
+$('#add_campus').on('change', function () {
+  loadProgramsForSelect($('#add_program'), []);
+});
+
+$(document).on('change', '#add_program', function () {
+  updateAddProgramSelectedCount();
+});
+
+$('#edit_campus').on('change', function () {
+  const currentSelected = ($('#edit_program').val() || []).map(v => String(v));
+  loadProgramsForSelect($('#edit_program'), currentSelected);
+});
 
 </script>
 
@@ -901,3 +1100,5 @@ $('#addAccountModal').on('shown.bs.modal', function () {
 
 </body>
 </html>
+
+
