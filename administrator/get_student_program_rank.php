@@ -246,87 +246,137 @@ if (
     }
 }
 
-$orderedRegular = [];
-if ($quotaEnabled && $regularSlots !== null) {
-    $sccInRegularSlots = min(count($endorsementRows), $regularSlots, $endorsementCapacity);
-    $regularInsideSlots = max(0, $regularSlots - $sccInRegularSlots);
-    $regularInsideRows = array_slice($filteredRegularRows, 0, $regularInsideSlots);
-    $regularOutsideRows = array_slice($filteredRegularRows, $regularInsideSlots);
+$sortRankingRows = static function (array $rows): array {
+    usort($rows, static function (array $left, array $right): int {
+        $leftScore = (float) ($left['final_score'] ?? 0);
+        $rightScore = (float) ($right['final_score'] ?? 0);
+        if ($rightScore < $leftScore) {
+            return -1;
+        }
+        if ($rightScore > $leftScore) {
+            return 1;
+        }
 
-    foreach ($regularInsideRows as $row) {
-        $orderedRegular[] = [
-            'interview_id' => (int) $row['interview_id'],
-            'outside' => false,
-            'is_scc' => false
+        $leftSat = (int) ($left['sat_score'] ?? 0);
+        $rightSat = (int) ($right['sat_score'] ?? 0);
+        if ($rightSat !== $leftSat) {
+            return $rightSat <=> $leftSat;
+        }
+
+        return strcmp((string) ($left['full_name'] ?? ''), (string) ($right['full_name'] ?? ''));
+    });
+
+    return $rows;
+};
+
+$regularRows = $sortRankingRows($filteredRegularRows);
+$etgRows = $sortRankingRows($filteredEtgRows);
+
+usort($endorsementRows, static function (array $left, array $right): int {
+    $timeLeft = strtotime((string) ($left['endorsed_at'] ?? '')) ?: 0;
+    $timeRight = strtotime((string) ($right['endorsed_at'] ?? '')) ?: 0;
+    if ($timeLeft !== $timeRight) {
+        return $timeLeft <=> $timeRight;
+    }
+
+    return strcmp((string) ($left['full_name'] ?? ''), (string) ($right['full_name'] ?? ''));
+});
+
+$splitRowsByCapacity = static function (array $rows, int $limit, bool $enabled): array {
+    if (!$enabled) {
+        return [
+            'inside' => $rows,
+            'outside' => []
         ];
     }
 
-    foreach ($endorsementRows as $idx => $row) {
-        $rankPosition = count($orderedRegular) + 1;
-        $outside = ($rankPosition > $regularSlots) || ($idx >= $endorsementCapacity);
-        $orderedRegular[] = [
-            'interview_id' => (int) $row['interview_id'],
-            'outside' => $outside,
-            'is_scc' => true
-        ];
-    }
+    $safeLimit = max(0, $limit);
+    return [
+        'inside' => array_slice($rows, 0, $safeLimit),
+        'outside' => array_slice($rows, $safeLimit)
+    ];
+};
 
-    foreach ($regularOutsideRows as $row) {
-        $rankPosition = count($orderedRegular) + 1;
-        $orderedRegular[] = [
-            'interview_id' => (int) $row['interview_id'],
-            'outside' => ($rankPosition > $regularSlots),
-            'is_scc' => false
-        ];
-    }
-} else {
-    foreach ($filteredRegularRows as $row) {
-        $orderedRegular[] = [
-            'interview_id' => (int) $row['interview_id'],
-            'outside' => false,
-            'is_scc' => false
-        ];
-    }
-    foreach ($endorsementRows as $row) {
-        $orderedRegular[] = [
-            'interview_id' => (int) $row['interview_id'],
-            'outside' => false,
-            'is_scc' => true
-        ];
-    }
+$regularLimit = max(0, (int) ($regularSlots ?? 0));
+$endorsementLimit = max(0, (int) $endorsementCapacity);
+$etgLimit = max(0, (int) ($etgSlots ?? 0));
+
+$regularSplit = $splitRowsByCapacity($regularRows, $regularLimit, $quotaEnabled);
+$endorsementSplit = $splitRowsByCapacity($endorsementRows, $endorsementLimit, $quotaEnabled);
+$etgSplit = $splitRowsByCapacity($etgRows, $etgLimit, $quotaEnabled);
+
+$orderedEntries = [];
+
+foreach ($regularSplit['inside'] as $row) {
+    $orderedEntries[] = [
+        'interview_id' => (int) ($row['interview_id'] ?? 0),
+        'section' => 'regular',
+        'outside' => false
+    ];
+}
+
+foreach ($endorsementSplit['inside'] as $row) {
+    $orderedEntries[] = [
+        'interview_id' => (int) ($row['interview_id'] ?? 0),
+        'section' => 'scc',
+        'outside' => false
+    ];
+}
+
+foreach ($etgSplit['inside'] as $row) {
+    $orderedEntries[] = [
+        'interview_id' => (int) ($row['interview_id'] ?? 0),
+        'section' => 'etg',
+        'outside' => false
+    ];
+}
+
+foreach ($regularSplit['outside'] as $row) {
+    $orderedEntries[] = [
+        'interview_id' => (int) ($row['interview_id'] ?? 0),
+        'section' => 'regular',
+        'outside' => true
+    ];
+}
+
+foreach ($endorsementSplit['outside'] as $row) {
+    $orderedEntries[] = [
+        'interview_id' => (int) ($row['interview_id'] ?? 0),
+        'section' => 'scc',
+        'outside' => true
+    ];
+}
+
+foreach ($etgSplit['outside'] as $row) {
+    $orderedEntries[] = [
+        'interview_id' => (int) ($row['interview_id'] ?? 0),
+        'section' => 'etg',
+        'outside' => true
+    ];
 }
 
 $rankValue = null;
 $rankTotal = 0;
-$poolLabel = 'Regular + SCC';
+$poolLabel = 'Unified Ranking';
 $outsideCapacity = null;
 
-foreach ($orderedRegular as $idx => $entry) {
-    if ((int) $entry['interview_id'] === $interviewId) {
-        $rankValue = $idx + 1;
-        $rankTotal = count($orderedRegular);
-        $poolLabel = 'Regular + SCC';
-        $outsideCapacity = (bool) $entry['outside'];
-        break;
-    }
-}
+$sectionLabels = [
+    'regular' => 'Regular',
+    'scc' => 'SCC',
+    'etg' => 'ETG'
+];
 
-if ($rankValue === null) {
-    foreach ($filteredEtgRows as $idx => $row) {
-        if ((int) ($row['interview_id'] ?? 0) !== $interviewId) {
-            continue;
-        }
-
-        $rankValue = $idx + 1;
-        $rankTotal = count($filteredEtgRows);
-        $poolLabel = 'ETG';
-        if ($quotaEnabled && $etgSlots !== null) {
-            $outsideCapacity = ($idx >= $etgSlots);
-        } else {
-            $outsideCapacity = null;
-        }
-        break;
+foreach ($orderedEntries as $idx => $entry) {
+    if ((int) ($entry['interview_id'] ?? 0) !== $interviewId) {
+        continue;
     }
+
+    $rankValue = $idx + 1;
+    $rankTotal = count($orderedEntries);
+    $section = (string) ($entry['section'] ?? '');
+    $poolLabel = ($sectionLabels[$section] ?? 'Unified') . ' (Unified Ranking)';
+    $outsideCapacity = (bool) ($entry['outside'] ?? false);
+    break;
 }
 
 $rankingMessage = null;
