@@ -219,7 +219,7 @@ if ($postedCsrf === '' || $sessionCsrf === '' || !hash_equals($sessionCsrf, $pos
     ]);
 }
 
-if (is_non_admin_login_locked($conn)) {
+if (is_student_login_locked($conn)) {
     student_json_response(423, [
         'success' => false,
         'message' => 'Student login is temporarily locked by the administrator.'

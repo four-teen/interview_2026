@@ -19,6 +19,17 @@ if (empty($_SESSION['admin_login_lock_csrf'])) {
 $adminLoginLockCsrf = (string) $_SESSION['admin_login_lock_csrf'];
 $nonAdminLoginLocked = is_non_admin_login_locked($conn);
 
+if (empty($_SESSION['admin_student_login_lock_csrf'])) {
+    try {
+        $_SESSION['admin_student_login_lock_csrf'] = bin2hex(random_bytes(32));
+    } catch (Throwable $e) {
+        $_SESSION['admin_student_login_lock_csrf'] = sha1(uniqid('admin_student_login_lock_csrf_', true));
+    }
+}
+
+$adminStudentLoginLockCsrf = (string) $_SESSION['admin_student_login_lock_csrf'];
+$studentLoginLocked = is_student_login_locked($conn);
+
 if (empty($_SESSION['admin_global_cutoff_csrf'])) {
     try {
         $_SESSION['admin_global_cutoff_csrf'] = bin2hex(random_bytes(32));
@@ -55,6 +66,12 @@ $loginLockFlash = null;
 if (isset($_SESSION['admin_login_lock_flash']) && is_array($_SESSION['admin_login_lock_flash'])) {
     $loginLockFlash = $_SESSION['admin_login_lock_flash'];
     unset($_SESSION['admin_login_lock_flash']);
+}
+
+$studentLoginLockFlash = null;
+if (isset($_SESSION['admin_student_login_lock_flash']) && is_array($_SESSION['admin_student_login_lock_flash'])) {
+    $studentLoginLockFlash = $_SESSION['admin_student_login_lock_flash'];
+    unset($_SESSION['admin_student_login_lock_flash']);
 }
 
 $globalCutoffFlash = null;
@@ -711,6 +728,11 @@ $overallInterviewTrendSeries = [
       <?= htmlspecialchars((string) ($loginLockFlash['message'] ?? '')); ?>
     </div>
   <?php endif; ?>
+  <?php if ($studentLoginLockFlash): ?>
+    <div class="alert alert-<?= htmlspecialchars((string) ($studentLoginLockFlash['type'] ?? 'info')); ?> mb-3" role="alert">
+      <?= htmlspecialchars((string) ($studentLoginLockFlash['message'] ?? '')); ?>
+    </div>
+  <?php endif; ?>
   <?php if ($globalCutoffFlash): ?>
     <div class="alert alert-<?= htmlspecialchars((string) ($globalCutoffFlash['type'] ?? 'info')); ?> mb-3" role="alert">
       <?= htmlspecialchars((string) ($globalCutoffFlash['message'] ?? '')); ?>
@@ -764,6 +786,23 @@ $overallInterviewTrendSeries = [
                     <input type="hidden" name="action" value="<?= $nonAdminLoginLocked ? 'unlock' : 'lock'; ?>" />
                     <button type="submit" class="btn btn-sm <?= $nonAdminLoginLocked ? 'btn-success' : 'btn-danger'; ?>">
                       <?= $nonAdminLoginLocked ? 'Unlock Login' : 'Lock Login'; ?>
+                    </button>
+                  </form>
+                </div>
+                <div class="admin-login-control">
+                  <span class="admin-login-chip <?= $studentLoginLocked ? 'locked' : 'unlocked'; ?>">
+                    Student Login: <?= $studentLoginLocked ? 'Locked' : 'Unlocked'; ?>
+                  </span>
+                  <form
+                    method="POST"
+                    action="toggle_student_login_lock.php"
+                    class="m-0"
+                    onsubmit="return confirm('Are you sure you want to <?= $studentLoginLocked ? 'unlock' : 'lock'; ?> Student logins only?');"
+                  >
+                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($adminStudentLoginLockCsrf); ?>" />
+                    <input type="hidden" name="action" value="<?= $studentLoginLocked ? 'unlock' : 'lock'; ?>" />
+                    <button type="submit" class="btn btn-sm <?= $studentLoginLocked ? 'btn-success' : 'btn-danger'; ?>">
+                      <?= $studentLoginLocked ? 'Unlock Student Login' : 'Lock Student Login'; ?>
                     </button>
                   </form>
                 </div>

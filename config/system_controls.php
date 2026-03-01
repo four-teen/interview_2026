@@ -93,6 +93,28 @@ if (!function_exists('set_non_admin_login_lock')) {
     }
 }
 
+if (!function_exists('student_login_control_key')) {
+    function student_login_control_key(): string
+    {
+        return 'student_login_lock';
+    }
+}
+
+if (!function_exists('is_student_login_locked')) {
+    function is_student_login_locked(mysqli $conn): bool
+    {
+        $value = get_system_control_value($conn, student_login_control_key(), '0');
+        return $value === '1';
+    }
+}
+
+if (!function_exists('set_student_login_lock')) {
+    function set_student_login_lock(mysqli $conn, bool $locked, ?int $updatedBy = null): bool
+    {
+        return set_system_control_value($conn, student_login_control_key(), $locked ? '1' : '0', $updatedBy);
+    }
+}
+
 if (!function_exists('program_login_control_key')) {
     function program_login_control_key(int $programId): string
     {

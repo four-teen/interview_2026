@@ -28,6 +28,8 @@ if ($googleLoginNonce === '' || $googleLoginCsrf === '' || $studentLoginCsrf ===
     $_SESSION['student_login_csrf'] = $studentLoginCsrf;
 }
 $nonAdminLoginLocked = is_non_admin_login_locked($conn);
+$studentLoginLocked = is_student_login_locked($conn);
+$studentPortalLocked = $nonAdminLoginLocked || $studentLoginLocked;
 $globalSatCutoffState = get_global_sat_cutoff_state($conn);
 $globalSatCutoffActive = (bool) ($globalSatCutoffState['active'] ?? false);
 $globalSatCutoffRangeText = trim((string) ($globalSatCutoffState['range_text'] ?? ''));
@@ -349,6 +351,10 @@ if ($globalSatCutoffRangeText !== '') {
     Student and Program Chair login is temporarily locked by the administrator.
     Administrator login remains available.
   </div>
+<?php elseif ($studentLoginLocked): ?>
+  <div class="alert alert-warning small login-alert" role="alert">
+    Student login is temporarily locked by the administrator.
+  </div>
 <?php endif; ?>
 <?php if ($globalSatCutoffActive): ?>
   <div class="alert small login-alert login-alert-cutoff" role="alert">
@@ -396,9 +402,9 @@ if ($globalSatCutoffRangeText !== '') {
                   type="button"
                   id="studentLoginToggle"
                   class="btn btn-outline-secondary w-100 student-login-toggle"
-                  <?= $nonAdminLoginLocked ? 'disabled' : ''; ?>
+                  <?= $studentPortalLocked ? 'disabled' : ''; ?>
                 >
-                  <?= $nonAdminLoginLocked ? 'Student Login (Locked)' : 'Student Login'; ?>
+                  <?= $studentPortalLocked ? 'Student Login (Locked)' : 'Student Login'; ?>
                 </button>
 
                 <form id="studentLoginForm" class="student-login-form d-none">
