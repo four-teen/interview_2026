@@ -123,6 +123,10 @@ while ($row = $result->fetch_assoc()) {
         text-transform: uppercase;
       }
 
+      .program-list-shell {
+        gap: 1rem;
+      }
+
       .program-card-title {
         margin-top: 0.25rem;
         margin-bottom: 0.3rem;
@@ -171,14 +175,93 @@ while ($row = $result->fetch_assoc()) {
         margin-top: 0.55rem;
         font-size: 0.82rem;
         color: #7d8da7;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.35rem 0.45rem;
       }
 
       .program-capacity-line .badge {
         font-size: 0.72rem;
       }
 
+      .program-card-actions form {
+        margin: 0;
+      }
+
+      .program-card-actions .btn {
+        white-space: nowrap;
+      }
+
+      .cutoff-preview-line {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.35rem 0.45rem;
+      }
+
       .cutoff-preview-line .badge {
         font-size: 0.72rem;
+      }
+
+      .cutoff-preview-line span {
+        margin: 0 !important;
+      }
+
+      .program-config-modal .modal-footer {
+        gap: 0.75rem;
+      }
+
+      @media (max-width: 767.98px) {
+        .program-list-shell {
+          flex-direction: column;
+        }
+
+        .program-card-summary,
+        .program-card-actions {
+          width: 100%;
+        }
+
+        .program-card-actions {
+          flex-wrap: wrap;
+        }
+
+        .program-card-actions > form,
+        .program-card-actions > button {
+          flex: 1 1 100%;
+        }
+
+        .program-card-actions .btn {
+          width: 100%;
+          justify-content: center;
+        }
+      }
+
+      @media (max-width: 575.98px) {
+        .programs-header {
+          flex-direction: column;
+          align-items: stretch !important;
+          gap: 0.75rem;
+        }
+
+        .programs-header .btn {
+          width: 100%;
+        }
+
+        .program-card-title {
+          font-size: 1rem;
+        }
+
+        .program-config-modal .modal-header,
+        .program-config-modal .modal-body,
+        .program-config-modal .modal-footer {
+          padding-left: 1rem;
+          padding-right: 1rem;
+        }
+
+        .program-config-modal .modal-footer .btn {
+          width: 100%;
+        }
       }
     </style>
 </head>
@@ -198,7 +281,7 @@ while ($row = $result->fetch_assoc()) {
 
 <div class="card">
 
-<div class="card-header d-flex justify-content-between align-items-center">
+<div class="card-header d-flex justify-content-between align-items-center programs-header">
     <h5 class="mb-0">Programs</h5>
 
     <button class="btn btn-primary btn-sm"
@@ -272,13 +355,16 @@ $programSearchText = strtolower(trim(
 ));
 ?>
 
-<div class="col-12 mb-3 program-list-card" data-search="<?= htmlspecialchars($programSearchText); ?>">
+<div class="col-12 mb-3 program-list-card"
+     id="program-card-<?= $programId; ?>"
+     data-program-id="<?= $programId; ?>"
+     data-search="<?= htmlspecialchars($programSearchText); ?>">
 <div class="card border shadow-sm">
 <div class="card-body">
 
-<div class="d-flex justify-content-between align-items-start">
+<div class="d-flex justify-content-between align-items-start program-list-shell">
 
-<div>
+<div class="program-card-summary">
 
     <div class="program-card-meta">
         <?= htmlspecialchars($program['campus_name']); ?>
@@ -331,7 +417,7 @@ $programSearchText = strtolower(trim(
 
 </div>
 
-<div class="d-flex gap-2">
+<div class="d-flex gap-2 program-card-actions">
     <form method="POST"
           action="toggle_program_login_lock.php"
           class="m-0">
@@ -492,10 +578,10 @@ $programSearchText = strtolower(trim(
 
 <!-- CUT-OFF MODAL -->
 <div class="modal fade" id="cutoffModal" tabindex="-1">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-dialog-scrollable modal-fullscreen-sm-down program-config-modal">
         <div class="modal-content">
 
-            <form method="POST" action="program_cutoff_action.php">
+            <form method="POST" action="program_cutoff_action.php" id="cutoffForm">
 
                 <div class="modal-header">
                     <h5 class="modal-title">Configure Program Admission Rules</h5>
@@ -611,6 +697,8 @@ $programSearchText = strtolower(trim(
 <script src="../../assets/vendor/js/bootstrap.js"></script>
 
 <script>
+const cutoffModalElement = document.getElementById('cutoffModal');
+const cutoffForm = document.getElementById('cutoffForm');
 const cutoffInput = document.getElementById('cutoffScore');
 const capacityInput = document.getElementById('absorptiveCapacity');
 const regularPercentageInput = document.getElementById('regularPercentage');
@@ -626,10 +714,98 @@ const DEFAULT_ABSORPTIVE_CAPACITY = 0;
 const DEFAULT_ENDORSEMENT_CAPACITY = 0;
 const DEFAULT_REGULAR_PERCENTAGE = 95;
 const DEFAULT_ETG_PERCENTAGE = 5;
+const PROGRAMS_VIEW_STATE_KEY = 'administratorProgramsViewState';
+let activeProgramCard = null;
 
 function parseNumericValue(value, fallback) {
     const parsed = parseFloat(value);
     return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function getProgramCardById(programId) {
+    const normalizedProgramId = String(programId || '').trim();
+    if (normalizedProgramId === '') {
+        return null;
+    }
+
+    return programCards.find(function(card) {
+        return String(card.dataset.programId || '') === normalizedProgramId;
+    }) || null;
+}
+
+function saveProgramsViewState(programId, programCard) {
+    try {
+        const state = {
+            programId: String(programId || ''),
+            searchQuery: programSearchInput ? programSearchInput.value : '',
+            scrollY: window.scrollY
+        };
+
+        if (programCard) {
+            const cardTop = window.scrollY + programCard.getBoundingClientRect().top;
+            state.cardOffset = window.scrollY - cardTop;
+        }
+
+        sessionStorage.setItem(PROGRAMS_VIEW_STATE_KEY, JSON.stringify(state));
+    } catch (error) {
+        // Ignore storage failures and fall back to the normal reload behavior.
+    }
+}
+
+function clearProgramsViewState() {
+    try {
+        sessionStorage.removeItem(PROGRAMS_VIEW_STATE_KEY);
+    } catch (error) {
+        // Ignore storage failures and fall back to the normal reload behavior.
+    }
+}
+
+function restoreProgramsViewState() {
+    let state = null;
+
+    try {
+        const rawState = sessionStorage.getItem(PROGRAMS_VIEW_STATE_KEY);
+        if (!rawState) {
+            return false;
+        }
+
+        clearProgramsViewState();
+        state = JSON.parse(rawState);
+    } catch (error) {
+        clearProgramsViewState();
+        return false;
+    }
+
+    if (programSearchInput && typeof state.searchQuery === 'string') {
+        programSearchInput.value = state.searchQuery;
+    }
+
+    applyProgramSearch();
+
+    window.requestAnimationFrame(function() {
+        window.requestAnimationFrame(function() {
+            let targetScrollY = Number.isFinite(Number(state.scrollY))
+                ? Number(state.scrollY)
+                : 0;
+            const targetProgramCard = getProgramCardById(state.programId);
+
+            if (targetProgramCard && !targetProgramCard.classList.contains('d-none')) {
+                const cardTop = window.scrollY + targetProgramCard.getBoundingClientRect().top;
+                const cardOffset = Number.isFinite(Number(state.cardOffset))
+                    ? Number(state.cardOffset)
+                    : -24;
+                targetScrollY = Math.max(0, Math.round(cardTop + cardOffset));
+            }
+
+            window.scrollTo({
+                top: targetScrollY,
+                left: 0,
+                behavior: 'auto'
+            });
+        });
+    });
+
+    return true;
 }
 
 function updateCapacityPreview() {
@@ -676,6 +852,7 @@ function updateCapacityPreview() {
 document.querySelectorAll('.cutoff-btn').forEach(function(btn) {
 
     btn.addEventListener('click', function() {
+        activeProgramCard = this.closest('.program-list-card');
 
         document.getElementById('cutoffProgramId').value = this.dataset.id;
         document.getElementById('cutoffProgramName').value = this.dataset.name;
@@ -687,13 +864,26 @@ document.querySelectorAll('.cutoff-btn').forEach(function(btn) {
 
         updateCapacityPreview();
 
-        var modal = new bootstrap.Modal(
-            document.getElementById('cutoffModal')
-        );
-        modal.show();
+        bootstrap.Modal.getOrCreateInstance(cutoffModalElement).show();
     });
 
 });
+
+if (cutoffForm) {
+    cutoffForm.addEventListener('submit', function() {
+        const selectedProgramId = document.getElementById('cutoffProgramId').value;
+        saveProgramsViewState(
+            selectedProgramId,
+            activeProgramCard || getProgramCardById(selectedProgramId)
+        );
+    });
+}
+
+if (cutoffModalElement) {
+    cutoffModalElement.addEventListener('hidden.bs.modal', function() {
+        activeProgramCard = null;
+    });
+}
 
 [capacityInput, regularPercentageInput, etgPercentageInput, endorsementCapacityInput].forEach(function(input) {
     input.addEventListener('input', updateCapacityPreview);
@@ -723,7 +913,9 @@ if (programSearchInput) {
     programSearchInput.addEventListener('input', applyProgramSearch);
 }
 
-applyProgramSearch();
+if (!restoreProgramsViewState()) {
+    applyProgramSearch();
+}
 </script>
 
 </body>
