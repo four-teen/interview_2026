@@ -13,6 +13,34 @@ session_start();
 
 header('Content-Type: application/json');
 
+function build_esm_preferred_program_condition_sql(string $columnExpression): string
+{
+    $normalizedColumn = "UPPER(COALESCE({$columnExpression}, ''))";
+    $patterns = [
+        '%NURSING%',
+        '%MIDWIFERY%',
+        '%MEDICAL TECHNOLOGY%',
+        '%ELECTRONICS ENGINEERING%',
+        '%CIVIL ENGINEERING%',
+        '%COMPUTER ENGINEERING%',
+        '%COMPUTER SCIENCE%',
+        '%FISHERIES%',
+        '%BIOLOGY%',
+        '%ACCOUNTANCY%',
+        '%MANAGEMENT ACCOUNTING%',
+        '%ACCOUNTING INFORMATION SYSTEMS%',
+        '%MATHEMATICS EDUCATION%',
+        '%SCIENCE EDUCATION%'
+    ];
+
+    $conditions = [];
+    foreach ($patterns as $pattern) {
+        $conditions[] = "{$normalizedColumn} LIKE '{$pattern}'";
+    }
+
+    return '(' . implode(' OR ', $conditions) . ')';
+}
+
 if (
     !isset($_SESSION['logged_in']) ||
     $_SESSION['role'] !== 'progchair' ||
@@ -88,14 +116,19 @@ $globalSatCutoffState = get_global_sat_cutoff_state($conn);
 $globalSatCutoffEnabled = (bool) ($globalSatCutoffState['enabled'] ?? false);
 $globalSatCutoffValue = isset($globalSatCutoffState['value']) ? (int) $globalSatCutoffState['value'] : null;
 $effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalSatCutoffEnabled, $globalSatCutoffValue);
-$cutoffWhereSql = $effectiveCutoff !== null ? ' AND pr.sat_score >= ?' : '';
+$esmPreferredProgramConditionSql = build_esm_preferred_program_condition_sql('pr.preferred_program');
+$cutoffBasisScoreSql = "CASE
+    WHEN {$esmPreferredProgramConditionSql} THEN COALESCE(pr.esm_competency_standard_score, pr.sat_score, 0)
+    ELSE COALESCE(pr.overall_standard_score, pr.sat_score, 0)
+END";
+$cutoffWhereSql = $effectiveCutoff !== null ? " AND ({$cutoffBasisScoreSql}) >= ?" : '';
 
 $rankingSql = "
     SELECT
         si.interview_id,
         si.examinee_number,
         pr.full_name,
-        pr.sat_score,
+        ({$cutoffBasisScoreSql}) AS cutoff_basis_score,
         si.final_score,
         si.interview_datetime,
         a.acc_fullname AS encoded_by,
@@ -122,7 +155,7 @@ $rankingSql = "
     ORDER BY
         classification_group ASC,
         si.final_score DESC,
-        pr.sat_score DESC,
+        cutoff_basis_score DESC,
         pr.full_name ASC
 ";
 
@@ -154,7 +187,7 @@ while ($row = $resultRanking->fetch_assoc()) {
         'examinee_number'   => $row['examinee_number'],
         'full_name'         => $row['full_name'],
         'classification'    => $row['classification_label'],
-        'sat_score'         => (int) $row['sat_score'],
+        'sat_score'         => (int) ($row['cutoff_basis_score'] ?? 0),
         'final_score'       => number_format((float) $row['final_score'], 2),
         'interview_datetime'=> $row['interview_datetime'],
         'encoded_by'        => $row['encoded_by']
