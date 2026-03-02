@@ -5,6 +5,7 @@
 
 require_once '../config/db.php';
 require_once '../config/system_controls.php';
+require_once '../config/program_ranking_lock.php';
 require_once 'endorsement_helpers.php';
 session_start();
 
@@ -150,6 +151,18 @@ if (!$student) {
     echo json_encode([
         'success' => false,
         'message' => 'Student is not in this program ranking list.'
+    ]);
+    exit;
+}
+
+$lockContext = program_ranking_get_interview_lock_context($conn, $interviewId);
+if ($lockContext !== null) {
+    $lockedRank = (int) ($lockContext['locked_rank'] ?? 0);
+    echo json_encode([
+        'success' => false,
+        'message' => $lockedRank > 0
+            ? ('Rank #' . $lockedRank . ' is locked and SCC actions are not allowed.')
+            : 'This interview is locked in ranking and SCC actions are not allowed.'
     ]);
     exit;
 }

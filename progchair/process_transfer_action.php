@@ -7,6 +7,7 @@
  */
 
 require_once '../config/db.php';
+require_once '../config/program_ranking_lock.php';
 session_start();
 
 header('Content-Type: application/json');
@@ -99,6 +100,14 @@ if ($toProgramId !== $programId) {
     echo json_encode([
         'success' => false,
         'message' => 'You are not allowed to process this transfer'
+    ]);
+    exit;
+}
+
+if (program_ranking_is_interview_locked($conn, $interviewId)) {
+    echo json_encode([
+        'success' => false,
+        'message' => 'This interview rank is locked and transfer processing is not allowed.'
     ]);
     exit;
 }

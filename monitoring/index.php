@@ -351,6 +351,7 @@ $expectedCampusRangeLabel = $globalSatCutoffActive
 $interviewCampusRangeLabel = $activeBatchId !== null
     ? 'Interview activity is grouped by the campus of the assigned first-choice program for students in the active placement batch.'
     : 'Interview activity will appear here once a placement-results batch is available.';
+$combinedCampusRangeLabel = $expectedCampusRangeLabel . ' ' . $interviewCampusRangeLabel;
 ?>
 <!DOCTYPE html>
 <html
@@ -799,17 +800,9 @@ $interviewCampusRangeLabel = $activeBatchId !== null
 
               <div class="card mn-chart-card mb-4">
                 <div class="card-body">
-                  <div class="mn-chart-title">Expected Interviews by Campus</div>
-                  <div class="mn-chart-subtitle mb-3"><?= htmlspecialchars($expectedCampusRangeLabel); ?></div>
-                  <div id="monitoringExpectedCampusChart"></div>
-                </div>
-              </div>
-
-              <div class="card mn-chart-card mb-4">
-                <div class="card-body">
-                  <div class="mn-chart-title">Interviewed and Scored by Assigned Campus</div>
-                  <div class="mn-chart-subtitle mb-3"><?= htmlspecialchars($interviewCampusRangeLabel); ?></div>
-                  <div id="monitoringCampusPipelineChart"></div>
+                  <div class="mn-chart-title">Expected, Interviewed, and Scored by Assigned Campus</div>
+                  <div class="mn-chart-subtitle mb-3"><?= htmlspecialchars($combinedCampusRangeLabel); ?></div>
+                  <div id="monitoringCampusCombinedChart"></div>
                 </div>
               </div>
 
@@ -922,6 +915,7 @@ $interviewCampusRangeLabel = $activeBatchId !== null
         const campusTooltipLabels = <?= json_encode(array_values($campusChartFullLabels)); ?>;
         const expectedSeries = <?= json_encode($expectedCampusTrendSeries); ?>;
         const pipelineSeries = <?= json_encode($campusInterviewTrendSeries); ?>;
+        const combinedCampusSeries = [...expectedSeries, ...pipelineSeries];
 
         function toNumber(value) {
           const numericValue = Number(value);
@@ -1007,19 +1001,11 @@ $interviewCampusRangeLabel = $activeBatchId !== null
           };
         }
 
-        const expectedChartEl = document.querySelector('#monitoringExpectedCampusChart');
-        if (expectedChartEl) {
+        const combinedChartEl = document.querySelector('#monitoringCampusCombinedChart');
+        if (combinedChartEl) {
           new ApexCharts(
-            expectedChartEl,
-            buildCampusChartOptions(expectedSeries, ['#696cff'])
-          ).render();
-        }
-
-        const pipelineChartEl = document.querySelector('#monitoringCampusPipelineChart');
-        if (pipelineChartEl) {
-          new ApexCharts(
-            pipelineChartEl,
-            buildCampusChartOptions(pipelineSeries, ['#03c3ec', '#71dd37'])
+            combinedChartEl,
+            buildCampusChartOptions(combinedCampusSeries, ['#696cff', '#03c3ec', '#71dd37'])
           ).render();
         }
       });

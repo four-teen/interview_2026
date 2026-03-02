@@ -1,5 +1,6 @@
 <?php
 require_once '../config/db.php';
+require_once '../config/program_ranking_lock.php';
 session_start();
 
 if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'progchair') {
@@ -13,6 +14,34 @@ $transferId = isset($_GET['transfer_id']) ? (int)$_GET['transfer_id'] : 0;
 
 if ($transferId <= 0 || $programId <= 0) {
     header('Location: pending_transfers.php');
+    exit;
+}
+
+$loadSql = "
+SELECT interview_id
+FROM tbl_student_transfer_history
+WHERE transfer_id = ?
+AND status = 'pending'
+AND to_program_id = ?
+LIMIT 1
+";
+$stmtLoad = $conn->prepare($loadSql);
+if (!$stmtLoad) {
+    header('Location: pending_transfers.php');
+    exit;
+}
+$stmtLoad->bind_param("ii", $transferId, $programId);
+$stmtLoad->execute();
+$transfer = $stmtLoad->get_result()->fetch_assoc();
+$stmtLoad->close();
+
+if (!$transfer) {
+    header('Location: pending_transfers.php');
+    exit;
+}
+
+if (program_ranking_is_interview_locked($conn, (int) ($transfer['interview_id'] ?? 0))) {
+    header('Location: pending_transfers.php?msg=rank_locked');
     exit;
 }
 

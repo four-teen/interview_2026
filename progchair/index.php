@@ -568,6 +568,25 @@ if ($activeBatchId) {
   color: #dc2626 !important;
 }
 
+.ranking-locked-row {
+  background: #fffbeb;
+}
+
+.ranking-lock-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.18rem;
+  margin-left: 0.35rem;
+  padding: 0.08rem 0.35rem;
+  border-radius: 999px;
+  border: 1px solid #fcd34d;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
 .swal2-popup .scc-picker-wrap {
   text-align: left;
 }
@@ -1350,6 +1369,11 @@ document.addEventListener("DOMContentLoaded", function () {
   const openOwnerActionModal = allowedOwnerActions.has(urlParams.get('open_action'))
     ? urlParams.get('open_action')
     : '';
+  const statusMsg = String(urlParams.get('msg') || '').toLowerCase();
+
+  if (statusMsg === 'rank_locked') {
+    Swal.fire('Rank Locked', 'Selected interview is locked in ranking and cannot be modified.', 'warning');
+  }
 
   if (navbarSearchInput) {
     navbarSearchInput.placeholder = 'Search by name or examinee number...';
@@ -1767,58 +1791,40 @@ function escapeHtml(value) {
     .replace(/'/g, '&#039;');
 }
 
-function toSortableScore(value) {
-  const parsed = Number.parseFloat(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function sortRankingRows(rows) {
-  return [...rows].sort((a, b) => {
-    const scoreDiff = toSortableScore(b.final_score) - toSortableScore(a.final_score);
-    if (scoreDiff !== 0) return scoreDiff;
-
-    const satDiff = Number(b.sat_score ?? 0) - Number(a.sat_score ?? 0);
-    if (satDiff !== 0) return satDiff;
-
-    return String(a.full_name || '').localeCompare(String(b.full_name || ''));
-  });
-}
-
-function isRegularClassification(row) {
-  return String(row?.classification || '').toUpperCase() === 'REGULAR';
-}
-
-function splitRowsByCapacity(rows, limit, quotaEnabled) {
-  if (!quotaEnabled) {
-    return {
-      insideRows: rows,
-      outsideRows: []
-    };
+function getRowSection(row) {
+  const raw = String(row?.row_section || '').toLowerCase();
+  if (raw === 'scc' || raw === 'etg' || raw === 'regular') {
+    return raw;
   }
-
-  const safeLimit = Math.max(0, Number(limit ?? 0));
-  return {
-    insideRows: rows.slice(0, safeLimit),
-    outsideRows: rows.slice(safeLimit)
-  };
+  if (Boolean(row?.is_endorsement)) {
+    return 'scc';
+  }
+  return String(row?.classification || '').toUpperCase() === 'REGULAR' ? 'regular' : 'etg';
 }
 
-function buildRankingRowHtml(row, rankDisplay, { section = 'regular', isOutsideCapacity = false } = {}) {
+function buildRankingRowHtml(row, rankDisplay) {
+  const section = getRowSection(row);
+  const isOutsideCapacity = Boolean(row?.is_outside_capacity);
   const sectionClass = section === 'scc'
     ? 'ranking-scc-row'
     : (section === 'etg' ? 'ranking-etg-row' : '');
-  const rowClass = [sectionClass, isOutsideCapacity ? 'ranking-outside-capacity' : '']
+  const rowClass = [
+    sectionClass,
+    isOutsideCapacity ? 'ranking-outside-capacity' : '',
+    Boolean(row?.is_locked) ? 'ranking-locked-row' : ''
+  ]
     .filter(Boolean)
     .join(' ');
   const classificationText = section === 'scc'
     ? 'SCC'
     : (section === 'etg' ? 'ETG' : 'R');
-
-  const rankHtml = `<span class="fw-semibold">${rankDisplay}</span>`;
+  const lockPill = Boolean(row?.is_locked)
+    ? '<span class="ranking-lock-pill"><i class="bx bx-lock-alt"></i>LOCKED</span>'
+    : '';
 
   return `
     <div class="ranking-list-row ${rowClass}">
-      <div class="ranking-col-rank">${rankHtml}</div>
+      <div class="ranking-col-rank"><span class="fw-semibold">${rankDisplay}</span>${lockPill}</div>
       <div class="ranking-col-examinee">${escapeHtml(row.examinee_number || '')}</div>
       <div class="ranking-col-name">${escapeHtml(row.full_name || '')}</div>
       <div class="ranking-col-class">${escapeHtml(classificationText)}</div>
@@ -1841,43 +1847,6 @@ function buildRankingListHeaderHtml() {
   `;
 }
 
-function renderCapacityOrderedTable(regularRows, endorsementRows, etgRows) {
-  if (!programRankingRegularList) return;
-
-  if (!regularRows.length && !endorsementRows.length && !etgRows.length) {
-    programRankingRegularList.innerHTML = `${buildRankingListHeaderHtml()}<div class="ranking-list-empty">No ranked students.</div>`;
-    return;
-  }
-
-  const quotaEnabled = Boolean(currentRankingQuota && currentRankingQuota.enabled === true);
-  const regularLimit = Math.max(0, Number(currentRankingQuota?.regular_slots ?? 0));
-  const endorsementLimit = Math.max(0, Number(currentRankingQuota?.endorsement_capacity ?? 0));
-  const etgLimit = Math.max(0, Number(currentRankingQuota?.etg_slots ?? 0));
-
-  const regularSplit = splitRowsByCapacity(regularRows, regularLimit, quotaEnabled);
-  const endorsementSplit = splitRowsByCapacity(endorsementRows, endorsementLimit, quotaEnabled);
-  const etgSplit = splitRowsByCapacity(etgRows, etgLimit, quotaEnabled);
-
-  const orderedRows = [
-    ...regularSplit.insideRows.map((row) => ({ row, section: 'regular', isOutsideCapacity: false })),
-    ...endorsementSplit.insideRows.map((row) => ({ row, section: 'scc', isOutsideCapacity: false })),
-    ...etgSplit.insideRows.map((row) => ({ row, section: 'etg', isOutsideCapacity: false })),
-    ...regularSplit.outsideRows.map((row) => ({ row, section: 'regular', isOutsideCapacity: true })),
-    ...endorsementSplit.outsideRows.map((row) => ({ row, section: 'scc', isOutsideCapacity: true })),
-    ...etgSplit.outsideRows.map((row) => ({ row, section: 'etg', isOutsideCapacity: true }))
-  ];
-
-  let html = buildRankingListHeaderHtml();
-  orderedRows.forEach((entry, index) => {
-    html += buildRankingRowHtml(entry.row, index + 1, {
-      section: entry.section,
-      isOutsideCapacity: entry.isOutsideCapacity
-    });
-  });
-
-  programRankingRegularList.innerHTML = html;
-}
-
 function refreshEcButtons() {
   const ecCapacity = Number(currentRankingQuota?.endorsement_capacity ?? 0);
   const ecSelected = Number(currentRankingQuota?.endorsement_selected ?? 0);
@@ -1897,30 +1866,37 @@ function refreshEcButtons() {
 }
 
 function renderRankingRows(rows) {
-  const regularRows = sortRankingRows(
-    rows.filter(row => isRegularClassification(row) && !row.is_endorsement)
-  );
+  if (!programRankingRegularList) {
+    return { regularCount: 0, endorsementCount: 0, etgCount: 0 };
+  }
 
-  const endorsementRows = [...rows.filter(row => Boolean(row.is_endorsement))]
-    .sort((a, b) => {
-      const timeA = new Date(a.endorsement_order || 0).getTime();
-      const timeB = new Date(b.endorsement_order || 0).getTime();
-      if (timeA !== timeB) return timeA - timeB;
-      return String(a.full_name || '').localeCompare(String(b.full_name || ''));
-    });
+  const orderedRows = Array.isArray(rows) ? rows : [];
+  if (!orderedRows.length) {
+    programRankingRegularList.innerHTML = `${buildRankingListHeaderHtml()}<div class="ranking-list-empty">No ranked students.</div>`;
+    refreshEcButtons();
+    return { regularCount: 0, endorsementCount: 0, etgCount: 0 };
+  }
 
-  const etgRows = sortRankingRows(
-    rows.filter(row => !isRegularClassification(row) && !row.is_endorsement)
-  );
+  const grouped = { regularCount: 0, endorsementCount: 0, etgCount: 0 };
+  let html = buildRankingListHeaderHtml();
 
-  renderCapacityOrderedTable(regularRows, endorsementRows, etgRows);
+  orderedRows.forEach((row, index) => {
+    const section = getRowSection(row);
+    if (section === 'scc') {
+      grouped.endorsementCount++;
+    } else if (section === 'etg') {
+      grouped.etgCount++;
+    } else {
+      grouped.regularCount++;
+    }
+
+    const rankDisplay = Number(row?.rank ?? 0) > 0 ? Number(row.rank) : (index + 1);
+    html += buildRankingRowHtml(row, rankDisplay);
+  });
+
+  programRankingRegularList.innerHTML = html;
   refreshEcButtons();
-
-  return {
-    regularCount: regularRows.length,
-    endorsementCount: endorsementRows.length,
-    etgCount: etgRows.length
-  };
+  return grouped;
 }
 
 function buildRankingMeta(grouped, quota) {
@@ -2128,16 +2104,6 @@ function loadProgramRanking(programId, programName) {
       currentRankingRows = Array.isArray(data.rows) ? data.rows : [];
       currentRankingQuota = data && typeof data.quota === 'object' ? data.quota : null;
 
-      const groupedCounts = {
-        regularCount: currentRankingRows.filter(row => String(row.classification || '').toUpperCase() === 'REGULAR' && !row.is_endorsement).length,
-        endorsementCount: currentRankingRows.filter(row => Boolean(row.is_endorsement)).length,
-        etgCount: currentRankingRows.filter(row => String(row.classification || '').toUpperCase() !== 'REGULAR' && !row.is_endorsement).length
-      };
-
-      if (programRankingMetaEl) {
-        programRankingMetaEl.textContent = buildRankingMeta(groupedCounts, currentRankingQuota);
-      }
-
       if (currentRankingRows.length === 0) {
         if (programRankingEmptyEl && currentRankingQuota && currentRankingQuota.enabled === true) {
           const capacity = Number(currentRankingQuota.absorptive_capacity ?? 0);
@@ -2267,6 +2233,18 @@ if (printRankingBtn) {
           .ranking-etg-row .ranking-col-score { color: #2563eb !important; }
           .ranking-outside-capacity { color: #b91c1c !important; }
           .ranking-outside-capacity .ranking-col-score { color: #b91c1c !important; }
+          .ranking-locked-row { background: #fffbeb !important; }
+          .ranking-lock-pill {
+            display: inline-block;
+            margin-left: 6px;
+            padding: 1px 5px;
+            border: 1px solid #f59e0b;
+            border-radius: 999px;
+            font-size: 10px;
+            font-weight: 700;
+            color: #92400e;
+            background: #fef3c7;
+          }
           .print-disclaimer {
             margin-top: 24px;
             padding-top: 12px;

@@ -1,47 +1,16 @@
 <?php
 /**
- * ============================================================================
- * FILE: root_folder/interview/progchair/export_program_ranking.php
- * PURPOSE: Export ranked students for a selected program (Excel-ready CSV)
- * ============================================================================
+ * Export ranked students for a selected program (Excel-ready CSV).
+ * Uses shared ranking payload so Program Chair and Monitoring stay identical.
  */
 
 require_once '../config/db.php';
-require_once '../config/system_controls.php';
-require_once 'endorsement_helpers.php';
+require_once '../config/program_ranking_lock.php';
 session_start();
-
-function build_esm_preferred_program_condition_sql(string $columnExpression): string
-{
-    $normalizedColumn = "UPPER(COALESCE({$columnExpression}, ''))";
-    $patterns = [
-        '%NURSING%',
-        '%MIDWIFERY%',
-        '%MEDICAL TECHNOLOGY%',
-        '%ELECTRONICS ENGINEERING%',
-        '%CIVIL ENGINEERING%',
-        '%COMPUTER ENGINEERING%',
-        '%COMPUTER SCIENCE%',
-        '%FISHERIES%',
-        '%BIOLOGY%',
-        '%ACCOUNTANCY%',
-        '%MANAGEMENT ACCOUNTING%',
-        '%ACCOUNTING INFORMATION SYSTEMS%',
-        '%MATHEMATICS EDUCATION%',
-        '%SCIENCE EDUCATION%'
-    ];
-
-    $conditions = [];
-    foreach ($patterns as $pattern) {
-        $conditions[] = "{$normalizedColumn} LIKE '{$pattern}'";
-    }
-
-    return '(' . implode(' OR ', $conditions) . ')';
-}
 
 if (
     !isset($_SESSION['logged_in']) ||
-    $_SESSION['role'] !== 'progchair' ||
+    ($_SESSION['role'] ?? '') !== 'progchair' ||
     empty($_SESSION['accountid']) ||
     empty($_SESSION['campus_id'])
 ) {
@@ -49,248 +18,106 @@ if (
     exit;
 }
 
-$campusId  = (int) $_SESSION['campus_id'];
+$campusId = (int) $_SESSION['campus_id'];
 $programId = isset($_GET['program_id']) ? (int) $_GET['program_id'] : 0;
-
 if ($programId <= 0) {
     header('Location: index.php?msg=invalid_program');
     exit;
 }
 
-// Validate program belongs to current campus
-$programSql = "
-    SELECT
-        p.program_id,
-        p.program_name,
-        p.major,
-        pc.cutoff_score,
-        pc.absorptive_capacity,
-        pc.regular_percentage,
-        pc.etg_percentage,
-        COALESCE(pc.endorsement_capacity, 0) AS endorsement_capacity
-    FROM tbl_program p
-    INNER JOIN tbl_college c
-        ON p.college_id = c.college_id
-    LEFT JOIN tbl_program_cutoff pc
-        ON pc.program_id = p.program_id
-    WHERE p.program_id = ?
-      AND c.campus_id = ?
-      AND p.status = 'active'
-    LIMIT 1
-";
-
-$stmtProgram = $conn->prepare($programSql);
-if (!$stmtProgram) {
-    error_log('SQL prepare failed (export programSql): ' . $conn->error);
-    header('Location: index.php?msg=server_error');
-    exit;
-}
-
-$stmtProgram->bind_param("ii", $programId, $campusId);
-$stmtProgram->execute();
-$program = $stmtProgram->get_result()->fetch_assoc();
-
-if (!$program) {
+$payload = program_ranking_fetch_payload($conn, $programId, $campusId);
+if (!($payload['success'] ?? false)) {
     header('Location: index.php?msg=invalid_program');
     exit;
 }
 
-$programCutoff = $program['cutoff_score'] !== null ? (int) $program['cutoff_score'] : null;
-$globalSatCutoffState = get_global_sat_cutoff_state($conn);
-$globalSatCutoffEnabled = (bool) ($globalSatCutoffState['enabled'] ?? false);
-$globalSatCutoffValue = isset($globalSatCutoffState['value']) ? (int) $globalSatCutoffState['value'] : null;
-$effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalSatCutoffEnabled, $globalSatCutoffValue);
-$esmPreferredProgramConditionSql = build_esm_preferred_program_condition_sql('pr.preferred_program');
-$cutoffBasisScoreSql = "CASE
-    WHEN {$esmPreferredProgramConditionSql} THEN COALESCE(pr.esm_competency_standard_score, pr.sat_score, 0)
-    ELSE COALESCE(pr.overall_standard_score, pr.sat_score, 0)
-END";
-$cutoffWhereSql = $effectiveCutoff !== null ? " AND ({$cutoffBasisScoreSql}) >= ?" : '';
+$program = is_array($payload['program'] ?? null) ? $payload['program'] : [];
+$quota = is_array($payload['quota'] ?? null) ? $payload['quota'] : [];
+$rows = is_array($payload['rows'] ?? null) ? $payload['rows'] : [];
+$locks = is_array($payload['locks'] ?? null) ? $payload['locks'] : ['active_count' => 0, 'ranges' => []];
 
-$rankingSql = "
-    SELECT
-        si.interview_id,
-        si.examinee_number,
-        pr.full_name,
-        CASE
-            WHEN UPPER(COALESCE(si.classification, 'REGULAR')) = 'ETG'
-                THEN CONCAT('ETG-', COALESCE(NULLIF(TRIM(ec.class_desc), ''), 'UNSPECIFIED'))
-            ELSE 'REGULAR'
-        END AS classification_label,
-        ({$cutoffBasisScoreSql}) AS cutoff_basis_score,
-        si.final_score,
-        si.interview_datetime,
-        a.acc_fullname AS encoded_by,
-        CASE
-            WHEN UPPER(COALESCE(si.classification, 'REGULAR')) = 'ETG' THEN 1
-            ELSE 0
-        END AS classification_group
-    FROM tbl_student_interview si
-    INNER JOIN tbl_placement_results pr
-        ON si.placement_result_id = pr.id
-    LEFT JOIN tblaccount a
-        ON si.program_chair_id = a.accountid
-    LEFT JOIN tbl_etg_class ec
-        ON si.etg_class_id = ec.etgclassid
-    WHERE COALESCE(NULLIF(si.program_id, 0), NULLIF(si.first_choice, 0)) = ?
-      AND si.status = 'active'
-      AND si.final_score IS NOT NULL
-      {$cutoffWhereSql}
-    ORDER BY
-        classification_group ASC,
-        si.final_score DESC,
-        cutoff_basis_score DESC,
-        pr.full_name ASC
-";
-
-$stmtRanking = $conn->prepare($rankingSql);
-if (!$stmtRanking) {
-    error_log('SQL prepare failed (export rankingSql): ' . $conn->error);
-    header('Location: index.php?msg=server_error');
-    exit;
-}
-
-if ($effectiveCutoff !== null) {
-    $stmtRanking->bind_param("ii", $programId, $effectiveCutoff);
-} else {
-    $stmtRanking->bind_param("i", $programId);
-}
-$stmtRanking->execute();
-$resultRanking = $stmtRanking->get_result();
-
-$allRegularRows = [];
-$allEtgRows = [];
-$allRowsByInterviewId = [];
-while ($row = $resultRanking->fetch_assoc()) {
-    $allRowsByInterviewId[(int) ($row['interview_id'] ?? 0)] = $row;
-    if ((int) ($row['classification_group'] ?? 0) === 1) {
-        $allEtgRows[] = $row;
-    } else {
-        $allRegularRows[] = $row;
-    }
-}
-
-$quotaEnabled = false;
-$absorptiveCapacity = null;
-$regularPercentage = null;
-$etgPercentage = null;
-$endorsementCapacity = max(0, (int) ($program['endorsement_capacity'] ?? 0));
-$regularSlots = null;
-$etgSlots = null;
-$baseCapacity = null;
-
-if (
-    $program['absorptive_capacity'] !== null &&
-    $program['regular_percentage'] !== null &&
-    $program['etg_percentage'] !== null
-) {
-    $absorptiveCapacity = max(0, (int) $program['absorptive_capacity']);
-    $regularPercentage = round((float) $program['regular_percentage'], 2);
-    $etgPercentage = round((float) $program['etg_percentage'], 2);
-    $baseCapacity = max(0, $absorptiveCapacity - $endorsementCapacity);
-
-    if (
-        $regularPercentage >= 0 &&
-        $regularPercentage <= 100 &&
-        $etgPercentage >= 0 &&
-        $etgPercentage <= 100 &&
-        abs(($regularPercentage + $etgPercentage) - 100) <= 0.01
-    ) {
-        $quotaEnabled = true;
-        $regularSlots = (int) round($baseCapacity * ($regularPercentage / 100));
-        $etgSlots = max(0, $baseCapacity - $regularSlots);
-    }
-}
-
-// Persisted EC rows
-$endorsementRowsRaw = load_program_endorsements($conn, $programId);
-$endorsementRows = [];
-$endorsementIds = [];
-foreach ($endorsementRowsRaw as $endorsementRow) {
-    $eid = (int) ($endorsementRow['interview_id'] ?? 0);
-    if ($eid <= 0 || !isset($allRowsByInterviewId[$eid])) {
-        continue;
-    }
-
-    $row = $allRowsByInterviewId[$eid];
-    $row['classification_label'] = 'SCC - ' . strtoupper((string) ($row['classification_label'] ?? 'REGULAR'));
-    $row['is_endorsement'] = 1;
-    $endorsementRows[] = $row;
-    $endorsementIds[$eid] = true;
-}
-
-$filteredRegularRows = array_values(array_filter($allRegularRows, function (array $row) use ($endorsementIds): bool {
-    return !isset($endorsementIds[(int) ($row['interview_id'] ?? 0)]);
-}));
-
-$filteredEtgRows = array_values(array_filter($allEtgRows, function (array $row) use ($endorsementIds): bool {
-    return !isset($endorsementIds[(int) ($row['interview_id'] ?? 0)]);
-}));
-
-if ($quotaEnabled) {
-    $regularRows = array_slice($filteredRegularRows, 0, $regularSlots);
-    $etgRows = array_slice($filteredEtgRows, 0, $etgSlots);
-} else {
-    $regularRows = $filteredRegularRows;
-    $etgRows = $filteredEtgRows;
-}
-
-$exportRows = array_merge($regularRows, $endorsementRows, $etgRows);
-
-$programLabel = strtoupper($program['program_name'] . (!empty($program['major']) ? ' - ' . $program['major'] : ''));
+$programLabel = strtoupper((string) ($program['program_name'] ?? 'PROGRAM'));
 $safeName = preg_replace('/[^A-Za-z0-9]+/', '_', $programLabel);
-$safeName = trim($safeName, '_');
-$filename = 'program_ranking_' . strtolower($safeName) . '_' . date('Ymd_His') . '.csv';
+$safeName = trim((string) $safeName, '_');
+$filename = 'program_ranking_' . strtolower(($safeName !== '' ? $safeName : 'program')) . '_' . date('Ymd_His') . '.csv';
 
 header('Content-Type: text/csv; charset=UTF-8');
 header('Content-Disposition: attachment; filename="' . $filename . '"');
 header('Pragma: no-cache');
 header('Expires: 0');
 
-// UTF-8 BOM for Excel compatibility
 echo "\xEF\xBB\xBF";
-
 $output = fopen('php://output', 'w');
 
 fputcsv($output, ['Program Ranking']);
 fputcsv($output, ['Program', $programLabel]);
 fputcsv($output, ['Generated', date('Y-m-d H:i:s')]);
-if ($effectiveCutoff !== null) {
-    $cutoffLabel = ($globalSatCutoffEnabled && $globalSatCutoffValue !== null)
-        ? 'Global Override'
-        : 'Program Cutoff';
-    fputcsv($output, ['Applied SAT Cutoff', $cutoffLabel . ': SAT >= ' . (int) $effectiveCutoff]);
+
+$cutoffValue = $quota['cutoff_score'] ?? null;
+if ($cutoffValue !== null && $cutoffValue !== '') {
+    fputcsv($output, ['Applied SAT Cutoff', (string) $cutoffValue]);
 }
-if ($quotaEnabled) {
+
+if (($quota['enabled'] ?? false) === true) {
     $quotaSummary = sprintf(
         'Capacity: %d | Base: %d | Regular: %d/%d | SCC: %d/%d | ETG: %d/%d',
-        (int) $absorptiveCapacity,
-        (int) $baseCapacity,
-        count($regularRows),
-        (int) $regularSlots,
-        count($endorsementRows),
-        (int) $endorsementCapacity,
-        count($etgRows),
-        (int) $etgSlots
+        (int) ($quota['absorptive_capacity'] ?? 0),
+        (int) ($quota['base_capacity'] ?? 0),
+        (int) ($quota['regular_shown'] ?? 0),
+        (int) ($quota['regular_slots'] ?? 0),
+        (int) ($quota['endorsement_shown'] ?? 0),
+        (int) ($quota['endorsement_capacity'] ?? 0),
+        (int) ($quota['etg_shown'] ?? 0),
+        (int) ($quota['etg_slots'] ?? 0)
     );
     fputcsv($output, ['Quota', $quotaSummary]);
 }
-fputcsv($output, []);
-fputcsv($output, ['Rank', 'Examinee #', 'Student Name', 'Classification', 'SAT Score', 'Final Score', 'Encoded By', 'Interview Datetime']);
 
-$rank = 1;
-foreach ($exportRows as $row) {
+$lockRanges = is_array($locks['ranges'] ?? null) ? $locks['ranges'] : [];
+$lockRangeText = !empty($lockRanges) ? implode(', ', $lockRanges) : '';
+fputcsv($output, ['Locked Ranks', $lockRangeText !== '' ? $lockRangeText : 'None']);
+fputcsv($output, []);
+
+fputcsv($output, [
+    'Rank',
+    'Examinee #',
+    'Student Name',
+    'Class',
+    'SAT Score',
+    'Final Score',
+    'Locked',
+    'Outside Capacity',
+    'Encoded By',
+    'Interview Datetime'
+]);
+
+foreach ($rows as $index => $row) {
+    $section = strtolower(trim((string) ($row['row_section'] ?? '')));
+    if ($section === 'scc') {
+        $classLabel = 'SCC';
+    } elseif ($section === 'etg') {
+        $classLabel = 'ETG';
+    } else {
+        $classLabel = 'R';
+    }
+
+    $rank = (int) ($row['rank'] ?? 0);
+    if ($rank <= 0) {
+        $rank = $index + 1;
+    }
+
     fputcsv($output, [
         $rank,
-        $row['examinee_number'],
-        $row['full_name'],
-        $row['classification_label'],
-        $row['cutoff_basis_score'],
-        number_format((float) $row['final_score'], 2),
-        $row['encoded_by'],
-        $row['interview_datetime']
+        (string) ($row['examinee_number'] ?? ''),
+        (string) ($row['full_name'] ?? ''),
+        $classLabel,
+        (string) ($row['sat_score'] ?? ''),
+        number_format((float) ($row['final_score'] ?? 0), 2, '.', ''),
+        ((bool) ($row['is_locked'] ?? false)) ? 'YES' : 'NO',
+        ((bool) ($row['is_outside_capacity'] ?? false)) ? 'YES' : 'NO',
+        (string) ($row['encoded_by'] ?? ''),
+        (string) ($row['interview_datetime'] ?? '')
     ]);
-    $rank++;
 }
 
 fclose($output);

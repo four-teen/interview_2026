@@ -138,7 +138,14 @@ $programSql = "
         COALESCE(st.unscored_count, 0) AS unscored_count
     {$programFromSql}
     WHERE {$whereSql}
-    ORDER BY cam.campus_name ASC, col.college_name ASC, p.program_name ASC, p.major ASC
+    ORDER BY
+        COALESCE(st.scored_count, 0) DESC,
+        COALESCE(st.total_count, 0) DESC,
+        COALESCE(st.unscored_count, 0) DESC,
+        cam.campus_name ASC,
+        col.college_name ASC,
+        p.program_name ASC,
+        p.major ASC
     LIMIT ? OFFSET ?
 ";
 
@@ -203,9 +210,35 @@ function render_monitoring_program_card(array $program): string
     $programDisplay = build_monitoring_program_display($program);
     $programLabel = $programDisplay['headline'];
     $locationLabel = $programDisplay['location'];
+
     $cutoffScore = $program['cutoff_score'] ?? null;
     $hasCutoff = ($cutoffScore !== null && $cutoffScore !== '');
     $cutoffDisplay = $hasCutoff ? number_format((int) $cutoffScore) : 'Not Set';
+
+    $hasCapacityConfig = (
+        $program['absorptive_capacity'] !== null &&
+        $program['regular_percentage'] !== null &&
+        $program['etg_percentage'] !== null
+    );
+
+    $absorptiveCapacity = $hasCapacityConfig ? max(0, (int) ($program['absorptive_capacity'] ?? 0)) : 0;
+    $endorsementCapacity = $hasCapacityConfig ? max(0, (int) ($program['endorsement_capacity'] ?? 0)) : 0;
+    $baseCapacity = $hasCapacityConfig ? max(0, $absorptiveCapacity - $endorsementCapacity) : 0;
+    $regularPercentage = $hasCapacityConfig ? (float) ($program['regular_percentage'] ?? 0) : 0.0;
+    $etgPercentage = $hasCapacityConfig ? (float) ($program['etg_percentage'] ?? 0) : 0.0;
+    $regularSlots = $hasCapacityConfig ? (int) round($baseCapacity * ($regularPercentage / 100)) : 0;
+    $etgSlots = $hasCapacityConfig ? max(0, $baseCapacity - $regularSlots) : 0;
+
+    $capacityDisplay = $hasCapacityConfig ? number_format($absorptiveCapacity) : 'N/A';
+    $sccDisplay = $hasCapacityConfig ? number_format($endorsementCapacity) : 'N/A';
+    $baseCapacityDisplay = $hasCapacityConfig ? number_format($baseCapacity) : 'N/A';
+    $regularDisplay = $hasCapacityConfig
+        ? number_format($regularPercentage, 2) . '% / ' . number_format($regularSlots)
+        : 'N/A';
+    $etgDisplay = $hasCapacityConfig
+        ? number_format($etgPercentage, 2) . '% / ' . number_format($etgSlots)
+        : 'N/A';
+    $configStateClass = $hasCapacityConfig ? '' : ' monitor-config-chip--muted';
 
     ob_start();
     ?>
@@ -215,6 +248,33 @@ function render_monitoring_program_card(array $program): string
         <?php if ($locationLabel !== ''): ?>
           <div class="monitor-program-card__meta"><?= htmlspecialchars($locationLabel); ?></div>
         <?php endif; ?>
+
+        <div class="monitor-program-config">
+          <span class="monitor-config-chip monitor-config-chip--cutoff">
+            Cut-Off
+            <span class="monitor-config-chip__value"><?= htmlspecialchars($cutoffDisplay); ?></span>
+          </span>
+          <span class="monitor-config-chip monitor-config-chip--capacity<?= $configStateClass; ?>">
+            Capacity
+            <span class="monitor-config-chip__value"><?= htmlspecialchars($capacityDisplay); ?></span>
+          </span>
+          <span class="monitor-config-chip monitor-config-chip--scc<?= $configStateClass; ?>">
+            SCC
+            <span class="monitor-config-chip__value"><?= htmlspecialchars($sccDisplay); ?></span>
+          </span>
+          <span class="monitor-config-chip monitor-config-chip--base<?= $configStateClass; ?>">
+            Base Capacity
+            <span class="monitor-config-chip__value"><?= htmlspecialchars($baseCapacityDisplay); ?></span>
+          </span>
+          <span class="monitor-config-chip monitor-config-chip--regular<?= $configStateClass; ?>">
+            Regular
+            <span class="monitor-config-chip__value"><?= htmlspecialchars($regularDisplay); ?></span>
+          </span>
+          <span class="monitor-config-chip monitor-config-chip--etg<?= $configStateClass; ?>">
+            ETG
+            <span class="monitor-config-chip__value"><?= htmlspecialchars($etgDisplay); ?></span>
+          </span>
+        </div>
       </div>
 
       <div class="monitor-program-metrics">
@@ -377,6 +437,82 @@ if ($isProgramCardsRequest) {
         color: #6b7a90;
       }
 
+      .monitor-program-config {
+        margin-top: 0.65rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+      }
+
+      .monitor-config-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.38rem;
+        padding: 0.28rem 0.55rem;
+        border-radius: 999px;
+        border: 1px solid #dbe4f0;
+        background: #f8fbff;
+        font-size: 0.74rem;
+        font-weight: 700;
+        color: #617089;
+        letter-spacing: 0.01em;
+      }
+
+      .monitor-config-chip__value {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 1.35rem;
+        padding: 0.05rem 0.5rem;
+        border-radius: 999px;
+        border: 1px solid #d5dfec;
+        background: #fff;
+        color: #2f3f59;
+        font-weight: 700;
+      }
+
+      .monitor-config-chip--cutoff .monitor-config-chip__value {
+        background: #eef2ff;
+        border-color: #c7d2fe;
+        color: #4f46e5;
+      }
+
+      .monitor-config-chip--capacity .monitor-config-chip__value {
+        background: #ecfeff;
+        border-color: #a5f3fc;
+        color: #0e7490;
+      }
+
+      .monitor-config-chip--scc .monitor-config-chip__value {
+        background: #fff7ed;
+        border-color: #fed7aa;
+        color: #b45309;
+      }
+
+      .monitor-config-chip--base .monitor-config-chip__value {
+        background: #f0f9ff;
+        border-color: #bae6fd;
+        color: #0369a1;
+      }
+
+      .monitor-config-chip--regular .monitor-config-chip__value {
+        background: #eef2ff;
+        border-color: #c7d2fe;
+        color: #4338ca;
+      }
+
+      .monitor-config-chip--etg .monitor-config-chip__value {
+        background: #f0fdf4;
+        border-color: #bbf7d0;
+        color: #15803d;
+      }
+
+      .monitor-config-chip--muted .monitor-config-chip__value {
+        background: #f8fafc;
+        border-color: #e2e8f0;
+        color: #64748b;
+      }
+
       .monitor-program-metrics {
         flex: 999 1 640px;
         display: grid;
@@ -511,6 +647,25 @@ if ($isProgramCardsRequest) {
         text-transform: uppercase;
       }
 
+      .ranking-locked-row {
+        background: #fffbeb;
+      }
+
+      .ranking-lock-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.18rem;
+        margin-left: 0.35rem;
+        padding: 0.08rem 0.35rem;
+        border-radius: 999px;
+        border: 1px solid #fcd34d;
+        background: #fef3c7;
+        color: #92400e;
+        font-size: 0.65rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+
       .ranking-scc-row {
         color: #15803d;
       }
@@ -574,7 +729,7 @@ if ($isProgramCardsRequest) {
                 <span class="text-muted fw-light">Monitoring /</span> Program Rankings
               </h4>
               <p class="text-muted mb-4">
-                Unified monitoring view for all active programs. Ranking order is aligned with Program Chair, Student, and Administrator logic.
+                Unified monitoring view for all active programs. Cards are ranked by highest scored interviews first and include full program configuration details.
               </p>
 
               <?php if ($globalSatCutoffActive): ?>
@@ -693,11 +848,47 @@ if ($isProgramCardsRequest) {
                       <span class="badge bg-label-info">Student View</span>
                       <span class="badge bg-label-secondary">Administrator View</span>
                     </div>
-                    <div class="d-flex justify-content-end gap-2 mb-3">
-                      <button type="button" class="btn btn-outline-secondary" id="monitoringPrintBtn">
-                        <i class="bx bx-printer me-1"></i> Print Ranking
-                      </button>
+                    <div class="row g-2 align-items-end mb-2">
+                      <div class="col-6 col-md-2">
+                        <label class="form-label form-label-sm mb-1 small text-muted">Rank From</label>
+                        <input type="number" min="1" class="form-control form-control-sm" id="monitoringLockFrom" placeholder="1">
+                      </div>
+                      <div class="col-6 col-md-2">
+                        <label class="form-label form-label-sm mb-1 small text-muted">Rank To</label>
+                        <input type="number" min="1" class="form-control form-control-sm" id="monitoringLockTo" placeholder="50">
+                      </div>
+                      <div class="col-12 col-md-auto d-grid">
+                        <button type="button" class="btn btn-sm btn-warning" id="monitoringLockRangeBtn">
+                          <i class="bx bx-lock-alt me-1"></i> Lock Range
+                        </button>
+                      </div>
+                      <div class="col-12 col-md-auto d-grid">
+                        <button type="button" class="btn btn-sm btn-outline-warning" id="monitoringUnlockRangeBtn">
+                          <i class="bx bx-lock-open-alt me-1"></i> Unlock Range
+                        </button>
+                      </div>
+                      <div class="col-12 col-md-auto d-grid">
+                        <button type="button" class="btn btn-sm btn-outline-danger" id="monitoringUnlockAllBtn">
+                          <i class="bx bx-reset me-1"></i> Unlock All
+                        </button>
+                      </div>
                     </div>
+
+                    <div class="d-flex flex-column flex-md-row justify-content-between gap-2 mb-3">
+                      <div class="small text-muted" id="monitoringLockSummary">No locked ranks.</div>
+                      <div class="d-flex gap-2 align-items-center">
+                        <select id="monitoringPrintScope" class="form-select form-select-sm" style="min-width: 180px;">
+                          <option value="all">Print: All in List</option>
+                          <option value="locked">Print: Locked Only</option>
+                          <option value="inside">Print: Inside Capacity Only</option>
+                        </select>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="monitoringPrintBtn">
+                          <i class="bx bx-printer me-1"></i> Print Ranking
+                        </button>
+                      </div>
+                    </div>
+
+                    <div class="small mb-2 d-none" id="monitoringLockStatus"></div>
 
                     <div id="monitoringRankingLoading" class="text-center py-4 d-none">
                       <div class="spinner-border text-primary" role="status"></div>
@@ -842,15 +1033,52 @@ if ($isProgramCardsRequest) {
         const tableWrapEl = document.getElementById('monitoringRankingTableWrap');
         const listEl = document.getElementById('monitoringRankingList');
         const printBtn = document.getElementById('monitoringPrintBtn');
+        const printScopeEl = document.getElementById('monitoringPrintScope');
+        const lockFromEl = document.getElementById('monitoringLockFrom');
+        const lockToEl = document.getElementById('monitoringLockTo');
+        const lockRangeBtn = document.getElementById('monitoringLockRangeBtn');
+        const unlockRangeBtn = document.getElementById('monitoringUnlockRangeBtn');
+        const unlockAllBtn = document.getElementById('monitoringUnlockAllBtn');
+        const lockSummaryEl = document.getElementById('monitoringLockSummary');
+        const lockStatusEl = document.getElementById('monitoringLockStatus');
 
+        let currentProgramId = 0;
         let currentProgramName = '';
         let currentQuota = null;
         let currentRows = [];
+        let currentLocks = { active_count: 0, ranges: [] };
 
         function setState({ loading = false, empty = false, showTable = false }) {
           if (loadingEl) loadingEl.classList.toggle('d-none', !loading);
           if (emptyEl) emptyEl.classList.toggle('d-none', !empty);
           if (tableWrapEl) tableWrapEl.classList.toggle('d-none', !showTable);
+        }
+
+        function setLockStatus(message, isError = false) {
+          if (!lockStatusEl) return;
+          const text = String(message || '').trim();
+          if (text === '') {
+            lockStatusEl.classList.add('d-none');
+            lockStatusEl.textContent = '';
+            lockStatusEl.classList.remove('text-danger', 'text-success');
+            return;
+          }
+          lockStatusEl.textContent = text;
+          lockStatusEl.classList.remove('d-none');
+          lockStatusEl.classList.toggle('text-danger', Boolean(isError));
+          lockStatusEl.classList.toggle('text-success', !Boolean(isError));
+        }
+
+        function updateLockSummary() {
+          if (!lockSummaryEl) return;
+          const count = Number(currentLocks?.active_count ?? 0);
+          const ranges = Array.isArray(currentLocks?.ranges) ? currentLocks.ranges : [];
+          if (count <= 0) {
+            lockSummaryEl.textContent = 'No locked ranks.';
+            return;
+          }
+          const label = ranges.length ? ranges.join(', ') : `${count} rank(s)`;
+          lockSummaryEl.textContent = `Locked Ranks: ${label}`;
         }
 
         function escapeHtml(value) {
@@ -862,56 +1090,35 @@ if ($isProgramCardsRequest) {
             .replace(/'/g, '&#039;');
         }
 
-        function toSortableScore(value) {
-          const parsed = Number.parseFloat(value);
-          return Number.isFinite(parsed) ? parsed : 0;
+        function getRowSection(row) {
+          const raw = String(row?.row_section || '').toLowerCase();
+          if (raw === 'scc' || raw === 'etg' || raw === 'regular') return raw;
+          if (Boolean(row?.is_endorsement)) return 'scc';
+          return String(row?.classification || '').toUpperCase() === 'REGULAR' ? 'regular' : 'etg';
         }
 
-        function sortRankingRows(rows) {
-          return [...rows].sort((a, b) => {
-            const scoreDiff = toSortableScore(b.final_score) - toSortableScore(a.final_score);
-            if (scoreDiff !== 0) return scoreDiff;
-
-            const satDiff = Number(b.sat_score ?? 0) - Number(a.sat_score ?? 0);
-            if (satDiff !== 0) return satDiff;
-
-            return String(a.full_name || '').localeCompare(String(b.full_name || ''));
-          });
-        }
-
-        function isRegularClassification(row) {
-          return String(row?.classification || '').toUpperCase() === 'REGULAR';
-        }
-
-        function splitRowsByCapacity(rows, limit, quotaEnabled) {
-          if (!quotaEnabled) {
-            return {
-              insideRows: rows,
-              outsideRows: []
-            };
-          }
-
-          const safeLimit = Math.max(0, Number(limit ?? 0));
-          return {
-            insideRows: rows.slice(0, safeLimit),
-            outsideRows: rows.slice(safeLimit)
-          };
-        }
-
-        function buildRankingRowHtml(row, rankDisplay, { section = 'regular', isOutsideCapacity = false } = {}) {
+        function buildRankingRowHtml(row, rankDisplay) {
+          const section = getRowSection(row);
+          const isOutsideCapacity = Boolean(row?.is_outside_capacity);
           const sectionClass = section === 'scc'
             ? 'ranking-scc-row'
             : (section === 'etg' ? 'ranking-etg-row' : '');
-          const rowClass = [sectionClass, isOutsideCapacity ? 'ranking-outside-capacity' : '']
-            .filter(Boolean)
-            .join(' ');
+          const rowClass = [
+            sectionClass,
+            isOutsideCapacity ? 'ranking-outside-capacity' : '',
+            Boolean(row?.is_locked) ? 'ranking-locked-row' : ''
+          ].filter(Boolean).join(' ');
           const classificationText = section === 'scc'
             ? 'SCC'
             : (section === 'etg' ? 'ETG' : 'R');
 
+          const lockPill = Boolean(row?.is_locked)
+            ? '<span class="ranking-lock-pill"><i class="bx bx-lock-alt"></i>LOCKED</span>'
+            : '';
+
           return `
             <div class="ranking-list-row ${rowClass}">
-              <div class="ranking-col-rank"><span class="fw-semibold">${rankDisplay}</span></div>
+              <div class="ranking-col-rank"><span class="fw-semibold">${rankDisplay}</span>${lockPill}</div>
               <div class="ranking-col-examinee">${escapeHtml(row.examinee_number || '')}</div>
               <div class="ranking-col-name">${escapeHtml(row.full_name || '')}</div>
               <div class="ranking-col-class">${escapeHtml(classificationText)}</div>
@@ -934,41 +1141,31 @@ if ($isProgramCardsRequest) {
           `;
         }
 
-        function renderCapacityOrderedTable(regularRows, endorsementRows, etgRows) {
-          if (!listEl) return;
-
-          if (!regularRows.length && !endorsementRows.length && !etgRows.length) {
-            listEl.innerHTML = `${buildRankingListHeaderHtml()}<div class="ranking-list-empty">No ranked students.</div>`;
-            return;
+        function renderRankingRows(rows) {
+          if (!listEl) {
+            return { regularCount: 0, endorsementCount: 0, etgCount: 0 };
           }
 
-          const quotaEnabled = Boolean(currentQuota && currentQuota.enabled === true);
-          const regularLimit = Math.max(0, Number(currentQuota?.regular_slots ?? 0));
-          const endorsementLimit = Math.max(0, Number(currentQuota?.endorsement_capacity ?? 0));
-          const etgLimit = Math.max(0, Number(currentQuota?.etg_slots ?? 0));
+          const orderedRows = Array.isArray(rows) ? rows : [];
+          if (!orderedRows.length) {
+            listEl.innerHTML = `${buildRankingListHeaderHtml()}<div class="ranking-list-empty">No ranked students.</div>`;
+            return { regularCount: 0, endorsementCount: 0, etgCount: 0 };
+          }
 
-          const regularSplit = splitRowsByCapacity(regularRows, regularLimit, quotaEnabled);
-          const endorsementSplit = splitRowsByCapacity(endorsementRows, endorsementLimit, quotaEnabled);
-          const etgSplit = splitRowsByCapacity(etgRows, etgLimit, quotaEnabled);
-
-          const orderedRows = [
-            ...regularSplit.insideRows.map((row) => ({ row, section: 'regular', isOutsideCapacity: false })),
-            ...endorsementSplit.insideRows.map((row) => ({ row, section: 'scc', isOutsideCapacity: false })),
-            ...etgSplit.insideRows.map((row) => ({ row, section: 'etg', isOutsideCapacity: false })),
-            ...regularSplit.outsideRows.map((row) => ({ row, section: 'regular', isOutsideCapacity: true })),
-            ...endorsementSplit.outsideRows.map((row) => ({ row, section: 'scc', isOutsideCapacity: true })),
-            ...etgSplit.outsideRows.map((row) => ({ row, section: 'etg', isOutsideCapacity: true }))
-          ];
-
+          const grouped = { regularCount: 0, endorsementCount: 0, etgCount: 0 };
           let html = buildRankingListHeaderHtml();
-          orderedRows.forEach((entry, index) => {
-            html += buildRankingRowHtml(entry.row, index + 1, {
-              section: entry.section,
-              isOutsideCapacity: entry.isOutsideCapacity
-            });
+          orderedRows.forEach((row, index) => {
+            const section = getRowSection(row);
+            if (section === 'scc') grouped.endorsementCount++;
+            else if (section === 'etg') grouped.etgCount++;
+            else grouped.regularCount++;
+
+            const rankDisplay = Number(row?.rank ?? 0) > 0 ? Number(row.rank) : (index + 1);
+            html += buildRankingRowHtml(row, rankDisplay);
           });
 
           listEl.innerHTML = html;
+          return grouped;
         }
 
         function buildRankingMeta(grouped, quota) {
@@ -991,43 +1188,22 @@ if ($isProgramCardsRequest) {
           return `Capacity: REGULAR: ${regularUsed}/${regularSlots} | SCC: ${endorsementUsed}/${sccSlots} | ETG: ${etgUsed}/${etgSlots}`;
         }
 
-        function renderRankingRows(rows) {
-          const regularRows = sortRankingRows(
-            rows.filter((row) => isRegularClassification(row) && !row.is_endorsement)
-          );
-
-          const endorsementRows = [...rows.filter((row) => Boolean(row.is_endorsement))]
-            .sort((a, b) => {
-              const timeA = new Date(a.endorsement_order || 0).getTime();
-              const timeB = new Date(b.endorsement_order || 0).getTime();
-              if (timeA !== timeB) return timeA - timeB;
-              return String(a.full_name || '').localeCompare(String(b.full_name || ''));
-            });
-
-          const etgRows = sortRankingRows(
-            rows.filter((row) => !isRegularClassification(row) && !row.is_endorsement)
-          );
-
-          renderCapacityOrderedTable(regularRows, endorsementRows, etgRows);
-          return {
-            regularCount: regularRows.length,
-            endorsementCount: endorsementRows.length,
-            etgCount: etgRows.length
-          };
-        }
-
         async function loadProgramRanking(programId, programName) {
+          currentProgramId = Number(programId || 0);
           currentProgramName = String(programName || 'PROGRAM');
           currentRows = [];
           currentQuota = null;
+          currentLocks = { active_count: 0, ranges: [] };
+          updateLockSummary();
 
           if (titleEl) titleEl.textContent = `Program Ranking - ${currentProgramName}`;
           if (metaEl) metaEl.textContent = 'Loading...';
+          setLockStatus('');
           setState({ loading: true, empty: false, showTable: false });
           rankingModal.show();
 
           try {
-            const response = await fetch(`get_program_ranking.php?program_id=${encodeURIComponent(String(programId || 0))}`, {
+            const response = await fetch(`get_program_ranking.php?program_id=${encodeURIComponent(String(currentProgramId || 0))}`, {
               headers: { Accept: 'application/json' }
             });
             const data = await response.json();
@@ -1037,16 +1213,10 @@ if ($isProgramCardsRequest) {
 
             currentRows = Array.isArray(data.rows) ? data.rows : [];
             currentQuota = data && typeof data.quota === 'object' ? data.quota : null;
-
-            const groupedCounts = {
-              regularCount: currentRows.filter((row) => String(row.classification || '').toUpperCase() === 'REGULAR' && !row.is_endorsement).length,
-              endorsementCount: currentRows.filter((row) => Boolean(row.is_endorsement)).length,
-              etgCount: currentRows.filter((row) => String(row.classification || '').toUpperCase() !== 'REGULAR' && !row.is_endorsement).length
-            };
-
-            if (metaEl) {
-              metaEl.textContent = buildRankingMeta(groupedCounts, currentQuota);
-            }
+            currentLocks = data && typeof data.locks === 'object'
+              ? data.locks
+              : { active_count: 0, ranges: [] };
+            updateLockSummary();
 
             if (currentRows.length === 0) {
               if (emptyEl && currentQuota && currentQuota.enabled === true) {
@@ -1072,18 +1242,83 @@ if ($isProgramCardsRequest) {
           }
         }
 
-        function printCurrentRanking() {
-          if (!currentRows.length || !listEl) {
-            return;
+        async function applyLockAction(action) {
+          if (!currentProgramId) return;
+
+          const params = new URLSearchParams();
+          params.set('action', action);
+          params.set('program_id', String(currentProgramId));
+
+          if (action === 'lock_range' || action === 'unlock_range') {
+            const startRank = Number(lockFromEl?.value || 0);
+            const endRank = Number(lockToEl?.value || 0);
+            if (startRank <= 0 || endRank <= 0) {
+              setLockStatus('Enter both rank values first.', true);
+              return;
+            }
+            params.set('start_rank', String(startRank));
+            params.set('end_rank', String(endRank));
           }
+
+          setLockStatus('Applying lock action...');
+          try {
+            const response = await fetch('ranking_lock_action.php', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                Accept: 'application/json'
+              },
+              body: params.toString()
+            });
+            const data = await response.json();
+            if (!response.ok || !data || !data.success) {
+              throw new Error((data && data.message) ? data.message : 'Lock action failed.');
+            }
+
+            const statusMessage = String(data.message || 'Lock action completed.');
+            await loadProgramRanking(currentProgramId, currentProgramName);
+            setLockStatus(statusMessage, false);
+          } catch (error) {
+            setLockStatus((error && error.message) ? error.message : 'Lock action failed.', true);
+          }
+        }
+
+        function getRowsForPrint(scope) {
+          const normalizedScope = String(scope || 'all').toLowerCase();
+          if (normalizedScope === 'locked') {
+            return currentRows.filter((row) => Boolean(row?.is_locked));
+          }
+          if (normalizedScope === 'inside') {
+            return currentRows.filter((row) => !Boolean(row?.is_outside_capacity));
+          }
+          return currentRows;
+        }
+
+        function buildRankingHtmlForRows(rows) {
+          if (!Array.isArray(rows) || !rows.length) {
+            return `${buildRankingListHeaderHtml()}<div class="ranking-list-empty">No rows match the selected print filter.</div>`;
+          }
+          let html = buildRankingListHeaderHtml();
+          rows.forEach((row, index) => {
+            const rankDisplay = Number(row?.rank ?? 0) > 0 ? Number(row.rank) : (index + 1);
+            html += buildRankingRowHtml(row, rankDisplay);
+          });
+          return html;
+        }
+
+        function printCurrentRanking() {
+          if (!currentRows.length) return;
+
+          const scope = String(printScopeEl?.value || 'all').toLowerCase();
+          const scopeLabel = scope === 'locked'
+            ? 'Locked Only'
+            : (scope === 'inside' ? 'Inside Capacity Only' : 'All in List');
+          const rowsForPrint = getRowsForPrint(scope);
+          const rankingHtml = buildRankingHtmlForRows(rowsForPrint);
+          const metaText = metaEl ? metaEl.textContent : '';
 
           const printWindow = window.open('', '_blank', 'width=1200,height=900');
-          if (!printWindow) {
-            return;
-          }
-
-          const metaText = metaEl ? metaEl.textContent : '';
-          const rankingHtml = listEl.innerHTML;
+          if (!printWindow) return;
 
           printWindow.document.write(`<!doctype html>
 <html>
@@ -1114,13 +1349,14 @@ if ($isProgramCardsRequest) {
     .ranking-scc-row { color: #15803d !important; }
     .ranking-etg-row { color: #2563eb !important; }
     .ranking-outside-capacity { color: #dc2626 !important; }
+    .ranking-locked-row { background: #fffbeb; }
     .ranking-list-empty { padding: 12px; color: #64748b; font-size: 13px; }
     @media print { @page { size: landscape; margin: 10mm; } }
   </style>
 </head>
 <body>
   <h1>Program Ranking - ${escapeHtml(currentProgramName)}</h1>
-  <div class="meta">${escapeHtml(metaText || '')}</div>
+  <div class="meta">${escapeHtml(metaText || '')} | Print Filter: ${escapeHtml(scopeLabel)}</div>
   <div class="ranking-list">${rankingHtml}</div>
 </body>
 </html>`);
@@ -1133,13 +1369,21 @@ if ($isProgramCardsRequest) {
         document.addEventListener('click', (event) => {
           const button = event.target.closest('.js-open-ranking');
           if (!button) return;
-
           const programId = Number(button.getAttribute('data-program-id') || 0);
           const programName = String(button.getAttribute('data-program-name') || '').trim();
           if (programId <= 0) return;
           loadProgramRanking(programId, programName);
         });
 
+        if (lockRangeBtn) {
+          lockRangeBtn.addEventListener('click', () => applyLockAction('lock_range'));
+        }
+        if (unlockRangeBtn) {
+          unlockRangeBtn.addEventListener('click', () => applyLockAction('unlock_range'));
+        }
+        if (unlockAllBtn) {
+          unlockAllBtn.addEventListener('click', () => applyLockAction('unlock_all'));
+        }
         if (printBtn) {
           printBtn.addEventListener('click', printCurrentRanking);
         }

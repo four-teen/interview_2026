@@ -8,6 +8,7 @@
 
 require_once '../config/db.php';
 require_once '../config/system_controls.php';
+require_once '../config/program_ranking_lock.php';
 session_start();
 
 /* ======================================================
@@ -81,6 +82,11 @@ $student = $stmt->get_result()->fetch_assoc();
 
 if (!$student || empty($student['interview_id'])) {
     header('Location: index.php');
+    exit;
+}
+
+if (program_ranking_is_interview_locked($conn, (int) ($student['interview_id'] ?? 0))) {
+    header('Location: index.php?msg=rank_locked');
     exit;
 }
 

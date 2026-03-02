@@ -8,6 +8,7 @@
 
 require_once '../config/db.php';
 require_once '../config/system_controls.php';
+require_once '../config/program_ranking_lock.php';
 session_start();
 
 /* ======================================================
@@ -58,6 +59,11 @@ $ownerRow = $stmtOwner->get_result()->fetch_assoc();
 
 if (!$ownerRow || (int)$ownerRow['program_chair_id'] !== $accountId) {
     header('Location: index.php?msg=not_owner');
+    exit;
+}
+
+if (program_ranking_is_interview_locked($conn, $interviewId)) {
+    header('Location: index.php?msg=rank_locked');
     exit;
 }
 

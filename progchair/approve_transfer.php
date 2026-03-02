@@ -1,5 +1,6 @@
 <?php
 require_once '../config/db.php';
+require_once '../config/program_ranking_lock.php';
 session_start();
 
 if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'progchair') {
@@ -33,6 +34,11 @@ $transfer = $stmt->get_result()->fetch_assoc();
 
 if (!$transfer) {
     header('Location: pending_transfers.php');
+    exit;
+}
+
+if (program_ranking_is_interview_locked($conn, (int) ($transfer['interview_id'] ?? 0))) {
+    header('Location: pending_transfers.php?msg=rank_locked');
     exit;
 }
 

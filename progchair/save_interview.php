@@ -8,6 +8,7 @@
 
 require_once '../config/db.php';
 require_once '../config/student_credentials.php';
+require_once '../config/program_ranking_lock.php';
 session_start();
 
 header('Content-Type: application/json');
@@ -274,6 +275,27 @@ if ($checkResult->num_rows === 0) {
     echo json_encode([
         'success' => false,
         'message' => 'You are not allowed to edit this record.'
+    ]);
+    exit;
+}
+
+$lockContext = program_ranking_get_interview_lock_context($conn, $interviewId);
+if ($lockContext !== null) {
+    $lockedRank = (int) ($lockContext['locked_rank'] ?? 0);
+    $programName = trim((string) ($lockContext['program_name'] ?? ''));
+    $major = trim((string) ($lockContext['major'] ?? ''));
+    $programLabel = $programName;
+    if ($major !== '') {
+        $programLabel .= ' - ' . $major;
+    }
+    $programLabel = trim($programLabel);
+
+    http_response_code(409);
+    echo json_encode([
+        'success' => false,
+        'message' => $lockedRank > 0
+            ? ('This interview is locked at rank #' . $lockedRank . ($programLabel !== '' ? (' for ' . strtoupper($programLabel)) : '') . '.')
+            : 'This interview is locked in program ranking and cannot be edited.'
     ]);
     exit;
 }

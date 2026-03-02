@@ -17,6 +17,7 @@
 
 require_once '../config/db.php';
 require_once '../config/score_receipt_security.php';
+require_once '../config/program_ranking_lock.php';
 session_start();
 
 // ======================================================
@@ -186,6 +187,26 @@ if ($normalizedStudentName !== '' && strpos($normalizedStudentName, ',') !== fal
 }
 
 $isOwner = ($ownerProgramChairId === $accountId);
+$lockContext = program_ranking_get_interview_lock_context($conn, $interviewId);
+$isRankLocked = ($lockContext !== null);
+$lockMessage = '';
+if ($isRankLocked) {
+    $lockedRank = (int) ($lockContext['locked_rank'] ?? 0);
+    $lockProgram = trim((string) ($lockContext['program_name'] ?? ''));
+    $lockMajor = trim((string) ($lockContext['major'] ?? ''));
+    if ($lockProgram !== '' && $lockMajor !== '') {
+        $lockProgram .= ' - ' . $lockMajor;
+    }
+
+    $lockMessage = 'This ranking record is locked';
+    if ($lockedRank > 0) {
+        $lockMessage .= ' at rank #' . $lockedRank;
+    }
+    if ($lockProgram !== '') {
+        $lockMessage .= ' for ' . strtoupper($lockProgram);
+    }
+    $lockMessage .= '.';
+}
 
 function normalize_component_key(string $componentName): string
 {
@@ -274,6 +295,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_scores'])) {
     // OWNER ONLY
     if (!$isOwner) {
         header("Location: interview_scores.php?interview_id={$interviewId}&forbidden=1");
+        exit;
+    }
+
+    if ($isRankLocked) {
+        header("Location: interview_scores.php?interview_id={$interviewId}&locked=1");
         exit;
     }
 
@@ -905,7 +931,7 @@ if (is_array($readingFiles)) {
                         type="submit"
                         name="save_scores"
                         class="btn btn-success"
-                        <?= $isOwner ? '' : 'disabled'; ?>
+                        <?= ($isOwner && !$isRankLocked) ? '' : 'disabled'; ?>
                       >
                         Save Scores
                       </button>
@@ -923,6 +949,14 @@ if (is_array($readingFiles)) {
                       <div class="mt-2 text-end">
                         <small class="text-muted">
                           You can view only. Only the encoder can update scores.
+                        </small>
+                      </div>
+                    <?php endif; ?>
+
+                    <?php if ($isRankLocked): ?>
+                      <div class="mt-2 text-end">
+                        <small class="text-danger">
+                          <?= htmlspecialchars($lockMessage !== '' ? $lockMessage : 'This ranking record is locked and cannot be updated.'); ?>
                         </small>
                       </div>
                     <?php endif; ?>
@@ -1388,6 +1422,14 @@ Swal.fire({
   icon: 'error',
   title: 'Not Allowed',
   text: 'Only the encoder can update scores.'
+});
+<?php endif; ?>
+
+<?php if (isset($_GET['locked']) && $_GET['locked'] == '1'): ?>
+Swal.fire({
+  icon: 'warning',
+  title: 'Rank Locked',
+  text: <?= json_encode($lockMessage !== '' ? $lockMessage : 'This ranking record is locked and cannot be updated.'); ?>
 });
 <?php endif; ?>
 
