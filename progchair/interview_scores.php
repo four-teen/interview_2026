@@ -5,8 +5,8 @@
  * PURPOSE: Interview Scoring Page
  *
  * PHASE 2:
- *   ??? Load SAT automatically from placement
- *   ??? Lock SAT input
+ *   ??? Load placement score automatically
+ *   ??? Lock auto score input
  *   ??? Load saved scores from tbl_interview_scores
  *
  * PHASE 3:
@@ -40,11 +40,11 @@ if ($interviewId <= 0) {
 }
 
 // ======================================================
-// 1) GET INTERVIEW + PLACEMENT SAT (AUTO LOAD)
+// 1) GET INTERVIEW + PLACEMENT SCORE (AUTO LOAD)
 //   tbl_student_interview.placement_result_id -> tbl_placement_results.id
 //   also fetch program_chair_id (OWNER CHECK)
 // ======================================================
-$satScoreFromPlacement = 0;
+$placementScoreFromPlacement = 0;
 $placementResultId     = 0;
 $studentName           = '';
 $examineeNumber        = '';
@@ -55,6 +55,48 @@ $displayOtherNames     = '';
 $studentClassification = 'REGULAR';
 $isEtgStudent          = false;
 $savedFinalScore       = null;
+$preferredProgram      = '';
+$placementScoreSourceLabel = 'Overall Standard Score';
+$isEsmPreferredProgram = false;
+
+function is_esm_preferred_program(string $preferredProgram): bool
+{
+    $normalized = strtoupper(trim($preferredProgram));
+    if ($normalized === '') {
+        return false;
+    }
+
+    $simpleMatches = [
+        'NURSING',
+        'MIDWIFERY',
+        'MEDICAL TECHNOLOGY',
+        'ELECTRONICS ENGINEERING',
+        'CIVIL ENGINEERING',
+        'COMPUTER ENGINEERING',
+        'COMPUTER SCIENCE',
+        'FISHERIES',
+        'BIOLOGY',
+        'ACCOUNTANCY',
+        'MANAGEMENT ACCOUNTING',
+        'ACCOUNTING INFORMATION SYSTEMS',
+        'MATHEMATICS EDUCATION',
+        'SCIENCE EDUCATION'
+    ];
+
+    foreach ($simpleMatches as $match) {
+        if (strpos($normalized, $match) !== false) {
+            return true;
+        }
+    }
+
+    return (
+        strpos($normalized, 'SECONDARY EDUCATION') !== false
+        && (
+            strpos($normalized, 'MATHEMATICS') !== false
+            || strpos($normalized, 'SCIENCE') !== false
+        )
+    );
+}
 
 $baseSql = "
     SELECT 
@@ -65,6 +107,9 @@ $baseSql = "
         si.classification,
         si.final_score,
         pr.sat_score,
+        pr.preferred_program,
+        pr.overall_standard_score,
+        pr.esm_competency_standard_score,
         pr.full_name,
         pr.examinee_number,
         p.program_name AS first_choice_program_name,
@@ -96,13 +141,34 @@ if ($resBase->num_rows === 0) {
 $baseRow = $resBase->fetch_assoc();
 $placementResultId     = (int) $baseRow['placement_result_id'];
 $ownerProgramChairId   = (int) $baseRow['program_chair_id'];
-$satScoreFromPlacement = (float) $baseRow['sat_score'];
 $studentName           = $baseRow['full_name'];
 $examineeNumber        = $baseRow['examinee_number'];
 $studentClassification = strtoupper(trim((string) ($baseRow['classification'] ?? 'REGULAR')));
 $studentClassification = (strpos($studentClassification, 'ETG') === 0) ? 'ETG' : 'REGULAR';
 $isEtgStudent = ($studentClassification === 'ETG');
 $savedFinalScore = ($baseRow['final_score'] !== null) ? (float) $baseRow['final_score'] : null;
+$preferredProgram = trim((string) ($baseRow['preferred_program'] ?? ''));
+$isEsmPreferredProgram = is_esm_preferred_program($preferredProgram);
+
+$satScoreValue = ($baseRow['sat_score'] !== null && $baseRow['sat_score'] !== '') ? (float) $baseRow['sat_score'] : 0.0;
+$overallStandardScoreValue = ($baseRow['overall_standard_score'] !== null && $baseRow['overall_standard_score'] !== '')
+    ? (float) $baseRow['overall_standard_score']
+    : null;
+$esmCompetencyStandardScoreValue = ($baseRow['esm_competency_standard_score'] !== null && $baseRow['esm_competency_standard_score'] !== '')
+    ? (float) $baseRow['esm_competency_standard_score']
+    : null;
+
+if ($isEsmPreferredProgram) {
+    $placementScoreFromPlacement = $esmCompetencyStandardScoreValue !== null
+        ? $esmCompetencyStandardScoreValue
+        : $satScoreValue;
+    $placementScoreSourceLabel = 'ESM';
+} else {
+    $placementScoreFromPlacement = $overallStandardScoreValue !== null
+        ? $overallStandardScoreValue
+        : $satScoreValue;
+    $placementScoreSourceLabel = 'Overall Standard Score';
+}
 
 $firstChoiceCourse = trim((string)($baseRow['first_choice_program_name'] ?? ''));
 $firstChoiceMajor  = trim((string)($baseRow['first_choice_major'] ?? ''));
@@ -200,7 +266,7 @@ $components = prepare_components_for_student($components, $isEtgStudent);
 
 // ======================================================
 // PHASE 3) SAVE SCORES
-// NOTE: must be AFTER base query so we know owner + SAT
+// NOTE: must be AFTER base query so we know owner + placement score basis
 // ======================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_scores'])) {
   $totalFinalScore = 0;
@@ -246,9 +312,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_scores'])) {
 
             $isAuto = ((int)$component['is_auto_computed'] === 1) || is_sat_component((string) ($component['component_name'] ?? ''));
 
-            // enforce SAT from placement (cannot be overridden)
+            // enforce auto-loaded placement score (cannot be overridden)
             if ($isAuto) {
-                $rawScore = $satScoreFromPlacement;
+                $rawScore = $placementScoreFromPlacement;
             }
 
             if ($maxScore <= 0) {
@@ -516,7 +582,7 @@ foreach ($components as $c) {
     $isAuto = ((int)$c['is_auto_computed'] === 1) || is_sat_component((string) ($c['component_name'] ?? ''));
 
     if ($isAuto) {
-        $raw = $satScoreFromPlacement;
+        $raw = $placementScoreFromPlacement;
     } elseif (isset($savedScores[$cid])) {
         $raw = (float) $savedScores[$cid]['raw_score'];
     }
@@ -641,6 +707,14 @@ if (is_array($readingFiles)) {
       color: #566a7f;
       padding: .2rem 0;
     }
+    .score-components-table th:nth-child(2),
+    .score-components-table td:nth-child(2) {
+      min-width: 130px;
+    }
+    .score-components-table .raw-input {
+      min-width: 96px;
+      text-align: center;
+    }
   </style>
 </head>
 
@@ -696,7 +770,7 @@ if (is_array($readingFiles)) {
                   <form id="scoreForm" method="POST" autocomplete="off">
 
                     <div class="table-responsive">
-                      <table class="table table-bordered align-middle text-center">
+                      <table class="table table-bordered align-middle text-center score-components-table">
                         <thead class="table-light">
                           <tr>
                             <th class="text-start">Component</th>
@@ -716,10 +790,11 @@ if (is_array($readingFiles)) {
                             $weight = (float) ($component['effective_weight_percent'] ?? $component['weight_percent']);
 
                             $isAuto = ((int)$component['is_auto_computed'] === 1) || is_sat_component((string) $name);
+                            $isAutoPlacementScore = $isAuto && is_sat_component((string) $name);
 
                             // raw score value
                             if ($isAuto) {
-                                $rawValue = $satScoreFromPlacement;
+                                $rawValue = $placementScoreFromPlacement;
                             } else {
                                 $rawValue = isset($savedScores[$cid]) ? (float)$savedScores[$cid]['raw_score'] : '';
                             }
@@ -735,7 +810,16 @@ if (is_array($readingFiles)) {
                             data-weight="<?= $weight; ?>"
                             data-component="<?= htmlspecialchars($name, ENT_QUOTES); ?>"
                           >
-                            <td class="text-start"><?= htmlspecialchars($name); ?></td>
+                            <td class="text-start">
+                              <?= htmlspecialchars($name); ?>
+                              <?php if ($isAutoPlacementScore): ?>
+                                <div class="mt-1">
+                                  <span class="badge <?= $isEsmPreferredProgram ? 'bg-label-primary' : 'bg-label-secondary'; ?>">
+                                    Source: <?= htmlspecialchars($placementScoreSourceLabel); ?>
+                                  </span>
+                                </div>
+                              <?php endif; ?>
+                            </td>
 
                             <td>
                               <input

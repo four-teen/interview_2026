@@ -139,7 +139,35 @@ $sidebarCurrentPage = basename($_SERVER['PHP_SELF'] ?? '');
         </span>
         <div class="sidebar-action-content">
           <div class="sidebar-action-title">Dashboard</div>
-          <small class="sidebar-action-sub">All program monitoring and ranking</small>
+          <small class="sidebar-action-sub">Campus snapshot and interview trends</small>
+        </div>
+      </a>
+    </li>
+    <li class="menu-item px-2">
+      <a
+        href="program_rankings.php"
+        class="menu-link sidebar-action-card<?= $sidebarCurrentPage === 'program_rankings.php' ? ' active' : ''; ?>"
+      >
+        <span class="sidebar-action-icon bg-label-primary">
+          <i class="bx bx-list-ol"></i>
+        </span>
+        <div class="sidebar-action-content">
+          <div class="sidebar-action-title">Program Rankings</div>
+          <small class="sidebar-action-sub">Per-program ranking, cutoffs, and score status</small>
+        </div>
+      </a>
+    </li>
+    <li class="menu-item px-2">
+      <a
+        href="students.php"
+        class="menu-link sidebar-action-card<?= $sidebarCurrentPage === 'students.php' ? ' active' : ''; ?>"
+      >
+        <span class="sidebar-action-icon bg-label-info">
+          <i class="bx bx-group"></i>
+        </span>
+        <div class="sidebar-action-content">
+          <div class="sidebar-action-title">Students</div>
+          <small class="sidebar-action-sub">All placement results and score source</small>
         </div>
       </a>
     </li>

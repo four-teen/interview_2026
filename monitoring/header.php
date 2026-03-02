@@ -11,6 +11,10 @@ if ($monitoringEmail === '') {
 
 $monitoringRoleRaw = trim((string) ($_SESSION['role'] ?? 'monitoring'));
 $monitoringRole = ucwords(str_replace(['_', '-'], ' ', strtolower($monitoringRoleRaw)));
+$monitoringHeaderTitle = trim((string) ($monitoringHeaderTitle ?? 'Monitoring Center - All Programs'));
+if ($monitoringHeaderTitle === '') {
+    $monitoringHeaderTitle = 'Monitoring Center - All Programs';
+}
 ?>
 
 <nav
@@ -30,7 +34,7 @@ $monitoringRole = ucwords(str_replace(['_', '-'], ' ', strtolower($monitoringRol
           type="text"
           class="form-control border-0 shadow-none w-100"
           style="max-width: 42rem;"
-          value="Monitoring Center - All Programs"
+          value="<?= htmlspecialchars($monitoringHeaderTitle); ?>"
           readonly
         />
       </div>

@@ -364,6 +364,14 @@ if ($activeBatchId) {
   font-size: 0.85rem;
   letter-spacing: 0.5px;
 }
+
+.cutoff-basis-esm {
+  color: #1d4ed8 !important;
+}
+
+.cutoff-basis-standard {
+  color: #111827 !important;
+}
 /* =========================================
    STUDENT CARD HOVER EFFECT
 ========================================= */
@@ -716,11 +724,11 @@ if ($activeBatchId) {
     <small class="text-muted d-block">Use the header search bar to find students.</small>
     <small class="text-muted d-block" id="activeCutoffInfo">
       <?php if ($globalSatCutoffActive): ?>
-        Global SAT cutoff is active: showing SAT range <?= htmlspecialchars($globalSatCutoffRangeText); ?>.
+        Global cutoff is active: showing preferred-program basis score range <?= htmlspecialchars($globalSatCutoffRangeText); ?>.
       <?php elseif ($assignedProgramCutoff !== null): ?>
-        Program SAT cutoff is active: showing SAT >= <?= number_format((int) $assignedProgramCutoff); ?>.
+        Program cutoff is active: showing preferred-program basis score >= <?= number_format((int) $assignedProgramCutoff); ?>.
       <?php else: ?>
-        Program SAT cutoff is not configured for this program.
+        Program cutoff is not configured for this program.
       <?php endif; ?>
     </small>
   </div>
@@ -1003,8 +1011,8 @@ if ($activeBatchId) {
       </div>
 
       <div class="text-end">
-        <small class="text-muted">SAT Score</small>
-        <div class="fw-bold text-success fs-5" id="display_sat"></div>
+        <small class="text-muted" id="display_score_label">Cutoff Basis Score</small>
+        <div class="fw-bold fs-5 cutoff-basis-standard" id="display_sat"></div>
       </div>
 
 <div id="viewOnlyExtra" class="text-end mt-2 d-none">
@@ -1210,8 +1218,8 @@ if ($activeBatchId) {
               </div>
 
               <div class="text-end">
-                <small class="text-muted">SAT Score</small>
-                <div class="fw-bold text-success fs-5" id="v_display_sat"></div>
+                <small class="text-muted" id="v_display_score_label">Cutoff Basis Score</small>
+                <div class="fw-bold fs-5 cutoff-basis-standard" id="v_display_sat"></div>
               </div>
 
               <div class="text-end mt-2">
@@ -1404,6 +1412,34 @@ document.addEventListener("DOMContentLoaded", function () {
 
   initProgramChoiceSelects();
 
+function getCutoffBasisMeta(student) {
+  const isEsmProgram = Boolean(student.is_esm_program);
+  const basisLabel = String(student.cutoff_basis_label || (isEsmProgram ? 'ESM' : 'SAT')).toUpperCase();
+  const basisScore = student.cutoff_basis_score ?? student.sat_score ?? '';
+  const basisClass = isEsmProgram ? 'cutoff-basis-esm' : 'cutoff-basis-standard';
+
+  return {
+    basisLabel,
+    basisScore: basisScore === '' || basisScore === null || basisScore === undefined ? 'N/A' : basisScore,
+    basisClass,
+    isEsmProgram
+  };
+}
+
+function applyCutoffBasisDisplay(labelElementId, valueElementId, scoreLabel, scoreValue, isEsmProgram) {
+  const labelEl = document.getElementById(labelElementId);
+  const valueEl = document.getElementById(valueElementId);
+  if (!valueEl) return;
+
+  if (labelEl) {
+    labelEl.innerText = scoreLabel || 'Cutoff Basis Score';
+  }
+
+  valueEl.innerText = scoreValue || 'N/A';
+  valueEl.classList.toggle('cutoff-basis-esm', Boolean(isEsmProgram));
+  valueEl.classList.toggle('cutoff-basis-standard', !Boolean(isEsmProgram));
+}
+
 /**
  * ============================================================
  * BUILD STUDENT CARD HTML
@@ -1411,6 +1447,7 @@ document.addEventListener("DOMContentLoaded", function () {
  * ============================================================
  */
 function buildStudentCardHtml(student, buttonHtml) {
+  const cutoffBasis = getCutoffBasisMeta(student);
 
   let interviewBadge = '';
 
@@ -1442,7 +1479,7 @@ function buildStudentCardHtml(student, buttonHtml) {
             <small class="text-muted">
               Examinee #: ${student.examinee_number}
               &nbsp; | &nbsp;
-              SAT: ${student.sat_score}
+              <span class="${cutoffBasis.basisClass} fw-semibold">${cutoffBasis.basisLabel}: ${cutoffBasis.basisScore}</span>
               &nbsp; | &nbsp;
               ${student.qualitative_text}
               ${interviewBadge}
@@ -1461,6 +1498,12 @@ function buildStudentCardHtml(student, buttonHtml) {
 
 
 function createStudentCard(student) {
+  const cutoffBasis = getCutoffBasisMeta(student);
+  const buttonDataAttributes = `
+        data-score="${cutoffBasis.basisScore}"
+        data-score-label="${cutoffBasis.basisLabel} Score"
+        data-is-esm="${cutoffBasis.isEsmProgram ? '1' : '0'}"
+      `;
 
   let buttonHtml = ''; // Keep action UI deterministic by status order
 
@@ -1506,8 +1549,8 @@ function createStudentCard(student) {
         data-id="${student.placement_result_id}"
         data-examinee="${student.examinee_number}"
         data-name="${student.full_name}"
-        data-score="${student.sat_score}"
         data-has-interview="0"
+        ${buttonDataAttributes}
       >
         Manage
       </button>
@@ -1549,8 +1592,8 @@ function createStudentCard(student) {
           data-id="${student.placement_result_id}"
           data-examinee="${student.examinee_number}"
           data-name="${student.full_name}"
-          data-score="${student.sat_score}"
           data-has-interview="1"
+          ${buttonDataAttributes}
         >
           Manage Details
         </button>
@@ -1574,8 +1617,8 @@ function createStudentCard(student) {
         data-id="${student.placement_result_id}"
         data-examinee="${student.examinee_number}"
         data-name="${student.full_name}"
-        data-score="${student.sat_score}"
         data-has-interview="1"
+        ${buttonDataAttributes}
       >
         View Details
       </button>
@@ -1610,11 +1653,11 @@ function createStudentCard(student) {
             const hasAppliedCutoff = data.applied_cutoff !== null && data.applied_cutoff !== '' && Number.isFinite(appliedCutoff);
 
             if (globalActive && globalRangeText !== '') {
-              cutoffInfoEl.innerText = `Global SAT cutoff is active: showing SAT range ${globalRangeText}.`;
+              cutoffInfoEl.innerText = `Global cutoff is active: showing preferred-program basis score range ${globalRangeText}.`;
             } else if (hasAppliedCutoff) {
-              cutoffInfoEl.innerText = `Program SAT cutoff is active: showing SAT >= ${appliedCutoff.toLocaleString()}.`;
+              cutoffInfoEl.innerText = `Program cutoff is active: showing preferred-program basis score >= ${appliedCutoff.toLocaleString()}.`;
             } else {
-              cutoffInfoEl.innerText = 'Program SAT cutoff is not configured for this program.';
+              cutoffInfoEl.innerText = 'Program cutoff is not configured for this program.';
             }
           }
 
@@ -2425,6 +2468,8 @@ if (studentModal) {
     const examinee     = button.getAttribute('data-examinee');
     const name         = button.getAttribute('data-name');
     const score        = button.getAttribute('data-score');
+    const scoreLabel   = button.getAttribute('data-score-label');
+    const isEsmProgram = button.getAttribute('data-is-esm') === "1";
     const hasInterview = button.getAttribute('data-has-interview') == "1";
 
     // reset first (clears old values)
@@ -2440,7 +2485,7 @@ if (studentModal) {
     // display
     document.getElementById('display_examinee').innerText = examinee || '';
     document.getElementById('display_name').innerText     = name || '';
-    document.getElementById('display_sat').innerText      = score || '';
+    applyCutoffBasisDisplay('display_score_label', 'display_sat', scoreLabel, score, isEsmProgram);
 
     const saveButton = document.getElementById('saveInterviewBtn');
     const scoreButton = document.getElementById('enterScoresBtn');
@@ -2567,11 +2612,13 @@ if (studentViewModal) {
     const examinee     = button.getAttribute('data-examinee');
     const name         = button.getAttribute('data-name');
     const score        = button.getAttribute('data-score');
+    const scoreLabel   = button.getAttribute('data-score-label');
+    const isEsmProgram = button.getAttribute('data-is-esm') === "1";
 
     // Header fields
     document.getElementById('v_display_examinee').innerText = examinee || '';
     document.getElementById('v_display_name').innerText     = name || '';
-    document.getElementById('v_display_sat').innerText      = score || '';
+    applyCutoffBasisDisplay('v_display_score_label', 'v_display_sat', scoreLabel, score, isEsmProgram);
 
     // Reset body fields
     document.getElementById('v_classification').innerText     = '';

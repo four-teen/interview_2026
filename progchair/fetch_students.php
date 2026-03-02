@@ -33,6 +33,49 @@ function build_sat_range_condition_sql(array $ranges, string $columnExpression):
     return implode(' OR ', $clauses);
 }
 
+function build_esm_preferred_program_condition_sql(string $columnExpression): string
+{
+    $normalizedColumn = "UPPER(COALESCE({$columnExpression}, ''))";
+    $patterns = [
+        '%NURSING%',
+        '%MIDWIFERY%',
+        '%MEDICAL TECHNOLOGY%',
+        '%ELECTRONICS ENGINEERING%',
+        '%CIVIL ENGINEERING%',
+        '%COMPUTER ENGINEERING%',
+        '%COMPUTER SCIENCE%',
+        '%FISHERIES%',
+        '%BIOLOGY%',
+        '%ACCOUNTANCY%',
+        '%MANAGEMENT ACCOUNTING%',
+        '%ACCOUNTING INFORMATION SYSTEMS%',
+        '%SECONDARY EDUCATION%MATHEMATICS%',
+        '%MATHEMATICS EDUCATION%',
+        '%SECONDARY EDUCATION%SCIENCE%',
+        '%SCIENCE EDUCATION%'
+    ];
+
+    $conditions = [];
+    foreach ($patterns as $pattern) {
+        $conditions[] = "{$normalizedColumn} LIKE '{$pattern}'";
+    }
+
+    return '(' . implode(' OR ', $conditions) . ')';
+}
+
+function build_cutoff_basis_score_sql(
+    string $preferredProgramColumnExpression,
+    string $esmScoreColumnExpression,
+    string $satScoreColumnExpression
+): string {
+    $esmConditionSql = build_esm_preferred_program_condition_sql($preferredProgramColumnExpression);
+
+    return "CASE
+        WHEN {$esmConditionSql} THEN COALESCE({$esmScoreColumnExpression}, 0)
+        ELSE COALESCE({$satScoreColumnExpression}, 0)
+    END";
+}
+
 // ======================================================
 // STEP 0 – BASIC GUARD (Program Chair Only)
 // ======================================================
@@ -151,12 +194,24 @@ $activeBatchId = $batchResult->fetch_assoc()['upload_batch_id'];
 $uploadedTotal = 0;
 $qualifiedByCutoffTotal = 0;
 
+$listEsmProgramConditionSql = build_esm_preferred_program_condition_sql('pr.preferred_program');
+$batchCutoffBasisScoreSql = build_cutoff_basis_score_sql(
+    'preferred_program',
+    'esm_competency_standard_score',
+    'sat_score'
+);
+$listCutoffBasisScoreSql = build_cutoff_basis_score_sql(
+    'pr.preferred_program',
+    'pr.esm_competency_standard_score',
+    'pr.sat_score'
+);
+
 $scoreWhereSql = '';
 $batchQualifiedExpr = '';
 
 if ($globalSatCutoffRangeActive) {
-    $batchRangeExpr = build_sat_range_condition_sql($globalSatCutoffRanges, 'sat_score');
-    $listRangeExpr = build_sat_range_condition_sql($globalSatCutoffRanges, 'pr.sat_score');
+    $batchRangeExpr = build_sat_range_condition_sql($globalSatCutoffRanges, $batchCutoffBasisScoreSql);
+    $listRangeExpr = build_sat_range_condition_sql($globalSatCutoffRanges, $listCutoffBasisScoreSql);
 
     if ($batchRangeExpr !== '' && $listRangeExpr !== '') {
         $batchQualifiedExpr = $batchRangeExpr;
@@ -167,8 +222,8 @@ if ($globalSatCutoffRangeActive) {
 }
 
 if (!$globalSatCutoffRangeActive) {
-    $batchQualifiedExpr = 'sat_score >= ?';
-    $scoreWhereSql = ' AND pr.sat_score >= ? ';
+    $batchQualifiedExpr = "({$batchCutoffBasisScoreSql}) >= ?";
+    $scoreWhereSql = " AND ({$listCutoffBasisScoreSql}) >= ? ";
 }
 
 $batchTotalsSql = "
@@ -353,7 +408,18 @@ $sql = "
         pr.examinee_number,
         pr.full_name,
         pr.sat_score,
+        pr.esm_competency_standard_score,
+        pr.preferred_program,
         pr.qualitative_text,
+        ({$listCutoffBasisScoreSql}) AS cutoff_basis_score,
+        CASE
+            WHEN {$listEsmProgramConditionSql} THEN 1
+            ELSE 0
+        END AS is_esm_program,
+        CASE
+            WHEN {$listEsmProgramConditionSql} THEN 'ESM'
+            ELSE 'SAT'
+        END AS cutoff_basis_label,
         si.interview_id,
         si.first_choice,
         si.program_chair_id,
@@ -386,7 +452,10 @@ $sql = "
       {$searchFilterSql}
       {$ownerActionWhere}
 
-    ORDER BY pr.sat_score DESC
+    ORDER BY
+        cutoff_basis_score DESC,
+        pr.sat_score DESC,
+        pr.full_name ASC
     LIMIT ? OFFSET ?
 ";
 
@@ -475,6 +544,11 @@ while ($row = $result->fetch_assoc()) {
 
     // Flag: any pending transfer exists for this interview (for owner UI state)
     $row['has_pending_transfer'] = ((int) ($row['has_pending_transfer'] ?? 0) === 1);
+    $row['is_esm_program'] = ((int) ($row['is_esm_program'] ?? 0) === 1);
+    $row['cutoff_basis_score'] = isset($row['cutoff_basis_score']) && $row['cutoff_basis_score'] !== null
+        ? (int) $row['cutoff_basis_score']
+        : 0;
+    $row['cutoff_basis_label'] = (string) ($row['cutoff_basis_label'] ?? ($row['is_esm_program'] ? 'ESM' : 'SAT'));
 
     $students[] = $row;
 }
