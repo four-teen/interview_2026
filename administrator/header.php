@@ -53,10 +53,93 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
     letter-spacing: 0.04em;
     color: #6e7788;
     white-space: nowrap;
+    border-bottom-width: 2px;
+    padding-top: 0.95rem;
+    padding-bottom: 0.95rem;
   }
 
   #adminExamineeSearchModal .table tbody td {
     vertical-align: middle;
+    padding-top: 0.9rem;
+    padding-bottom: 0.9rem;
+  }
+
+  #adminExamineeSearchModal .admin-search-table {
+    min-width: 1080px;
+  }
+
+  #adminExamineeSearchModal .admin-search-student {
+    min-width: 240px;
+  }
+
+  #adminExamineeSearchModal .admin-search-student__name {
+    font-size: 0.98rem;
+    font-weight: 700;
+    line-height: 1.3;
+    color: #364152;
+    text-transform: uppercase;
+  }
+
+  #adminExamineeSearchModal .admin-search-student__meta {
+    display: block;
+    margin-top: 0.2rem;
+    font-size: 0.79rem;
+    color: #7b8798;
+  }
+
+  #adminExamineeSearchModal .admin-search-program {
+    min-width: 340px;
+    color: #5d6b7f;
+    line-height: 1.35;
+  }
+
+  #adminExamineeSearchModal .admin-search-score {
+    font-weight: 600;
+    color: #4a5568;
+    white-space: nowrap;
+  }
+
+  #adminExamineeSearchModal .admin-search-final-score {
+    font-weight: 700;
+    color: #0f766e;
+    white-space: nowrap;
+  }
+
+  #adminExamineeSearchModal .admin-search-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    padding: 0.28rem 0.7rem;
+    font-size: 0.74rem;
+    font-weight: 700;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  #adminExamineeSearchModal .admin-search-badge--esm {
+    background: #e8f0ff;
+    color: #2563eb;
+  }
+
+  #adminExamineeSearchModal .admin-search-badge--overall {
+    background: #eef2f7;
+    color: #475569;
+  }
+
+  #adminExamineeSearchModal .admin-search-badge--scored {
+    background: #e8fff3;
+    color: #13795b;
+  }
+
+  #adminExamineeSearchModal .admin-search-badge--pending {
+    background: #fff4df;
+    color: #b26a00;
+  }
+
+  #adminExamineeSearchModal .admin-search-badge--empty {
+    background: #edf1f5;
+    color: #7b8798;
   }
 </style>
 
@@ -149,14 +232,17 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
         </div>
 
         <div id="adminSearchResultTableWrap" class="table-responsive d-none">
-          <table class="table table-sm table-hover mb-0">
+          <table class="table table-sm table-hover mb-0 admin-search-table">
             <thead>
               <tr>
-                <th>Examinee #</th>
-                <th>Full Name</th>
-                <th>SAT Score</th>
-                <th>Qualitative</th>
+                <th>Student</th>
                 <th>Preferred Program</th>
+                <th>Basis</th>
+                <th>SAT</th>
+                <th>ESM</th>
+                <th>Overall</th>
+                <th>Status</th>
+                <th>Final Score</th>
               </tr>
             </thead>
             <tbody id="adminExamineeSearchResults"></tbody>
@@ -213,20 +299,63 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
         return;
       }
 
+      function formatScore(value, decimals = 0) {
+        if (value === null || value === undefined || value === '') return 'N/A';
+
+        const numericValue = Number(value);
+        if (Number.isNaN(numericValue)) {
+          return escapeHtml(value);
+        }
+
+        return numericValue.toLocaleString(undefined, {
+          minimumFractionDigits: decimals,
+          maximumFractionDigits: decimals
+        });
+      }
+
+      function getBasisBadgeClass(label) {
+        return String(label || '').toUpperCase() === 'ESM'
+          ? 'admin-search-badge--esm'
+          : 'admin-search-badge--overall';
+      }
+
+      function getStatusBadgeClass(label) {
+        const normalized = String(label || '').toUpperCase();
+        if (normalized === 'SCORED') return 'admin-search-badge--scored';
+        if (normalized === 'PENDING SCORE') return 'admin-search-badge--pending';
+        return 'admin-search-badge--empty';
+      }
+
       resultBodyEl.innerHTML = rows.map((row) => {
         const examinee = escapeHtml(row.examinee_number || '-');
         const fullName = escapeHtml(row.full_name || '-');
-        const satScore = escapeHtml(row.sat_score ?? '-');
-        const qualitative = escapeHtml(row.qualitative_text || '-');
         const preferredProgram = escapeHtml(row.preferred_program || '-');
+        const basisLabel = escapeHtml(row.basis_label || 'Overall');
+        const statusLabel = escapeHtml(row.status_label || 'No Interview');
+        const satScore = formatScore(row.sat_score);
+        const esmScore = formatScore(row.esm_competency_standard_score);
+        const overallScore = formatScore(row.overall_standard_score);
+        const finalScore = row.final_score !== null && row.final_score !== undefined && row.final_score !== ''
+          ? `${formatScore(row.final_score, 2)}%`
+          : 'N/A';
 
         return `
           <tr>
-            <td class="fw-semibold">${examinee}</td>
-            <td>${fullName}</td>
-            <td>${satScore}</td>
-            <td>${qualitative}</td>
-            <td>${preferredProgram}</td>
+            <td class="admin-search-student">
+              <div class="admin-search-student__name">${fullName}</div>
+              <span class="admin-search-student__meta">Examinee #: ${examinee}</span>
+            </td>
+            <td class="admin-search-program">${preferredProgram}</td>
+            <td>
+              <span class="admin-search-badge ${getBasisBadgeClass(row.basis_label)}">${basisLabel}</span>
+            </td>
+            <td class="admin-search-score">${satScore}</td>
+            <td class="admin-search-score">${esmScore}</td>
+            <td class="admin-search-score">${overallScore}</td>
+            <td>
+              <span class="admin-search-badge ${getStatusBadgeClass(row.status_label)}">${statusLabel}</span>
+            </td>
+            <td class="admin-search-final-score">${finalScore}</td>
           </tr>
         `;
       }).join('');

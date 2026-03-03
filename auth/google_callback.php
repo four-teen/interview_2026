@@ -359,6 +359,10 @@ switch ($account['role']) {
         $redirect = BASE_URL . '/monitoring/index.php';
         break;
 
+    case 'guidance':
+        $redirect = BASE_URL . '/guidance/index.php';
+        break;
+
     default:
         log_auth('Invalid role', ['role' => $account['role']]);
         json_response(403, [

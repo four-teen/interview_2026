@@ -387,7 +387,7 @@ $currentAdminId = (int) ($_SESSION['accountid'] ?? 0);
                         </div>
 
                         <div class="d-flex gap-2">
-                          <span class="badge bg-label-<?= $acc['role']=='administrator'?'primary':($acc['role']=='progchair'?'info':'warning') ?>">
+                          <span class="badge bg-label-<?= $acc['role']=='administrator' ? 'primary' : ($acc['role']=='progchair' ? 'info' : ($acc['role']=='monitoring' ? 'warning' : 'success')) ?>">
                             <?= $acc['role'] ?>
                           </span>
 
@@ -571,6 +571,7 @@ $currentAdminId = (int) ($_SESSION['accountid'] ?? 0);
               <option value="administrator">Administrator</option>
               <option value="progchair">Program Chair</option>
               <option value="monitoring">Monitoring</option>
+              <option value="guidance">Guidance</option>
             </select>
           </div>
 
@@ -651,6 +652,7 @@ $currentAdminId = (int) ($_SESSION['accountid'] ?? 0);
               <option value="administrator">Administrator</option>
               <option value="progchair">Program Chair</option>
               <option value="monitoring">Monitoring</option>
+              <option value="guidance">Guidance</option>
             </select>
           </div>
 

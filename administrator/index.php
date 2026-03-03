@@ -425,6 +425,8 @@ $expectedCampusRangeLabel = $globalSatCutoffActive
     : 'Global SAT range is disabled. Showing all SAT scores.';
 
 $expectedCampusCountsById = [];
+$expectedCampusInterviewedById = [];
+$expectedCampusScoredById = [];
 $expectedCampusTokenMap = [];
 $expectedCampusOrder = [];
 
@@ -449,13 +451,54 @@ foreach ($campuses as $campusRow) {
     }
 
     $expectedCampusCountsById[$campusId] = 0;
+    $expectedCampusInterviewedById[$campusId] = 0;
+    $expectedCampusScoredById[$campusId] = 0;
     $expectedCampusOrder[] = [
         'campus_id' => $campusId,
-        'label' => $campusCodeRaw !== '' ? strtoupper($campusCodeRaw) : ($campusName !== '' ? $campusName : ('Campus ' . $campusId))
+        'label' => $campusCodeRaw !== '' ? strtoupper($campusCodeRaw) : ($campusName !== '' ? $campusName : ('Campus ' . $campusId)),
+        'full_label' => $campusName !== '' ? $campusName : ('Campus ' . $campusId)
     ];
 }
 
 if ($activeBatchId && !empty($expectedCampusOrder)) {
+    $campusMonitoringSql = "
+        SELECT
+            col.campus_id,
+            COUNT(*) AS interviewed_count,
+            SUM(CASE WHEN si.final_score IS NOT NULL THEN 1 ELSE 0 END) AS scored_count
+        FROM tbl_student_interview si
+        INNER JOIN tbl_placement_results pr
+            ON pr.id = si.placement_result_id
+        INNER JOIN tbl_program p
+            ON p.program_id = si.first_choice
+        INNER JOIN tbl_college col
+            ON col.college_id = p.college_id
+        WHERE si.status = 'active'
+          AND si.first_choice IS NOT NULL
+          AND si.first_choice > 0
+          AND pr.upload_batch_id = ?
+        GROUP BY col.campus_id
+    ";
+
+    $campusMonitoringStmt = $conn->prepare($campusMonitoringSql);
+    if ($campusMonitoringStmt) {
+        $campusMonitoringStmt->bind_param('s', $activeBatchId);
+        $campusMonitoringStmt->execute();
+        $campusMonitoringResult = $campusMonitoringStmt->get_result();
+
+        while ($campusMonitoringRow = $campusMonitoringResult->fetch_assoc()) {
+            $campusId = (int) ($campusMonitoringRow['campus_id'] ?? 0);
+            if ($campusId <= 0) {
+                continue;
+            }
+
+            $expectedCampusInterviewedById[$campusId] = (int) ($campusMonitoringRow['interviewed_count'] ?? 0);
+            $expectedCampusScoredById[$campusId] = (int) ($campusMonitoringRow['scored_count'] ?? 0);
+        }
+
+        $campusMonitoringStmt->close();
+    }
+
     $expectedCampusSql = "
         SELECT preferred_program, sat_score
         FROM tbl_placement_results
@@ -529,6 +572,9 @@ if ($activeBatchId && !empty($expectedCampusOrder)) {
 }
 
 $expectedCampusSeriesData = [];
+$expectedCampusInterviewedData = [];
+$expectedCampusScoredData = [];
+$expectedCampusTooltipLabels = [];
 foreach ($expectedCampusOrder as $campusOrderRow) {
     $campusId = (int) ($campusOrderRow['campus_id'] ?? 0);
     if ($campusId <= 0) {
@@ -536,15 +582,28 @@ foreach ($expectedCampusOrder as $campusOrderRow) {
     }
 
     $expectedCampusTrendLabels[] = (string) ($campusOrderRow['label'] ?? ('Campus ' . $campusId));
+    $expectedCampusTooltipLabels[] = (string) ($campusOrderRow['full_label'] ?? ('Campus ' . $campusId));
     $expectedCampusSeriesData[] = (int) ($expectedCampusCountsById[$campusId] ?? 0);
+    $expectedCampusInterviewedData[] = (int) ($expectedCampusInterviewedById[$campusId] ?? 0);
+    $expectedCampusScoredData[] = (int) ($expectedCampusScoredById[$campusId] ?? 0);
 }
 
 $expectedCampusTrendSeries = [
     [
         'name' => 'Expected for Interview',
         'data' => $expectedCampusSeriesData
+    ],
+    [
+        'name' => 'Interviewed',
+        'data' => $expectedCampusInterviewedData
+    ],
+    [
+        'name' => 'Scored',
+        'data' => $expectedCampusScoredData
     ]
 ];
+
+$expectedCampusMonitoringLabel = trim($expectedCampusRangeLabel . ' Expected demand is based on preferred program; interviewed and scored counts come from active assigned first-choice interviews in the latest placement batch.');
 
  ?>
 
@@ -975,10 +1034,10 @@ $expectedCampusTrendSeries = [
       <div class="card mb-4">
         <div class="card-body">
           <h5 class="card-title mb-1">
-            Expected Interviews by Campus (Preferred Program)
+            Expected vs Interviewed vs Scored by Campus
           </h5>
           <small class="text-muted d-block mb-3">
-            <?= htmlspecialchars($expectedCampusRangeLabel); ?>
+            <?= htmlspecialchars($expectedCampusMonitoringLabel); ?>
           </small>
           <div id="expectedCampusInterviewChart"></div>
         </div>
@@ -1197,6 +1256,7 @@ document.addEventListener("DOMContentLoaded", function () {
   const overallTrendSeries = <?php echo json_encode($overallInterviewTrendSeries); ?>;
   const chartContainer = document.querySelector("#programInterviewTrendChart");
   const expectedCampusCategories = <?php echo json_encode($expectedCampusTrendLabels); ?>;
+  const expectedCampusTooltipLabels = <?php echo json_encode($expectedCampusTooltipLabels); ?>;
   const expectedCampusSeries = <?php echo json_encode($expectedCampusTrendSeries); ?>;
   const expectedCampusChartContainer = document.querySelector("#expectedCampusInterviewChart");
   const campusStatusById = <?php echo json_encode($campusProgramStatus); ?>;
@@ -1391,53 +1451,91 @@ document.addEventListener("DOMContentLoaded", function () {
       );
 
     if (!Array.isArray(expectedCampusCategories) || expectedCampusCategories.length === 0 || !Array.isArray(expectedCampusSeries) || expectedCampusSeries.length === 0) {
-      expectedCampusChartContainer.innerHTML = '<div class="text-muted small py-3">No expected interview data available.</div>';
+      expectedCampusChartContainer.innerHTML = '<div class="text-muted small py-3">No campus monitoring data available.</div>';
     } else {
+      const campusSeriesNames = expectedCampusSeries.map((seriesRow) => String(seriesRow.name || ''));
       const expectedCampusOptions = {
         chart: {
           type: 'line',
           height: 330,
-          toolbar: { show: false }
+          toolbar: { show: false },
+          zoom: { enabled: false }
         },
         series: expectedCampusSeries,
         xaxis: {
           categories: expectedCampusCategories,
+          axisBorder: { show: false },
+          axisTicks: { show: false },
           labels: {
             rotate: 0,
-            hideOverlappingLabels: false
+            hideOverlappingLabels: false,
+            style: {
+              colors: '#7d8aa3',
+              fontSize: '12px'
+            }
           }
         },
         stroke: {
-          curve: 'smooth',
-          width: 3
+          curve: 'straight',
+          width: campusSeriesNames.map((name) => name === 'Expected for Interview' ? 2.4 : 3),
+          dashArray: campusSeriesNames.map((name) => name === 'Expected for Interview' ? 6 : 0)
         },
         markers: {
-          size: 5,
-          strokeWidth: 0
+          size: 4.5,
+          strokeWidth: 0,
+          hover: {
+            sizeOffset: 2
+          }
         },
-        colors: ['#696cff'],
+        colors: ['#8592a3', '#03c3ec', '#71dd37'],
         dataLabels: {
           enabled: false
         },
         grid: {
-          strokeDashArray: 4
+          borderColor: '#eef2f7',
+          strokeDashArray: 4,
+          padding: {
+            left: 8,
+            right: 8
+          }
         },
         legend: {
-          position: 'top'
+          position: 'top',
+          horizontalAlign: 'left'
         },
         tooltip: {
           shared: true,
-          intersect: false
+          intersect: false,
+          x: {
+            formatter: function (_, context) {
+              const index = Number(context && context.dataPointIndex ? context.dataPointIndex : 0);
+              return expectedCampusTooltipLabels[index] || expectedCampusCategories[index] || '';
+            }
+          },
+          y: {
+            formatter: function (value) {
+              const count = Math.round(toNumber(value));
+              return `${count.toLocaleString()} student${count === 1 ? '' : 's'}`;
+            }
+          }
         },
         yaxis: {
           min: 0,
           forceNiceScale: true,
+          labels: {
+            formatter: function (value) {
+              return Math.round(toNumber(value)).toLocaleString();
+            },
+            style: {
+              colors: '#7d8aa3'
+            }
+          },
           title: {
-            text: 'Expected Students'
+            text: 'Students'
           }
         },
         noData: {
-          text: hasExpectedCampusData ? 'Loading...' : 'No expected interview data available.'
+          text: hasExpectedCampusData ? 'Loading...' : 'No campus monitoring data available.'
         }
       };
 
