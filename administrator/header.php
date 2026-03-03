@@ -14,6 +14,31 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
 ?>
 
 <style>
+  #layout-navbar {
+    gap: 0.75rem;
+  }
+
+  #layout-navbar .layout-menu-toggle,
+  #layout-navbar .navbar-nav.flex-row,
+  #layout-navbar .dropdown-user {
+    flex: 0 0 auto;
+  }
+
+  #layout-navbar .navbar-nav-right,
+  #layout-navbar .navbar-nav.align-items-center.flex-grow-1,
+  #adminGlobalSearchForm {
+    min-width: 0;
+  }
+
+  #adminGlobalSearchForm {
+    gap: 0.75rem;
+  }
+
+  #adminGlobalSearchForm .bx-search {
+    flex: 0 0 auto;
+    color: #7b8798;
+  }
+
   #adminGlobalSearchForm .form-control {
     min-width: 280px;
   }
@@ -141,6 +166,31 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
     background: #edf1f5;
     color: #7b8798;
   }
+
+  @media (max-width: 767.98px) {
+    #layout-navbar {
+      padding-left: 1rem;
+      padding-right: 1rem;
+    }
+
+    #layout-navbar .navbar-nav.align-items-center.flex-grow-1 {
+      margin-right: 0.5rem !important;
+    }
+
+    #adminGlobalSearchForm .form-control {
+      min-width: 0;
+      font-size: 0.9rem;
+    }
+
+    #adminGlobalSearchInput::placeholder {
+      font-size: 0.85rem;
+    }
+
+    #layout-navbar .dropdown-user .nav-link {
+      padding-left: 0.25rem;
+      padding-right: 0.25rem;
+    }
+  }
 </style>
 
 <nav
@@ -259,6 +309,7 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
     if (!searchForm) return;
 
     const searchInput = document.getElementById('adminGlobalSearchInput');
+    const compactSearchMedia = window.matchMedia('(max-width: 767.98px)');
     const modalEl = document.getElementById('adminExamineeSearchModal');
     const queryChipEl = document.getElementById('adminSearchQueryChip');
     const loadingEl = document.getElementById('adminSearchLoadingState');
@@ -266,6 +317,19 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
     const tableWrapEl = document.getElementById('adminSearchResultTableWrap');
     const resultBodyEl = document.getElementById('adminExamineeSearchResults');
     const endpointUrl = <?= json_encode(rtrim(BASE_URL, '/') . '/administrator/search_examinees.php'); ?>;
+
+    const updateSearchPlaceholder = () => {
+      searchInput.placeholder = compactSearchMedia.matches
+        ? 'Search student or examinee no.'
+        : 'Search examinee number, full name, or preferred program and press Enter';
+    };
+
+    updateSearchPlaceholder();
+    if (typeof compactSearchMedia.addEventListener === 'function') {
+      compactSearchMedia.addEventListener('change', updateSearchPlaceholder);
+    } else if (typeof compactSearchMedia.addListener === 'function') {
+      compactSearchMedia.addListener(updateSearchPlaceholder);
+    }
 
     function escapeHtml(value) {
       return String(value ?? '')

@@ -117,32 +117,34 @@ $result = $stmt->get_result();
 while ($acc = $result->fetch_assoc()) {
   $badgeRole = ($acc['role'] === 'administrator')
     ? 'primary'
-    : (($acc['role'] === 'progchair') ? 'info' : 'warning');
+    : (($acc['role'] === 'progchair') ? 'info' : (($acc['role'] === 'monitoring') ? 'warning' : 'success'));
   $badgeStat = ($acc['status'] === 'active') ? 'success' : 'secondary';
   $assignedProgramIdsCsv = htmlspecialchars((string) ($acc['assigned_program_ids_csv'] ?? ''), ENT_QUOTES);
 
   echo '
   <div class="col-12 account-row">
     <div class="card border">
-      <div class="card-body d-flex align-items-center justify-content-between gap-3">
-        <div class="d-flex align-items-center gap-3 flex-grow-1">
-          <div class="flex-grow-1">
+      <div class="card-body account-card-body">
+        <div class="account-card-scroll">
+          <div class="account-card-content">
+            <div class="account-card-main">
+              <div class="account-card-identity">
             <div class="fw-semibold">' . htmlspecialchars($acc['acc_fullname']) . '</div>
             <div class="text-muted small">' . htmlspecialchars($acc['email']) . '</div>
           </div>
 
-          <div class="d-flex gap-2">
+              <div class="account-card-badges">
             <span class="badge bg-label-' . $badgeRole . '">' . $acc['role'] . '</span>
             <span class="badge bg-label-' . $badgeStat . '">' . $acc['status'] . '</span>
           </div>
 
-          <div class="small text-muted d-none d-md-block">
-            Campus: ' . htmlspecialchars($acc['campus_name'] ?? '-') . '<br>
-            Program: ' . htmlspecialchars($acc['program_display'] ?? '-') . '
-          </div>
-        </div>
+              <div class="account-card-details small text-muted">
+                <div><strong>Campus:</strong> ' . htmlspecialchars($acc['campus_name'] ?? '-') . '</div>
+                <div><strong>Program:</strong> ' . htmlspecialchars($acc['program_display'] ?? '-') . '</div>
+              </div>
+            </div>
 
-        <div class="dropdown">
+            <div class="dropdown account-card-actions">
           <button class="btn btn-sm btn-icon" data-bs-toggle="dropdown">
             <i class="bx bx-dots-vertical-rounded"></i>
           </button>
@@ -200,7 +202,10 @@ while ($acc = $result->fetch_assoc()) {
               </a>
             </li>
           </ul>
+            </div>
+          </div>
         </div>
+      </div>
       </div>
     </div>
   </div>';

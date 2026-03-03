@@ -228,6 +228,61 @@ $currentAdminId = (int) ($_SESSION['accountid'] ?? 0);
 <style>
   .swal2-container { z-index: 20000 !important; }
 
+  .account-card-body {
+    padding: 0;
+  }
+
+  .account-card-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .account-card-content {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    min-width: 720px;
+    padding: 1rem 1.25rem;
+  }
+
+  .account-card-main {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .account-card-identity {
+    min-width: 220px;
+  }
+
+  .account-card-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    flex: 0 0 auto;
+  }
+
+  .account-card-details {
+    min-width: 280px;
+    line-height: 1.45;
+  }
+
+  .account-card-details strong {
+    color: #566a7f;
+  }
+
+  .account-card-details > div {
+    font-size: 0.8125rem;
+    line-height: 1.45;
+  }
+
+  .account-card-actions {
+    flex: 0 0 auto;
+  }
+
   #editAccountModal .select2-container,
   #addAccountModal .select2-container {
     width: 100% !important;
@@ -287,6 +342,52 @@ $currentAdminId = (int) ($_SESSION['accountid'] ?? 0);
     overflow-wrap: anywhere;
     word-break: break-word;
     line-height: 1.3;
+  }
+
+  @media (min-width: 992px) {
+    .account-card-scroll {
+      overflow: visible;
+    }
+
+    .account-card-content {
+      min-width: 0;
+    }
+  }
+
+  @media (max-width: 991.98px) {
+    .account-card-scroll {
+      overflow: visible;
+    }
+
+    .account-card-content {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: start;
+      gap: 0.75rem;
+      padding: 0.95rem 1rem;
+    }
+
+    .account-card-main {
+      display: block;
+    }
+
+    .account-card-identity {
+      min-width: 0;
+    }
+
+    .account-card-badges {
+      margin-top: 0.65rem;
+    }
+
+    .account-card-details {
+      min-width: 0;
+      margin-top: 0.55rem;
+    }
+
+    .account-card-actions {
+      align-self: start;
+    }
   }
 </style>
 
@@ -372,11 +473,13 @@ $currentAdminId = (int) ($_SESSION['accountid'] ?? 0);
                 <?php foreach ($accounts as $acc): ?>
                   <div class="col-12 account-row">
                     <div class="card border">
-                      <div class="card-body d-flex align-items-center justify-content-between gap-3">
+                      <div class="card-body account-card-body">
+                        <div class="account-card-scroll">
+                          <div class="account-card-content">
 
-                      <div class="d-flex align-items-center gap-3 flex-grow-1">
+                      <div class="account-card-main">
 
-                        <div class="flex-grow-1">
+                        <div class="account-card-identity">
                           <div class="fw-semibold">
                             <?= htmlspecialchars($acc['acc_fullname']) ?>
                           </div>
@@ -386,7 +489,7 @@ $currentAdminId = (int) ($_SESSION['accountid'] ?? 0);
                           </div>
                         </div>
 
-                        <div class="d-flex gap-2">
+                        <div class="account-card-badges">
                           <span class="badge bg-label-<?= $acc['role']=='administrator' ? 'primary' : ($acc['role']=='progchair' ? 'info' : ($acc['role']=='monitoring' ? 'warning' : 'success')) ?>">
                             <?= $acc['role'] ?>
                           </span>
@@ -396,15 +499,14 @@ $currentAdminId = (int) ($_SESSION['accountid'] ?? 0);
                           </span>
                         </div>
 
-                          <div class="small text-muted d-none d-md-block">
-                            Campus: <?= htmlspecialchars($acc['campus_name'] ?? '—') ?>
-                            <br>Program: <?= htmlspecialchars($acc['program_display'] ?? '—') ?>
+                          <div class="account-card-details small text-muted">
+                            <div><strong>Campus:</strong> <?= htmlspecialchars($acc['campus_name'] ?? '-') ?></div>
+                            <div><strong>Program:</strong> <?= htmlspecialchars($acc['program_display'] ?? '-') ?></div>
                           </div>
 
                       </div>
 
-
-                        <div class="dropdown">
+                            <div class="dropdown account-card-actions">
                           <button class="btn btn-sm btn-icon" data-bs-toggle="dropdown">
                             <i class="bx bx-dots-vertical-rounded"></i>
                           </button>
@@ -458,7 +560,8 @@ $currentAdminId = (int) ($_SESSION['accountid'] ?? 0);
 
                           </ul>
                         </div>
-
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -526,11 +629,11 @@ $currentAdminId = (int) ($_SESSION['accountid'] ?? 0);
                   <div class="small text-muted">
                     <div class="d-flex justify-content-between mb-2">
                       <span>Role options</span>
-                      <span class="fw-semibold">administrator · progchair · monitoring</span>
+                      <span class="fw-semibold">administrator / progchair / monitoring / guidance</span>
                     </div>
                     <div class="d-flex justify-content-between">
                       <span>Status options</span>
-                      <span class="fw-semibold">active · inactive</span>
+                      <span class="fw-semibold">active / inactive</span>
                     </div>
                   </div>
 
