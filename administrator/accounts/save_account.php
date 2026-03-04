@@ -13,6 +13,7 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'administrator') {
 }
 
 require_once '../../config/db.php';
+require_once '../../config/account_roles.php';
 require_once '../../config/program_assignments.php';
 
 /**
@@ -46,7 +47,7 @@ function normalize_posted_program_ids($rawValue): array
 ======================= */
 $fullname   = trim($_POST['acc_fullname'] ?? '');
 $email      = trim($_POST['email'] ?? '');
-$role       = $_POST['role'] ?? 'progchair';
+$role       = strtolower(trim((string) ($_POST['role'] ?? 'progchair')));
 $campus_id  = $_POST['campus_id'] !== '' ? (int)$_POST['campus_id'] : null;
 $status     = $_POST['status'] ?? 'inactive';
 $programIds = normalize_posted_program_ids($_POST['program_ids'] ?? []);
@@ -62,6 +63,12 @@ $program_id = !empty($programIds) ? (int) $programIds[0] : null;
 
 if ($fullname === '' || $email === '') {
     $_SESSION['error'] = 'Full name and email are required.';
+    header('Location: index.php');
+    exit;
+}
+
+if (!interview_account_role_exists($role)) {
+    $_SESSION['error'] = 'Invalid role selected.';
     header('Location: index.php');
     exit;
 }
@@ -98,6 +105,10 @@ if ($chk->num_rows > 0) {
 $chk->close();
 
 try {
+    if (!ensure_tblaccount_role_enum($conn)) {
+        throw new RuntimeException('Unable to prepare account role storage.');
+    }
+
     $conn->begin_transaction();
 
     if (!ensure_account_program_assignments_table($conn)) {

@@ -1,9 +1,14 @@
 <?php
 
 require_once '../../config/db.php';
+require_once '../../config/account_roles.php';
 require_once '../../config/program_assignments.php';
 
 ensure_account_program_assignments_table($conn);
+ensure_tblaccount_role_enum($conn);
+
+$accountRoleOptions = interview_account_role_options();
+$accountRoleKeysText = implode(' / ', array_keys($accountRoleOptions));
 
 $LIMIT = 20;
 
@@ -189,10 +194,19 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'administrator') {
   exit;
 }
 
+if (empty($_SESSION['admin_secure_link_csrf'])) {
+  try {
+    $_SESSION['admin_secure_link_csrf'] = bin2hex(random_bytes(32));
+  } catch (Exception $e) {
+    $_SESSION['admin_secure_link_csrf'] = sha1(uniqid('admin_secure_link_csrf_', true));
+  }
+}
+
 $fullname = $_SESSION['fullname'] ?? 'Administrator';
 $email    = $_SESSION['email'] ?? '';
 $role     = $_SESSION['role'] ?? 'administrator';
 $currentAdminId = (int) ($_SESSION['accountid'] ?? 0);
+$adminSecureLinkCsrf = (string) $_SESSION['admin_secure_link_csrf'];
 ?>
 <!DOCTYPE html>
 
@@ -490,8 +504,8 @@ $currentAdminId = (int) ($_SESSION['accountid'] ?? 0);
                         </div>
 
                         <div class="account-card-badges">
-                          <span class="badge bg-label-<?= $acc['role']=='administrator' ? 'primary' : ($acc['role']=='progchair' ? 'info' : ($acc['role']=='monitoring' ? 'warning' : 'success')) ?>">
-                            <?= $acc['role'] ?>
+                          <span class="badge bg-label-<?= htmlspecialchars(interview_account_role_badge_class((string) ($acc['role'] ?? ''))) ?>">
+                            <?= htmlspecialchars((string) ($acc['role'] ?? '')) ?>
                           </span>
 
                           <span class="badge bg-label-<?= $acc['status']=='active'?'success':'secondary' ?>">
@@ -528,6 +542,24 @@ $currentAdminId = (int) ($_SESSION['accountid'] ?? 0);
                               </a>
 
                             </li>
+                            <?php if ((string) ($acc['role'] ?? '') === 'president'): ?>
+                              <li>
+                                <?php if ((string) ($acc['status'] ?? '') === 'active'): ?>
+                                  <a
+                                    class="dropdown-item text-primary btn-generate-president-link"
+                                    href="javascript:void(0);"
+                                    data-id="<?= (int) $acc['accountid'] ?>"
+                                    data-name="<?= htmlspecialchars($acc['acc_fullname'], ENT_QUOTES) ?>"
+                                  >
+                                    <i class="bx bx-link-alt me-2"></i> Generate Secure Link
+                                  </a>
+                                <?php else: ?>
+                                  <span class="dropdown-item text-muted disabled">
+                                    <i class="bx bx-link-alt me-2"></i> Secure Link Unavailable
+                                  </span>
+                                <?php endif; ?>
+                              </li>
+                            <?php endif; ?>
                             <li>
                               <?php if ((int) $acc['accountid'] === $currentAdminId): ?>
                                 <span class="dropdown-item text-muted disabled">
@@ -629,7 +661,7 @@ $currentAdminId = (int) ($_SESSION['accountid'] ?? 0);
                   <div class="small text-muted">
                     <div class="d-flex justify-content-between mb-2">
                       <span>Role options</span>
-                      <span class="fw-semibold">administrator / progchair / monitoring / guidance</span>
+                      <span class="fw-semibold"><?= htmlspecialchars($accountRoleKeysText) ?></span>
                     </div>
                     <div class="d-flex justify-content-between">
                       <span>Status options</span>
@@ -671,10 +703,9 @@ $currentAdminId = (int) ($_SESSION['accountid'] ?? 0);
           <div class="col-md-4">
             <label class="form-label">Role</label>
             <select name="role" class="form-select" required>
-              <option value="administrator">Administrator</option>
-              <option value="progchair">Program Chair</option>
-              <option value="monitoring">Monitoring</option>
-              <option value="guidance">Guidance</option>
+              <?php foreach ($accountRoleOptions as $roleValue => $roleLabel): ?>
+                <option value="<?= htmlspecialchars($roleValue) ?>"><?= htmlspecialchars($roleLabel) ?></option>
+              <?php endforeach; ?>
             </select>
           </div>
 
@@ -752,10 +783,9 @@ $currentAdminId = (int) ($_SESSION['accountid'] ?? 0);
           <div class="col-md-4">
             <label class="form-label">Role</label>
             <select name="role" id="edit_role" class="form-select" required>
-              <option value="administrator">Administrator</option>
-              <option value="progchair">Program Chair</option>
-              <option value="monitoring">Monitoring</option>
-              <option value="guidance">Guidance</option>
+              <?php foreach ($accountRoleOptions as $roleValue => $roleLabel): ?>
+                <option value="<?= htmlspecialchars($roleValue) ?>"><?= htmlspecialchars($roleLabel) ?></option>
+              <?php endforeach; ?>
             </select>
           </div>
 
@@ -999,13 +1029,56 @@ document.addEventListener('DOMContentLoaded', function () {
 
 
 <script>
-  let loadingAccounts = false;
+let loadingAccounts = false;
   let offset = <?= (int)$LIMIT ?>; // start after initial batch
   const limit = <?= (int)$LIMIT ?>;
   let endReached = false;
   let selectedCampusId = '';
+  const presidentSecureLinkCsrfToken = <?= json_encode($adminSecureLinkCsrf); ?>;
 
 let activeRequest = null;
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function copyTextToClipboard(text) {
+  const value = String(text ?? '');
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(value);
+  }
+
+  return new Promise((resolve, reject) => {
+    const textarea = document.createElement('textarea');
+    textarea.value = value;
+    textarea.setAttribute('readonly', 'readonly');
+    textarea.style.position = 'fixed';
+    textarea.style.top = '-9999px';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+
+    try {
+      const copied = document.execCommand('copy');
+      document.body.removeChild(textarea);
+      if (!copied) {
+        reject(new Error('Copy command failed.'));
+        return;
+      }
+
+      resolve();
+    } catch (error) {
+      document.body.removeChild(textarea);
+      reject(error);
+    }
+  });
+}
 
 function resetAndReloadAccounts() {
   offset = 0;
@@ -1301,6 +1374,102 @@ $(document).on('click', '.btn-toggle-account-lock', function () {
           icon: 'error',
           title: 'Server error',
           text: 'Unable to update account status.'
+        });
+      }
+    });
+  });
+});
+
+$(document).on('click', '.btn-generate-president-link', function () {
+  const accountid = Number($(this).data('id') || 0);
+  const accountName = String($(this).data('name') || 'President');
+
+  Swal.fire({
+    icon: 'question',
+    title: 'Generate secure login link?',
+    text: `Create a permanent president login link for ${accountName}?`,
+    showCancelButton: true,
+    confirmButtonText: 'Generate Link',
+    confirmButtonColor: '#696cff'
+  }).then((dialogResult) => {
+    if (!dialogResult.isConfirmed) {
+      return;
+    }
+
+    $.ajax({
+      url: 'generate_secure_link.php',
+      method: 'POST',
+      dataType: 'json',
+      data: {
+        accountid: accountid,
+        csrf_token: presidentSecureLinkCsrfToken
+      },
+      success: function (res) {
+        if (!res || !res.success || !res.url) {
+          Swal.fire({
+            icon: 'error',
+            title: 'Link generation failed',
+            text: (res && res.message) ? res.message : 'Unable to generate the secure login link.'
+          });
+          return;
+        }
+
+        const safeUrl = escapeHtml(res.url);
+        const expiryLabel = escapeHtml(res.expires_display || 'soon');
+
+        Swal.fire({
+          icon: 'success',
+          title: 'Secure link ready',
+          html: `
+            <p class="text-start mb-2">
+              This reusable president login link has <strong>${expiryLabel}</strong>.
+            </p>
+            <p class="text-start text-muted small mb-2">
+              Opening it will sign in directly to the president dashboard without Google or a password.
+            </p>
+            <textarea id="presidentSecureLinkField" class="swal2-textarea" style="display:block; width:100%; height:110px;" readonly>${safeUrl}</textarea>
+          `,
+          showCancelButton: true,
+          confirmButtonText: 'Copy Link',
+          cancelButtonText: 'Close',
+          focusConfirm: false,
+          didOpen: () => {
+            const field = document.getElementById('presidentSecureLinkField');
+            if (field) {
+              field.focus();
+              field.select();
+            }
+          }
+        }).then((copyResult) => {
+          if (!copyResult.isConfirmed) {
+            return;
+          }
+
+          copyTextToClipboard(res.url).then(() => {
+            Swal.fire({
+              icon: 'success',
+              title: 'Copied',
+              text: 'The president secure login link is now in your clipboard.',
+              timer: 1500,
+              showConfirmButton: false
+            });
+          }).catch(() => {
+            Swal.fire({
+              icon: 'info',
+              title: 'Copy manually',
+              text: 'Clipboard access is unavailable here. Copy the link manually from the box.'
+            });
+          });
+        });
+      },
+      error: function (xhr) {
+        const responseMessage = xhr && xhr.responseJSON && xhr.responseJSON.message
+          ? xhr.responseJSON.message
+          : 'Unable to generate the secure login link.';
+        Swal.fire({
+          icon: 'error',
+          title: 'Server error',
+          text: responseMessage
         });
       }
     });

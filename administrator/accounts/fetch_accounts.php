@@ -12,9 +12,11 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'administrator') {
 }
 
 require_once '../../config/db.php';
+require_once '../../config/account_roles.php';
 require_once '../../config/program_assignments.php';
 
 ensure_account_program_assignments_table($conn);
+ensure_tblaccount_role_enum($conn);
 
 $limit = isset($_GET['limit']) ? (int) $_GET['limit'] : 20;
 $offset = isset($_GET['offset']) ? (int) $_GET['offset'] : 0;
@@ -115,9 +117,7 @@ $stmt->execute();
 $result = $stmt->get_result();
 
 while ($acc = $result->fetch_assoc()) {
-  $badgeRole = ($acc['role'] === 'administrator')
-    ? 'primary'
-    : (($acc['role'] === 'progchair') ? 'info' : (($acc['role'] === 'monitoring') ? 'warning' : 'success'));
+  $badgeRole = interview_account_role_badge_class((string) ($acc['role'] ?? ''));
   $badgeStat = ($acc['status'] === 'active') ? 'success' : 'secondary';
   $assignedProgramIdsCsv = htmlspecialchars((string) ($acc['assigned_program_ids_csv'] ?? ''), ENT_QUOTES);
 
@@ -134,7 +134,7 @@ while ($acc = $result->fetch_assoc()) {
           </div>
 
               <div class="account-card-badges">
-            <span class="badge bg-label-' . $badgeRole . '">' . $acc['role'] . '</span>
+            <span class="badge bg-label-' . $badgeRole . '">' . htmlspecialchars((string) ($acc['role'] ?? '')) . '</span>
             <span class="badge bg-label-' . $badgeStat . '">' . $acc['status'] . '</span>
           </div>
 
@@ -190,7 +190,34 @@ while ($acc = $result->fetch_assoc()) {
   }
 
   echo '
-            </li>
+            </li>';
+
+  if ((string) ($acc['role'] ?? '') === 'president') {
+    echo '
+            <li>';
+
+    if ((string) ($acc['status'] ?? '') === 'active') {
+      echo '
+              <a
+                class="dropdown-item text-primary btn-generate-president-link"
+                href="javascript:void(0);"
+                data-id="' . (int) $acc['accountid'] . '"
+                data-name="' . htmlspecialchars($acc['acc_fullname'], ENT_QUOTES) . '"
+              >
+                <i class="bx bx-link-alt me-2"></i> Generate Secure Link
+              </a>';
+    } else {
+      echo '
+              <span class="dropdown-item text-muted disabled">
+                <i class="bx bx-link-alt me-2"></i> Secure Link Unavailable
+              </span>';
+    }
+
+    echo '
+            </li>';
+  }
+
+  echo '
             <li>
               <a
                 class="dropdown-item text-danger btn-delete-account"

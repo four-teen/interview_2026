@@ -6,6 +6,7 @@
 require_once __DIR__ . '/../config/env.php';
 require_once __DIR__ . '/../config/session_security.php';
 require_once __DIR__ . '/../config/db.php';
+require_once __DIR__ . '/../config/account_roles.php';
 require_once __DIR__ . '/../config/system_controls.php';
 require_once __DIR__ . '/../config/program_assignments.php';
 
@@ -15,6 +16,8 @@ error_reporting(E_ALL);
 
 secure_session_start();
 header('Content-Type: application/json; charset=utf-8');
+
+ensure_tblaccount_role_enum($conn);
 
 $GOOGLE_CLIENT_ID = (string) (getenv('GOOGLE_CLIENT_ID') ?: '');
 $GOOGLE_ALLOWED_HD = strtolower(trim((string) (getenv('GOOGLE_ALLOWED_HD') ?: 'sksu.edu.ph')));
@@ -357,6 +360,10 @@ switch ($account['role']) {
 
     case 'monitoring':
         $redirect = BASE_URL . '/monitoring/index.php';
+        break;
+
+    case 'president':
+        $redirect = BASE_URL . '/presidents/index.php';
         break;
 
     case 'guidance':
