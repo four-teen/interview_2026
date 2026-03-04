@@ -575,9 +575,11 @@ if ($activeBatchId) {
 .ranking-lock-pill {
   display: inline-flex;
   align-items: center;
-  gap: 0.18rem;
+  justify-content: center;
   margin-left: 0.35rem;
-  padding: 0.08rem 0.35rem;
+  width: 1.4rem;
+  height: 1.15rem;
+  padding: 0;
   border-radius: 999px;
   border: 1px solid #fcd34d;
   background: #fef3c7;
@@ -585,6 +587,13 @@ if ($activeBatchId) {
   font-size: 0.65rem;
   font-weight: 700;
   letter-spacing: 0.02em;
+}
+
+.ranking-lock-pill svg {
+  width: 0.72rem;
+  height: 0.72rem;
+  display: block;
+  fill: currentColor;
 }
 
 .swal2-popup .scc-picker-wrap {
@@ -897,10 +906,10 @@ if ($activeBatchId) {
           <button type="button" class="btn btn-outline-primary" id="addEcRegularBtn">
             <i class="bx bx-plus-circle me-1"></i> Add SCC (Regular)
           </button>
-          <button type="button" class="btn btn-outline-secondary" id="printRankingBtn">
+          <button type="button" class="btn btn-outline-secondary" id="printRankingBtn" disabled title="Temporarily disabled.">
             <i class="bx bx-printer me-1"></i> Print
           </button>
-          <a href="#" class="btn btn-success" id="exportRankingBtn">
+          <a href="#" class="btn btn-success disabled" id="exportRankingBtn" aria-disabled="true" tabindex="-1" title="Temporarily disabled.">
             <i class="bx bx-export me-1"></i> Export Excel
           </a>
         </div>
@@ -1771,6 +1780,7 @@ const exportRankingBtn        = document.getElementById('exportRankingBtn');
 const printRankingBtn         = document.getElementById('printRankingBtn');
 const addEcRegularBtn         = document.getElementById('addEcRegularBtn');
 const sccCandidatesEndpoint   = 'fetch_scc_regular_candidates.php';
+const rankingOutputActionsEnabled = false;
 
   let currentRankingProgramId = 0;
   let currentRankingProgramName = '';
@@ -1781,6 +1791,28 @@ const sccCandidatesEndpoint   = 'fetch_scc_regular_candidates.php';
 const programRankingModal = programRankingModalEl
   ? new bootstrap.Modal(programRankingModalEl)
   : null;
+
+function syncRankingOutputButtons(programId = 0) {
+  if (printRankingBtn) {
+    printRankingBtn.disabled = !rankingOutputActionsEnabled;
+    printRankingBtn.title = rankingOutputActionsEnabled ? 'Print ranking.' : 'Temporarily disabled.';
+  }
+
+  if (exportRankingBtn) {
+    exportRankingBtn.classList.toggle('disabled', !rankingOutputActionsEnabled);
+    exportRankingBtn.setAttribute('aria-disabled', rankingOutputActionsEnabled ? 'false' : 'true');
+    exportRankingBtn.tabIndex = rankingOutputActionsEnabled ? 0 : -1;
+    exportRankingBtn.title = rankingOutputActionsEnabled ? 'Export ranking to Excel.' : 'Temporarily disabled.';
+
+    if (rankingOutputActionsEnabled && Number(programId) > 0) {
+      exportRankingBtn.href = `export_program_ranking.php?program_id=${programId}`;
+    } else {
+      exportRankingBtn.removeAttribute('href');
+    }
+  }
+}
+
+syncRankingOutputButtons();
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -1819,7 +1851,13 @@ function buildRankingRowHtml(row, rankDisplay) {
     ? 'SCC'
     : (section === 'etg' ? 'ETG' : 'R');
   const lockPill = Boolean(row?.is_locked)
-    ? '<span class="ranking-lock-pill"><i class="bx bx-lock-alt"></i>LOCKED</span>'
+    ? `
+        <span class="ranking-lock-pill" title="Locked" aria-label="Locked">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M17 8h-1V6a4 4 0 0 0-8 0v2H7a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2Zm-7-2a2 2 0 1 1 4 0v2h-4V6Zm7 12H7v-8h10v8Z"></path>
+          </svg>
+        </span>
+      `
     : '';
 
   return `
@@ -2088,9 +2126,7 @@ function loadProgramRanking(programId, programName) {
 
   if (addEcRegularBtn) addEcRegularBtn.disabled = true;
 
-  if (exportRankingBtn) {
-    exportRankingBtn.href = `export_program_ranking.php?program_id=${programId}`;
-  }
+  syncRankingOutputButtons(programId);
 
   setRankingState({ loading: true, empty: false, showTable: false });
 
@@ -2167,6 +2203,10 @@ if (addEcRegularBtn) {
 
 if (printRankingBtn) {
   printRankingBtn.addEventListener('click', function () {
+    if (!rankingOutputActionsEnabled) {
+      return;
+    }
+
     if (!currentRankingRows.length) {
       Swal.fire('No Data', 'No ranked students to print.', 'info');
       return;
@@ -2235,15 +2275,23 @@ if (printRankingBtn) {
           .ranking-outside-capacity .ranking-col-score { color: #b91c1c !important; }
           .ranking-locked-row { background: #fffbeb !important; }
           .ranking-lock-pill {
-            display: inline-block;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 1.4rem;
+            height: 1.15rem;
             margin-left: 6px;
-            padding: 1px 5px;
+            padding: 0;
             border: 1px solid #f59e0b;
             border-radius: 999px;
-            font-size: 10px;
-            font-weight: 700;
             color: #92400e;
             background: #fef3c7;
+          }
+          .ranking-lock-pill svg {
+            width: 0.72rem;
+            height: 0.72rem;
+            display: block;
+            fill: currentColor;
           }
           .print-disclaimer {
             margin-top: 24px;
@@ -2269,6 +2317,14 @@ if (printRankingBtn) {
     printWindow.document.close();
     printWindow.focus();
     printWindow.print();
+  });
+}
+
+if (exportRankingBtn) {
+  exportRankingBtn.addEventListener('click', function (event) {
+    if (!rankingOutputActionsEnabled) {
+      event.preventDefault();
+    }
   });
 }
 

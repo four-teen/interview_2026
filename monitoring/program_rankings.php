@@ -654,9 +654,11 @@ if ($isProgramCardsRequest) {
       .ranking-lock-pill {
         display: inline-flex;
         align-items: center;
-        gap: 0.18rem;
+        justify-content: center;
         margin-left: 0.35rem;
-        padding: 0.08rem 0.35rem;
+        width: 1.4rem;
+        height: 1.15rem;
+        padding: 0;
         border-radius: 999px;
         border: 1px solid #fcd34d;
         background: #fef3c7;
@@ -664,6 +666,13 @@ if ($isProgramCardsRequest) {
         font-size: 0.65rem;
         font-weight: 700;
         letter-spacing: 0.02em;
+      }
+
+      .ranking-lock-pill svg {
+        width: 0.72rem;
+        height: 0.72rem;
+        display: block;
+        fill: currentColor;
       }
 
       .ranking-scc-row {
@@ -1097,7 +1106,8 @@ if ($isProgramCardsRequest) {
           return String(row?.classification || '').toUpperCase() === 'REGULAR' ? 'regular' : 'etg';
         }
 
-        function buildRankingRowHtml(row, rankDisplay) {
+        function buildRankingRowHtml(row, rankDisplay, options = {}) {
+          const showLockPill = options.showLockPill !== false;
           const section = getRowSection(row);
           const isOutsideCapacity = Boolean(row?.is_outside_capacity);
           const sectionClass = section === 'scc'
@@ -1112,8 +1122,14 @@ if ($isProgramCardsRequest) {
             ? 'SCC'
             : (section === 'etg' ? 'ETG' : 'R');
 
-          const lockPill = Boolean(row?.is_locked)
-            ? '<span class="ranking-lock-pill"><i class="bx bx-lock-alt"></i>LOCKED</span>'
+          const lockPill = showLockPill && Boolean(row?.is_locked)
+            ? `
+                <span class="ranking-lock-pill" title="Locked" aria-label="Locked">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M17 8h-1V6a4 4 0 0 0-8 0v2H7a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2Zm-7-2a2 2 0 1 1 4 0v2h-4V6Zm7 12H7v-8h10v8Z"></path>
+                  </svg>
+                </span>
+              `
             : '';
 
           return `
@@ -1301,7 +1317,7 @@ if ($isProgramCardsRequest) {
           let html = buildRankingListHeaderHtml();
           rows.forEach((row, index) => {
             const rankDisplay = Number(row?.rank ?? 0) > 0 ? Number(row.rank) : (index + 1);
-            html += buildRankingRowHtml(row, rankDisplay);
+            html += buildRankingRowHtml(row, rankDisplay, { showLockPill: false });
           });
           return html;
         }
@@ -1350,6 +1366,26 @@ if ($isProgramCardsRequest) {
     .ranking-etg-row { color: #2563eb !important; }
     .ranking-outside-capacity { color: #dc2626 !important; }
     .ranking-locked-row { background: #fffbeb; }
+    .ranking-lock-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.4rem;
+      height: 1.15rem;
+      margin-left: 0.35rem;
+      padding: 0;
+      border-radius: 999px;
+      border: 1px solid #fcd34d;
+      background: #fef3c7;
+      color: #92400e;
+      vertical-align: middle;
+    }
+    .ranking-lock-pill svg {
+      width: 0.72rem;
+      height: 0.72rem;
+      display: block;
+      fill: currentColor;
+    }
     .ranking-list-empty { padding: 12px; color: #64748b; font-size: 13px; }
     @media print { @page { size: landscape; margin: 10mm; } }
   </style>
