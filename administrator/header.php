@@ -72,29 +72,38 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
     font-weight: 600;
   }
 
-  #adminExamineeSearchModal .table thead th {
-    font-size: 0.73rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: #6e7788;
-    white-space: nowrap;
-    border-bottom-width: 2px;
-    padding-top: 0.95rem;
-    padding-bottom: 0.95rem;
+  #adminExamineeSearchModal .admin-search-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
   }
 
-  #adminExamineeSearchModal .table tbody td {
-    vertical-align: middle;
-    padding-top: 0.9rem;
-    padding-bottom: 0.9rem;
+  #adminExamineeSearchModal .admin-search-card {
+    border: 1px solid #e9d2a0;
+    border-radius: 0.8rem;
+    background: #fffefb;
+    padding: 0.85rem 0.9rem;
+    box-shadow: 0 4px 14px rgba(138, 90, 16, 0.06);
   }
 
-  #adminExamineeSearchModal .admin-search-table {
-    min-width: 1080px;
+  #adminExamineeSearchModal .admin-search-card__top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  #adminExamineeSearchModal .admin-search-card__actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 0.35rem;
   }
 
   #adminExamineeSearchModal .admin-search-student {
-    min-width: 240px;
+    min-width: 0;
+    flex: 1 1 380px;
   }
 
   #adminExamineeSearchModal .admin-search-student__name {
@@ -112,22 +121,105 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
     color: #7b8798;
   }
 
-  #adminExamineeSearchModal .admin-search-program {
-    min-width: 340px;
-    color: #5d6b7f;
-    line-height: 1.35;
+  #adminExamineeSearchModal .admin-search-card__metrics {
+    margin-top: 0.7rem;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(145px, 1fr));
+    gap: 0.5rem 0.65rem;
   }
 
-  #adminExamineeSearchModal .admin-search-score {
+  #adminExamineeSearchModal .admin-search-kv {
+    border: 1px solid #f1e3c8;
+    border-radius: 0.6rem;
+    padding: 0.45rem 0.5rem;
+    background: #ffffff;
+  }
+
+  #adminExamineeSearchModal .admin-search-kv__label {
+    display: block;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #8a785c;
+  }
+
+  #adminExamineeSearchModal .admin-search-kv__value {
+    display: block;
+    margin-top: 0.18rem;
+    font-size: 0.83rem;
     font-weight: 600;
     color: #4a5568;
+    line-height: 1.35;
+    word-break: break-word;
+  }
+
+  #adminExamineeSearchModal .admin-search-kv__value--program {
+    color: #5d6b7f;
+  }
+
+  #adminExamineeSearchModal .admin-search-kv__value--score {
+    color: #364152;
     white-space: nowrap;
   }
 
-  #adminExamineeSearchModal .admin-search-final-score {
-    font-weight: 700;
+  #adminExamineeSearchModal .admin-search-kv__value--final-score {
     color: #0f766e;
+    font-weight: 700;
     white-space: nowrap;
+  }
+
+  #adminExamineeSearchModal .admin-search-toggle {
+    border: 1px solid #d9a441;
+    color: #8a5a10;
+    background: #fff8eb;
+    border-radius: 999px;
+    font-size: 0.74rem;
+    font-weight: 700;
+    padding: 0.28rem 0.7rem;
+    line-height: 1;
+  }
+
+  #adminExamineeSearchModal .admin-search-toggle:hover {
+    background: #ffefd0;
+  }
+
+  #adminExamineeSearchModal .admin-search-details-panel {
+    margin-top: 0.72rem;
+    padding-top: 0.72rem;
+    border-top: 1px dashed #e7c989;
+  }
+
+  #adminExamineeSearchModal .admin-search-details-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(180px, 1fr));
+    gap: 0.55rem 0.75rem;
+  }
+
+  #adminExamineeSearchModal .admin-search-detail-item {
+    border: 1px solid #ecd8ad;
+    border-radius: 0.6rem;
+    padding: 0.45rem 0.55rem;
+    background: #fffefb;
+  }
+
+  #adminExamineeSearchModal .admin-search-detail-label {
+    display: block;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #7c6650;
+  }
+
+  #adminExamineeSearchModal .admin-search-detail-value {
+    display: block;
+    margin-top: 0.2rem;
+    font-size: 0.83rem;
+    font-weight: 600;
+    color: #3f3a32;
+    line-height: 1.35;
+    word-break: break-word;
   }
 
   #adminExamineeSearchModal .admin-search-badge {
@@ -189,6 +281,33 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
     #layout-navbar .dropdown-user .nav-link {
       padding-left: 0.25rem;
       padding-right: 0.25rem;
+    }
+
+    #adminExamineeSearchModal .admin-search-card {
+      padding: 0.75rem;
+    }
+
+    #adminExamineeSearchModal .admin-search-card__top {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    #adminExamineeSearchModal .admin-search-card__actions {
+      justify-content: flex-start;
+    }
+
+    #adminExamineeSearchModal .admin-search-card__metrics {
+      grid-template-columns: 1fr;
+    }
+
+    #adminExamineeSearchModal .admin-search-details-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (min-width: 768px) and (max-width: 991.98px) {
+    #adminExamineeSearchModal .admin-search-card__metrics {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
   }
 </style>
@@ -281,22 +400,8 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
           No matching examinees found.
         </div>
 
-        <div id="adminSearchResultTableWrap" class="table-responsive d-none">
-          <table class="table table-sm table-hover mb-0 admin-search-table">
-            <thead>
-              <tr>
-                <th>Student</th>
-                <th>Preferred Program</th>
-                <th>Basis</th>
-                <th>SAT</th>
-                <th>ESM</th>
-                <th>Overall</th>
-                <th>Status</th>
-                <th>Final Score</th>
-              </tr>
-            </thead>
-            <tbody id="adminExamineeSearchResults"></tbody>
-          </table>
+        <div id="adminSearchResultCardWrap" class="d-none">
+          <div id="adminExamineeSearchResults" class="admin-search-list"></div>
         </div>
       </div>
     </div>
@@ -314,7 +419,7 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
     const queryChipEl = document.getElementById('adminSearchQueryChip');
     const loadingEl = document.getElementById('adminSearchLoadingState');
     const emptyEl = document.getElementById('adminSearchEmptyState');
-    const tableWrapEl = document.getElementById('adminSearchResultTableWrap');
+    const cardWrapEl = document.getElementById('adminSearchResultCardWrap');
     const resultBodyEl = document.getElementById('adminExamineeSearchResults');
     const endpointUrl = <?= json_encode(rtrim(BASE_URL, '/') . '/administrator/search_examinees.php'); ?>;
 
@@ -343,11 +448,11 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
     function setModalState(state) {
       const showLoading = state === 'loading';
       const showEmpty = state === 'empty';
-      const showTable = state === 'table';
+      const showCards = state === 'cards';
 
       loadingEl.classList.toggle('d-none', !showLoading);
       emptyEl.classList.toggle('d-none', !showEmpty);
-      tableWrapEl.classList.toggle('d-none', !showTable);
+      cardWrapEl.classList.toggle('d-none', !showCards);
     }
 
     function openModal() {
@@ -368,13 +473,57 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
 
         const numericValue = Number(value);
         if (Number.isNaN(numericValue)) {
-          return escapeHtml(value);
+          return String(value);
         }
 
         return numericValue.toLocaleString(undefined, {
           minimumFractionDigits: decimals,
           maximumFractionDigits: decimals
         });
+      }
+
+      function formatDateTime(value) {
+        const raw = String(value || '').trim();
+        if (raw === '') return 'N/A';
+        const parsed = new Date(raw.replace(' ', 'T'));
+        if (Number.isNaN(parsed.getTime())) {
+          return raw;
+        }
+        return parsed.toLocaleString(undefined, {
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit'
+        });
+      }
+
+      function buildProgramChoiceLabel(label, idValue) {
+        const text = String(label || '').trim();
+        if (text !== '') return text;
+        const id = Number(idValue || 0);
+        if (id > 0) return `PROGRAM ${id}`;
+        return 'N/A';
+      }
+
+      function buildDetailItem(label, value) {
+        return `
+          <div class="admin-search-detail-item">
+            <span class="admin-search-detail-label">${escapeHtml(label)}</span>
+            <span class="admin-search-detail-value">${escapeHtml(value)}</span>
+          </div>
+        `;
+      }
+
+      function buildMetricItem(label, value, valueClass = '') {
+        const classSuffix = String(valueClass || '').trim();
+        const classes = classSuffix === '' ? 'admin-search-kv__value' : `admin-search-kv__value ${classSuffix}`;
+        return `
+          <div class="admin-search-kv">
+            <span class="admin-search-kv__label">${escapeHtml(label)}</span>
+            <span class="${classes}">${escapeHtml(value)}</span>
+          </div>
+        `;
       }
 
       function getBasisBadgeClass(label) {
@@ -390,41 +539,91 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
         return 'admin-search-badge--empty';
       }
 
-      resultBodyEl.innerHTML = rows.map((row) => {
+      resultBodyEl.innerHTML = rows.map((row, index) => {
+        const detailRowId = `adminSearchDetailsRow-${index}`;
         const examinee = escapeHtml(row.examinee_number || '-');
         const fullName = escapeHtml(row.full_name || '-');
-        const preferredProgram = escapeHtml(row.preferred_program || '-');
-        const basisLabel = escapeHtml(row.basis_label || 'Overall');
-        const statusLabel = escapeHtml(row.status_label || 'No Interview');
+        const firstChoiceLabel = buildProgramChoiceLabel(row.first_choice_label, row.first_choice_id);
+        const secondChoiceLabel = buildProgramChoiceLabel(row.second_choice_label, row.second_choice_id);
+        const thirdChoiceLabel = buildProgramChoiceLabel(row.third_choice_label, row.third_choice_id);
+        const basisLabel = String(row.basis_label || 'Overall');
+        const statusLabel = String(row.status_label || 'No Interview');
         const satScore = formatScore(row.sat_score);
         const esmScore = formatScore(row.esm_competency_standard_score);
         const overallScore = formatScore(row.overall_standard_score);
-        const finalScore = row.final_score !== null && row.final_score !== undefined && row.final_score !== ''
+        const interviewerName = String(row.interviewer_name || 'N/A');
+        const interviewDate = formatDateTime(row.interview_datetime);
+        const classification = String(row.interview_classification || '').trim() || 'N/A';
+        const etgClassName = String(row.etg_class_name || '').trim() || 'N/A';
+        const shsTrack = String(row.shs_track_name || '').trim() || 'N/A';
+        const campusName = String(row.interview_campus_name || '').trim() || 'N/A';
+        const mobileNumber = String(row.mobile_number || '').trim() || 'N/A';
+        const interviewId = Number(row.interview_id || 0);
+        const placementResultId = Number(row.placement_result_id || 0);
+        const finalScoreText = row.final_score !== null && row.final_score !== undefined && row.final_score !== ''
           ? `${formatScore(row.final_score, 2)}%`
           : 'N/A';
 
+        const detailsHtml = [
+          buildDetailItem('Interview ID', interviewId > 0 ? String(interviewId) : 'N/A'),
+          buildDetailItem('Placement Result ID', placementResultId > 0 ? String(placementResultId) : 'N/A'),
+          buildDetailItem('Interviewed By', interviewerName),
+          buildDetailItem('Interview Date/Time', formatDateTime(row.interview_datetime)),
+          buildDetailItem('1st Choice', firstChoiceLabel),
+          buildDetailItem('2nd Choice', secondChoiceLabel),
+          buildDetailItem('3rd Choice', thirdChoiceLabel),
+          buildDetailItem('Preferred Program', String(row.preferred_program || 'N/A')),
+          buildDetailItem('Classification', classification),
+          buildDetailItem('ETG Class', etgClassName),
+          buildDetailItem('SHS Track', shsTrack),
+          buildDetailItem('Interview Campus', campusName),
+          buildDetailItem('Mobile Number', mobileNumber),
+          buildDetailItem('Interview Status', String(row.status_label || 'No Interview'))
+        ].join('');
+
+        const summaryMetricsHtml = [
+          buildMetricItem('Preferred Program', String(row.preferred_program || 'N/A'), 'admin-search-kv__value--program'),
+          buildMetricItem('1st Choice', firstChoiceLabel, 'admin-search-kv__value--program'),
+          buildMetricItem('SAT', satScore, 'admin-search-kv__value--score'),
+          buildMetricItem('ESM', esmScore, 'admin-search-kv__value--score'),
+          buildMetricItem('Overall', overallScore, 'admin-search-kv__value--score'),
+          buildMetricItem('Final Score', finalScoreText, 'admin-search-kv__value--final-score'),
+          buildMetricItem('Interviewed By', interviewerName),
+          buildMetricItem('When', interviewDate)
+        ].join('');
+
         return `
-          <tr>
-            <td class="admin-search-student">
-              <div class="admin-search-student__name">${fullName}</div>
-              <span class="admin-search-student__meta">Examinee #: ${examinee}</span>
-            </td>
-            <td class="admin-search-program">${preferredProgram}</td>
-            <td>
-              <span class="admin-search-badge ${getBasisBadgeClass(row.basis_label)}">${basisLabel}</span>
-            </td>
-            <td class="admin-search-score">${satScore}</td>
-            <td class="admin-search-score">${esmScore}</td>
-            <td class="admin-search-score">${overallScore}</td>
-            <td>
-              <span class="admin-search-badge ${getStatusBadgeClass(row.status_label)}">${statusLabel}</span>
-            </td>
-            <td class="admin-search-final-score">${finalScore}</td>
-          </tr>
+          <article class="admin-search-card">
+            <div class="admin-search-card__top">
+              <div class="admin-search-student">
+                <div class="admin-search-student__name">${fullName}</div>
+                <span class="admin-search-student__meta">Examinee #: ${examinee}</span>
+              </div>
+              <div class="admin-search-card__actions">
+                <span class="admin-search-badge ${getBasisBadgeClass(row.basis_label)}">${escapeHtml(basisLabel)}</span>
+                <span class="admin-search-badge ${getStatusBadgeClass(row.status_label)}">${escapeHtml(statusLabel)}</span>
+                <button
+                  type="button"
+                  class="btn btn-sm admin-search-toggle js-toggle-search-details"
+                  data-detail-row-id="${detailRowId}"
+                  aria-expanded="false"
+                  aria-controls="${detailRowId}"
+                >
+                  Show Full Details
+                </button>
+              </div>
+            </div>
+
+            <div class="admin-search-card__metrics">${summaryMetricsHtml}</div>
+
+            <div id="${detailRowId}" class="admin-search-details-panel d-none">
+              <div class="admin-search-details-grid">${detailsHtml}</div>
+            </div>
+          </article>
         `;
       }).join('');
 
-      setModalState('table');
+      setModalState('cards');
     }
 
     searchForm.addEventListener('submit', function (event) {
@@ -465,6 +664,22 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
           emptyEl.textContent = error.message || 'Failed to search placement results.';
           setModalState('empty');
         });
+    });
+
+    resultBodyEl.addEventListener('click', function (event) {
+      const button = event.target.closest('.js-toggle-search-details');
+      if (!button) return;
+
+      const detailRowId = String(button.getAttribute('data-detail-row-id') || '').trim();
+      if (detailRowId === '') return;
+
+      const detailRowEl = document.getElementById(detailRowId);
+      if (!detailRowEl) return;
+
+      const expanded = button.getAttribute('aria-expanded') === 'true';
+      detailRowEl.classList.toggle('d-none', expanded);
+      button.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+      button.textContent = expanded ? 'Show Full Details' : 'Hide Full Details';
     });
   })();
 </script>

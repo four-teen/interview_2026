@@ -1,6 +1,7 @@
 <?php
 require_once '../config/db.php';
 require_once '../config/system_controls.php';
+require_once '../config/program_ranking_lock.php';
 session_start();
 
 if (!isset($_SESSION['logged_in']) || (($_SESSION['role'] ?? '') !== 'monitoring')) {
@@ -12,6 +13,7 @@ $monitoringHeaderTitle = 'Monitoring Center - Program Rankings';
 $search = trim((string) ($_GET['q'] ?? ''));
 $campusFilter = (int) ($_GET['campus_id'] ?? 0);
 $isProgramCardsRequest = strtolower(trim((string) ($_GET['fetch'] ?? ''))) === 'program_cards';
+$isProgramLocksPrintRequest = strtolower(trim((string) ($_GET['print'] ?? ''))) === 'program_locks';
 $page = max(1, (int) ($_GET['page'] ?? 1));
 $perPage = 12;
 
@@ -29,6 +31,8 @@ if ($globalSatCutoffActive && $globalSatCutoffRangeText === '') {
     $globalSatCutoffRangeText = format_sat_cutoff_ranges_for_display($globalSatCutoffRanges, ', ');
 }
 
+ensure_program_ranking_locks_table($conn);
+
 $campusOptions = [];
 $campusOptionSql = "
     SELECT campus_id, campus_name
@@ -42,6 +46,25 @@ if ($campusOptionResult) {
         $campusOptions[] = $campusRow;
     }
 }
+
+$campusFilterLabel = 'All Campuses';
+if ($campusFilter > 0) {
+    $campusFilterLabel = 'Campus ID ' . $campusFilter;
+    foreach ($campusOptions as $campusOption) {
+        $optionCampusId = (int) ($campusOption['campus_id'] ?? 0);
+        if ($optionCampusId !== $campusFilter) {
+            continue;
+        }
+        $campusFilterLabel = trim((string) ($campusOption['campus_name'] ?? ''));
+        break;
+    }
+}
+
+$programLockPrintUrl = 'program_rankings.php?' . http_build_query([
+    'print' => 'program_locks',
+    'q' => $search,
+    'campus_id' => $campusFilter
+]);
 
 $where = ['p.status = \'active\''];
 $types = '';
@@ -79,8 +102,215 @@ $programFromSql = "
         GROUP BY COALESCE(NULLIF(si.program_id, 0), NULLIF(si.first_choice, 0))
     ) st
         ON st.ranking_program_id = p.program_id
+    LEFT JOIN (
+        SELECT
+            l.program_id,
+            COUNT(*) AS locked_count
+        FROM tbl_program_ranking_locks l
+        GROUP BY l.program_id
+    ) lockstat
+        ON lockstat.program_id = p.program_id
 ";
 $whereSql = implode(' AND ', $where);
+
+if ($isProgramLocksPrintRequest) {
+    $printRows = [];
+    $printSql = "
+        SELECT
+            p.program_id,
+            p.program_code,
+            p.program_name,
+            p.major,
+            col.college_name,
+            cam.campus_name,
+            COALESCE(lockstat.locked_count, 0) AS locked_count
+        {$programFromSql}
+        WHERE {$whereSql}
+        ORDER BY
+            COALESCE(lockstat.locked_count, 0) DESC,
+            cam.campus_name ASC,
+            col.college_name ASC,
+            p.program_name ASC,
+            p.major ASC
+    ";
+    $stmtPrint = $conn->prepare($printSql);
+    if ($stmtPrint) {
+        if ($types !== '') {
+            $stmtPrint->bind_param($types, ...$params);
+        }
+        $stmtPrint->execute();
+        $printResult = $stmtPrint->get_result();
+        while ($printResult && $printRow = $printResult->fetch_assoc()) {
+            $printRows[] = $printRow;
+        }
+        $stmtPrint->close();
+    }
+
+    $totalPrograms = count($printRows);
+    $programsWithLocks = 0;
+    $totalLockedRanks = 0;
+    foreach ($printRows as $printRow) {
+        $lockedCount = max(0, (int) ($printRow['locked_count'] ?? 0));
+        $totalLockedRanks += $lockedCount;
+        if ($lockedCount > 0) {
+            $programsWithLocks++;
+        }
+    }
+
+    header('Content-Type: text/html; charset=utf-8');
+    ?>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Monitoring Program Lock Summary</title>
+  <style>
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: Arial, sans-serif;
+      color: #111827;
+      background: #ffffff;
+    }
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.2;
+    }
+    .meta {
+      margin-top: 8px;
+      color: #475569;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .summary {
+      margin-top: 14px;
+      padding: 12px 14px;
+      border: 1px solid #dbe2eb;
+      border-radius: 8px;
+      background: #f8fafc;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      font-size: 13px;
+    }
+    .summary strong {
+      font-size: 15px;
+      color: #0f172a;
+      margin-right: 4px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 16px;
+      font-size: 13px;
+    }
+    th, td {
+      border: 1px solid #dbe2eb;
+      padding: 8px 10px;
+      vertical-align: top;
+      text-align: left;
+    }
+    th {
+      background: #f1f5f9;
+      font-size: 12px;
+      text-transform: uppercase;
+      color: #334155;
+      letter-spacing: 0.03em;
+    }
+    td.num {
+      text-align: right;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    .program-name {
+      font-weight: 700;
+      color: #0f172a;
+      text-transform: uppercase;
+    }
+    .empty {
+      margin-top: 16px;
+      border: 1px dashed #cbd5e1;
+      border-radius: 8px;
+      padding: 16px;
+      color: #64748b;
+      background: #f8fafc;
+    }
+    @media print {
+      @page { size: portrait; margin: 10mm; }
+      body { padding: 0; }
+    }
+  </style>
+</head>
+<body>
+  <h1>Program Locked Ranking Summary</h1>
+  <div class="meta">
+    Printed: <?= htmlspecialchars(date('F j, Y g:i A')); ?><br>
+    Search: <?= htmlspecialchars($search !== '' ? $search : 'None'); ?> |
+    Campus: <?= htmlspecialchars($campusFilterLabel); ?>
+  </div>
+  <div class="summary">
+    <span><strong><?= number_format($totalPrograms); ?></strong> Programs</span>
+    <span><strong><?= number_format($programsWithLocks); ?></strong> Programs with Locks</span>
+    <span><strong><?= number_format($totalLockedRanks); ?></strong> Total Locked Rankings</span>
+  </div>
+
+  <?php if (!empty($printRows)): ?>
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 52px;">#</th>
+          <th>Program</th>
+          <th style="width: 220px;">Campus / College</th>
+          <th style="width: 150px;">Locked Rankings</th>
+        </tr>
+      </thead>
+      <tbody>
+        <?php foreach ($printRows as $index => $printRow): ?>
+          <?php
+            $programName = trim((string) ($printRow['program_name'] ?? ''));
+            $programCode = trim((string) ($printRow['program_code'] ?? ''));
+            $major = trim((string) ($printRow['major'] ?? ''));
+            $campusName = trim((string) ($printRow['campus_name'] ?? ''));
+            $collegeName = trim((string) ($printRow['college_name'] ?? ''));
+            $lockedCount = max(0, (int) ($printRow['locked_count'] ?? 0));
+            $programLabel = $programName;
+            if ($programCode !== '') {
+                $programLabel = $programCode . ' | ' . $programLabel;
+            }
+            if ($major !== '') {
+                $programLabel .= ' - [' . $major . ']';
+            }
+            $locationLabel = trim($campusName . ($collegeName !== '' ? ' - ' . $collegeName : ''));
+          ?>
+          <tr>
+            <td class="num"><?= number_format($index + 1); ?></td>
+            <td>
+              <div class="program-name"><?= htmlspecialchars($programLabel); ?></div>
+            </td>
+            <td><?= htmlspecialchars($locationLabel); ?></td>
+            <td class="num"><?= number_format($lockedCount); ?></td>
+          </tr>
+        <?php endforeach; ?>
+      </tbody>
+    </table>
+  <?php else: ?>
+    <div class="empty">No programs found for the selected filters.</div>
+  <?php endif; ?>
+
+  <script>
+    window.addEventListener('load', function () {
+      window.print();
+    });
+  </script>
+</body>
+</html>
+    <?php
+    exit;
+}
 
 $summary = [
     'total_programs' => 0,
@@ -135,7 +365,8 @@ $programSql = "
         COALESCE(pc.endorsement_capacity, 0) AS endorsement_capacity,
         COALESCE(st.total_count, 0) AS total_interviewed,
         COALESCE(st.scored_count, 0) AS scored_count,
-        COALESCE(st.unscored_count, 0) AS unscored_count
+        COALESCE(st.unscored_count, 0) AS unscored_count,
+        COALESCE(lockstat.locked_count, 0) AS locked_count
     {$programFromSql}
     WHERE {$whereSql}
     ORDER BY
@@ -806,6 +1037,12 @@ if ($isProgramCardsRequest) {
                 </div>
 
                 <div class="card-body">
+                  <div class="d-flex justify-content-end mb-3">
+                    <a href="<?= htmlspecialchars($programLockPrintUrl); ?>" target="_blank" rel="noopener" class="btn btn-outline-secondary btn-sm">
+                      <i class="bx bx-printer me-1"></i> Print Program Lock Summary
+                    </a>
+                  </div>
+
                   <?php if (empty($programs)): ?>
                     <div class="monitor-empty-card">No programs found.</div>
                   <?php else: ?>

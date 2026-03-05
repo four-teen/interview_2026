@@ -223,6 +223,39 @@ if ($pageError === null) {
 
     <script src="../assets/vendor/js/helpers.js"></script>
     <script src="../assets/js/config.js"></script>
+    <style>
+      .student-credential-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+      }
+
+      .student-credential-qr-box {
+        border: 1px dashed #f0ad4e;
+        border-radius: 0.75rem;
+        background: #fffdf8;
+        padding: 0.75rem;
+        text-align: center;
+        max-width: 250px;
+        margin-left: auto;
+      }
+
+      .student-credential-qr-image {
+        width: 100%;
+        max-width: 190px;
+        height: auto;
+        border-radius: 0.5rem;
+        border: 1px solid #f6d8a0;
+        background: #ffffff;
+        padding: 0.35rem;
+      }
+
+      @media (max-width: 991.98px) {
+        .student-credential-qr-box {
+          margin-left: 0;
+        }
+      }
+    </style>
   </head>
   <body>
     <div class="layout-wrapper layout-content-navbar">
@@ -255,30 +288,99 @@ if ($pageError === null) {
               <?php endif; ?>
 
               <?php if (!empty($flash['credential']) && is_array($flash['credential'])): ?>
+                <?php
+                  $issuedExamineeNumber = (string) ($flash['credential']['examinee_number'] ?? '');
+                  $issuedTemporaryPassword = (string) ($flash['credential']['temporary_password'] ?? '');
+                  $issuedFullName = (string) ($flash['credential']['full_name'] ?? '');
+                  $issuedPreferredProgram = (string) ($flash['credential']['preferred_program'] ?? '-');
+                  $studentPortalLoginUrl = 'https://interview.sksu-orms.net/';
+
+                  $copyMessage = "Student Portal Credentials\n"
+                    . "Student: {$issuedFullName}\n"
+                    . "Examinee Number: {$issuedExamineeNumber}\n"
+                    . "Preferred Program: {$issuedPreferredProgram}\n"
+                    . "Login URL: {$studentPortalLoginUrl}\n"
+                    . "Username: {$issuedExamineeNumber}\n"
+                    . "Temporary Password: {$issuedTemporaryPassword}\n"
+                    . "Note: Change password on first login.";
+
+                  $qrPayload = "Student Portal Credentials\n"
+                    . "Login URL: {$studentPortalLoginUrl}\n"
+                    . "Username: {$issuedExamineeNumber}\n"
+                    . "Temporary Password: {$issuedTemporaryPassword}";
+
+                  $qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=8&data=' . rawurlencode($qrPayload);
+                ?>
                 <div class="card mb-4 border border-warning">
-                  <div class="card-header pb-2">
+                  <div class="card-header pb-2 d-flex flex-column flex-md-row align-items-md-start justify-content-between gap-2">
                     <h6 class="mb-0 text-warning">Issued Student Portal Credentials</h6>
+                    <div class="student-credential-actions">
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-outline-primary js-copy-text"
+                        data-copy-text="<?= htmlspecialchars($copyMessage, ENT_QUOTES); ?>"
+                      >
+                        <i class="bx bx-copy me-1"></i>Copy Details
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-outline-secondary js-copy-text"
+                        data-copy-text="<?= htmlspecialchars($issuedTemporaryPassword, ENT_QUOTES); ?>"
+                      >
+                        <i class="bx bx-key me-1"></i>Copy Password
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-outline-info js-copy-text"
+                        data-copy-text="<?= htmlspecialchars($studentPortalLoginUrl, ENT_QUOTES); ?>"
+                      >
+                        <i class="bx bx-link me-1"></i>Copy Login Link
+                      </button>
+                    </div>
                   </div>
                   <div class="card-body">
-                    <p class="mb-1">
-                      <strong>Student:</strong>
-                      <?= htmlspecialchars((string) ($flash['credential']['full_name'] ?? '')); ?>
-                    </p>
-                    <p class="mb-1">
-                      <strong>Examinee Number:</strong>
-                      <?= htmlspecialchars((string) ($flash['credential']['examinee_number'] ?? '')); ?>
-                    </p>
-                    <p class="mb-1">
-                      <strong>Preferred Program:</strong>
-                      <?= htmlspecialchars((string) ($flash['credential']['preferred_program'] ?? '-')); ?>
-                    </p>
-                    <p class="mb-0">
-                      <strong>Temporary Password:</strong>
-                      <code><?= htmlspecialchars((string) ($flash['credential']['temporary_password'] ?? '')); ?></code>
-                    </p>
-                    <small class="text-muted d-block mt-2">
-                      Share this password securely with the student. They will be required to change it at next login.
-                    </small>
+                    <div class="row g-3 align-items-start">
+                      <div class="col-12 col-lg-8">
+                        <p class="mb-1">
+                          <strong>Student:</strong>
+                          <?= htmlspecialchars($issuedFullName); ?>
+                        </p>
+                        <p class="mb-1">
+                          <strong>Examinee Number:</strong>
+                          <?= htmlspecialchars($issuedExamineeNumber); ?>
+                        </p>
+                        <p class="mb-1">
+                          <strong>Preferred Program:</strong>
+                          <?= htmlspecialchars($issuedPreferredProgram); ?>
+                        </p>
+                        <p class="mb-1">
+                          <strong>Temporary Password:</strong>
+                          <code><?= htmlspecialchars($issuedTemporaryPassword); ?></code>
+                        </p>
+                        <p class="mb-0">
+                          <strong>Portal Login:</strong>
+                          <a href="<?= htmlspecialchars($studentPortalLoginUrl); ?>" target="_blank" rel="noopener">
+                            <?= htmlspecialchars($studentPortalLoginUrl); ?>
+                          </a>
+                        </p>
+                        <small class="text-muted d-block mt-2">
+                          Share this password securely with the student. They will be required to change it at next login.
+                        </small>
+                      </div>
+                      <div class="col-12 col-lg-4">
+                        <div class="student-credential-qr-box">
+                          <div class="small fw-semibold text-warning mb-2">Scan QR to Share</div>
+                          <img
+                            src="<?= htmlspecialchars($qrUrl); ?>"
+                            alt="Student portal credentials QR code"
+                            class="student-credential-qr-image"
+                          />
+                          <small class="text-muted d-block mt-2">
+                            QR contains login URL, username, and temporary password.
+                          </small>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               <?php endif; ?>
@@ -417,5 +519,70 @@ if ($pageError === null) {
     <script src="../assets/vendor/libs/perfect-scrollbar/perfect-scrollbar.js"></script>
     <script src="../assets/vendor/js/menu.js"></script>
     <script src="../assets/js/main.js"></script>
+    <script>
+      (function () {
+        async function copyText(text) {
+          const value = String(text || '');
+          if (!value) return false;
+
+          try {
+            if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+              await navigator.clipboard.writeText(value);
+              return true;
+            }
+          } catch (error) {
+          }
+
+          const helper = document.createElement('textarea');
+          helper.value = value;
+          helper.setAttribute('readonly', 'readonly');
+          helper.style.position = 'fixed';
+          helper.style.opacity = '0';
+          helper.style.pointerEvents = 'none';
+          document.body.appendChild(helper);
+          helper.focus();
+          helper.select();
+
+          let success = false;
+          try {
+            success = document.execCommand('copy');
+          } catch (error) {
+            success = false;
+          }
+
+          document.body.removeChild(helper);
+          return success;
+        }
+
+        function setButtonState(button, text, cssClass) {
+          if (!button) return;
+          button.dataset.originalText = button.dataset.originalText || button.innerHTML;
+          button.innerHTML = text;
+          if (cssClass) {
+            button.classList.add(cssClass);
+          }
+          setTimeout(() => {
+            button.innerHTML = button.dataset.originalText || button.innerHTML;
+            if (cssClass) {
+              button.classList.remove(cssClass);
+            }
+          }, 1500);
+        }
+
+        document.addEventListener('click', async function (event) {
+          const button = event.target.closest('.js-copy-text');
+          if (!button) return;
+
+          event.preventDefault();
+          const textToCopy = button.getAttribute('data-copy-text') || '';
+          const success = await copyText(textToCopy);
+          if (success) {
+            setButtonState(button, '<i class="bx bx-check me-1"></i>Copied', 'btn-success');
+          } else {
+            setButtonState(button, '<i class="bx bx-x me-1"></i>Copy Failed', 'btn-danger');
+          }
+        });
+      })();
+    </script>
   </body>
 </html>
