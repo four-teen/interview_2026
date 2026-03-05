@@ -9,6 +9,7 @@ $search = trim((string) ($_GET['q'] ?? ''));
 $basisFilter = strtolower(trim((string) ($_GET['basis'] ?? 'all')));
 $scoreStatusFilter = strtolower(trim((string) ($_GET['score_status'] ?? 'all')));
 $preferredProgramFilter = trim((string) ($_GET['preferred_program_filter'] ?? ''));
+$highlightEditedId = max(0, (int) ($_GET['edited_id'] ?? 0));
 $page = max(1, (int) ($_GET['page'] ?? 1));
 $perPage = 15;
 
@@ -36,6 +37,38 @@ $totalStudents = 0;
 $totalPages = 1;
 $preferredProgramOptions = [];
 $preferredProgramFilterFound = false;
+$editMarkerEnabled = guidance_ensure_student_edit_marks_table($conn);
+$editMarkSelectSql = "0 AS guidance_edit_count, NULL AS guidance_last_edited_at, '' AS guidance_last_edited_by";
+$editMarkJoinSql = '';
+if ($editMarkerEnabled) {
+    $editMarkSelectSql = "
+            COALESCE(gem.edit_count, 0) AS guidance_edit_count,
+            gem.last_edited_at AS guidance_last_edited_at,
+            COALESCE(geditor.acc_fullname, '') AS guidance_last_edited_by
+    ";
+    $editMarkJoinSql = "
+        LEFT JOIN tbl_guidance_student_edit_marks gem
+            ON gem.placement_result_id = pr.id
+           AND gem.upload_batch_id = pr.upload_batch_id
+        LEFT JOIN tblaccount geditor
+            ON geditor.accountid = gem.last_edited_by
+    ";
+}
+
+function guidance_format_datetime_display(?string $value): string
+{
+    $raw = trim((string) $value);
+    if ($raw === '') {
+        return '';
+    }
+
+    try {
+        $date = new DateTime($raw);
+        return $date->format('M d, Y h:i A');
+    } catch (Throwable $e) {
+        return $raw;
+    }
+}
 
 $interviewJoinSql = "
     LEFT JOIN (
@@ -179,9 +212,11 @@ if ($activeBatchId !== null) {
             pr.overall_standard_score,
             COALESCE(ix.has_interview, 0) AS has_interview,
             COALESCE(ix.has_score, 0) AS has_score,
-            ix.final_score
+            ix.final_score,
+            {$editMarkSelectSql}
         FROM tbl_placement_results pr
         {$interviewJoinSql}
+        {$editMarkJoinSql}
         WHERE {$whereSql}
         ORDER BY pr.full_name ASC, pr.examinee_number ASC
         LIMIT ? OFFSET ?
@@ -282,6 +317,11 @@ $returnQuery = guidance_get_student_return_query($_GET);
         color: #334155;
       }
 
+      .gs-badge--edited {
+        background: #e0f2fe;
+        color: #075985;
+      }
+
       .gs-empty-card {
         border: 1px dashed #d9e2ef;
         border-radius: 1rem;
@@ -307,6 +347,15 @@ $returnQuery = guidance_get_student_return_query($_GET);
         margin-top: 0.2rem;
         font-size: 0.76rem;
         color: #7d8aa3;
+      }
+
+      .gs-sub--edited {
+        color: #0c4a6e;
+        font-weight: 600;
+      }
+
+      .gs-row--just-edited td {
+        background: #ecfdf3;
       }
 
       .gs-final-score {
@@ -476,15 +525,41 @@ $returnQuery = guidance_get_student_return_query($_GET);
                         <tbody>
                           <?php foreach ($students as $student): ?>
                             <?php
+                            $studentIdValue = (int) ($student['id'] ?? 0);
                             $preferredProgram = trim((string) ($student['preferred_program'] ?? ''));
                             $isEsm = guidance_is_esm_preferred_program($preferredProgram);
                             $hasInterview = ((int) ($student['has_interview'] ?? 0) === 1);
                             $hasScore = ((int) ($student['has_score'] ?? 0) === 1);
+                            $editCount = (int) ($student['guidance_edit_count'] ?? 0);
+                            $isEditedRecord = $editCount > 0;
+                            $editedBy = trim((string) ($student['guidance_last_edited_by'] ?? ''));
+                            $editedAtLabel = guidance_format_datetime_display((string) ($student['guidance_last_edited_at'] ?? ''));
+                            $rowClassList = [];
+                            if ($isEditedRecord && $studentIdValue === $highlightEditedId) {
+                                $rowClassList[] = 'gs-row--just-edited';
+                            }
+                            $rowClassAttr = !empty($rowClassList)
+                                ? (' class="' . implode(' ', $rowClassList) . '"')
+                                : '';
                             ?>
-                            <tr>
+                            <tr<?= $rowClassAttr; ?>>
                               <td>
                                 <span class="gs-name"><?= htmlspecialchars((string) ($student['full_name'] ?? '')); ?></span>
+                                <?php if ($isEditedRecord): ?>
+                                  <span class="gs-badge gs-badge--edited ms-2">Edited</span>
+                                <?php endif; ?>
                                 <small class="gs-sub">Examinee #: <?= htmlspecialchars((string) ($student['examinee_number'] ?? '')); ?></small>
+                                <?php if ($isEditedRecord): ?>
+                                  <small class="gs-sub gs-sub--edited">
+                                    Last edit: <?= htmlspecialchars($editedAtLabel !== '' ? $editedAtLabel : 'Unknown'); ?>
+                                    <?php if ($editedBy !== ''): ?>
+                                      by <?= htmlspecialchars($editedBy); ?>
+                                    <?php endif; ?>
+                                    <?php if ($editCount > 1): ?>
+                                      (<?= number_format($editCount); ?>x)
+                                    <?php endif; ?>
+                                  </small>
+                                <?php endif; ?>
                               </td>
                               <td>
                                 <?= htmlspecialchars($preferredProgram !== '' ? $preferredProgram : 'No preferred program recorded'); ?>
@@ -518,7 +593,7 @@ $returnQuery = guidance_get_student_return_query($_GET);
                                   type="button"
                                   class="btn btn-sm btn-outline-primary"
                                   data-guidance-open="edit"
-                                  data-student-id="<?= (int) ($student['id'] ?? 0); ?>"
+                                  data-student-id="<?= $studentIdValue; ?>"
                                   data-examinee-number="<?= htmlspecialchars((string) ($student['examinee_number'] ?? ''), ENT_QUOTES); ?>"
                                   data-full-name="<?= htmlspecialchars((string) ($student['full_name'] ?? ''), ENT_QUOTES); ?>"
                                   data-preferred-program="<?= htmlspecialchars($preferredProgram, ENT_QUOTES); ?>"

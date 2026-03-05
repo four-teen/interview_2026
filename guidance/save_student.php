@@ -321,6 +321,7 @@ $returnQuery = guidance_get_student_return_query($_POST);
 $mode = strtolower(trim((string) ($_POST['mode'] ?? 'add')));
 $mode = $mode === 'edit' ? 'edit' : 'add';
 $studentId = (int) ($_POST['student_id'] ?? 0);
+$editorAccountId = (int) ($_SESSION['accountid'] ?? 0);
 
 $examineeNumber = trim((string) ($_POST['examinee_number'] ?? ''));
 $fullName = strtoupper(trim((string) ($_POST['full_name'] ?? '')));
@@ -380,7 +381,7 @@ try {
 
     if ($mode === 'edit') {
         $lockStmt = $conn->prepare("
-            SELECT id
+            SELECT id, upload_batch_id
             FROM tbl_placement_results
             WHERE id = ?
             LIMIT 1
@@ -395,6 +396,8 @@ try {
         if (!$existingStudent) {
             throw new RuntimeException('Student record not found.');
         }
+
+        $studentUploadBatchId = trim((string) ($existingStudent['upload_batch_id'] ?? ''));
 
         $updateStmt = $conn->prepare("
             UPDATE tbl_placement_results
@@ -464,6 +467,12 @@ try {
             ),
             guidance_load_active_scoring_components($conn)
         );
+        $editMarkerSaved = guidance_mark_student_record_edited(
+            $conn,
+            $studentId,
+            $studentUploadBatchId,
+            $editorAccountId
+        );
 
         $conn->commit();
         $successMessage = 'Student information updated successfully.';
@@ -472,8 +481,13 @@ try {
                 . number_format((int) $scoreSync['updated_interviews'])
                 . ' scored interview record(s).';
         }
+        if ($editMarkerSaved) {
+            $successMessage .= ' Edit marker updated.';
+        }
         guidance_set_flash('success', $successMessage);
-        guidance_redirect_students($returnQuery);
+        $returnQueryWithEditedMarker = $returnQuery;
+        $returnQueryWithEditedMarker['edited_id'] = $studentId;
+        guidance_redirect_students($returnQueryWithEditedMarker);
     }
 
     $activeBatchId = guidance_get_active_batch_id($conn);

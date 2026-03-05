@@ -155,6 +155,84 @@ function guidance_pull_flash(): ?array
     return is_array($flash) ? $flash : null;
 }
 
+function guidance_ensure_student_edit_marks_table(mysqli $conn): bool
+{
+    static $tableReady = null;
+    if ($tableReady !== null) {
+        return $tableReady;
+    }
+
+    $sql = "
+        CREATE TABLE IF NOT EXISTS tbl_guidance_student_edit_marks (
+            mark_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            placement_result_id INT(11) NOT NULL,
+            upload_batch_id VARCHAR(80) NOT NULL,
+            last_edited_by INT(11) NOT NULL,
+            last_edited_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            edit_count INT(11) NOT NULL DEFAULT 1,
+            PRIMARY KEY (mark_id),
+            UNIQUE KEY uniq_guidance_edit_mark (placement_result_id, upload_batch_id),
+            KEY idx_guidance_edit_batch (upload_batch_id),
+            KEY idx_guidance_edit_last_edited_at (last_edited_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ";
+
+    try {
+        $tableReady = (bool) $conn->query($sql);
+    } catch (Throwable $e) {
+        $tableReady = false;
+    }
+
+    return $tableReady;
+}
+
+function guidance_mark_student_record_edited(
+    mysqli $conn,
+    int $placementResultId,
+    string $uploadBatchId,
+    int $editorAccountId
+): bool {
+    if ($placementResultId <= 0 || $editorAccountId <= 0) {
+        return false;
+    }
+
+    $uploadBatchId = trim($uploadBatchId);
+    if ($uploadBatchId === '') {
+        return false;
+    }
+
+    if (!guidance_ensure_student_edit_marks_table($conn)) {
+        return false;
+    }
+
+    try {
+        $stmt = $conn->prepare("
+            INSERT INTO tbl_guidance_student_edit_marks (
+                placement_result_id,
+                upload_batch_id,
+                last_edited_by,
+                last_edited_at,
+                edit_count
+            ) VALUES (?, ?, ?, CURRENT_TIMESTAMP, 1)
+            ON DUPLICATE KEY UPDATE
+                last_edited_by = VALUES(last_edited_by),
+                last_edited_at = CURRENT_TIMESTAMP,
+                edit_count = edit_count + 1
+        ");
+        if (!$stmt) {
+            return false;
+        }
+
+        $stmt->bind_param('isi', $placementResultId, $uploadBatchId, $editorAccountId);
+        $ok = $stmt->execute();
+        $stmt->close();
+
+        return (bool) $ok;
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
 function guidance_get_student_return_query(array $source): array
 {
     $query = [];
