@@ -174,6 +174,11 @@ function guidance_get_student_return_query(array $source): array
         $query['score_status'] = $scoreStatus;
     }
 
+    $preferredProgramFilter = trim((string) ($source['preferred_program_filter'] ?? ''));
+    if ($preferredProgramFilter !== '') {
+        $query['preferred_program_filter'] = $preferredProgramFilter;
+    }
+
     $page = max(1, (int) ($source['page'] ?? 1));
     if ($page > 1) {
         $query['page'] = $page;

@@ -43,6 +43,29 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
     min-width: 280px;
   }
 
+  #adminGlobalSearchCount {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 8.4rem;
+    padding: 0.34rem 0.72rem;
+    border: 1px solid #dce4ef;
+    border-radius: 999px;
+    background: #f7f9fc;
+    color: #607188;
+    font-size: 0.73rem;
+    font-weight: 700;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  #adminGlobalSearchCount.is-filtered {
+    border-color: #b9d9ff;
+    background: #edf5ff;
+    color: #1f4f9c;
+  }
+
   #adminGlobalSearchForm .form-control:focus {
     border: 1px solid #d9a441;
     box-shadow: 0 0 0 0.2rem rgba(217, 164, 65, 0.18);
@@ -269,9 +292,22 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
       margin-right: 0.5rem !important;
     }
 
+    #adminGlobalSearchForm {
+      flex-wrap: wrap;
+      gap: 0.4rem 0.65rem;
+    }
+
     #adminGlobalSearchForm .form-control {
+      flex: 1 1 calc(100% - 2rem);
       min-width: 0;
       font-size: 0.9rem;
+    }
+
+    #adminGlobalSearchCount {
+      margin-left: 1.95rem;
+      min-width: 0;
+      font-size: 0.7rem;
+      padding: 0.26rem 0.62rem;
     }
 
     #adminGlobalSearchInput::placeholder {
@@ -328,11 +364,12 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
         <input
           type="search"
           id="adminGlobalSearchInput"
-          class="form-control border-0 shadow-none w-100"
-          style="max-width: 42rem;"
+          class="form-control border-0 shadow-none"
+          style="flex: 1 1 42rem; max-width: 42rem;"
           placeholder="Search examinee number, full name, or preferred program and press Enter"
           aria-label="Search examinees"
         />
+        <span id="adminGlobalSearchCount" aria-live="polite">Total: --</span>
       </form>
     </div>
 
@@ -414,6 +451,7 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
     if (!searchForm) return;
 
     const searchInput = document.getElementById('adminGlobalSearchInput');
+    const countBadgeEl = document.getElementById('adminGlobalSearchCount');
     const compactSearchMedia = window.matchMedia('(max-width: 767.98px)');
     const modalEl = document.getElementById('adminExamineeSearchModal');
     const queryChipEl = document.getElementById('adminSearchQueryChip');
@@ -422,6 +460,8 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
     const cardWrapEl = document.getElementById('adminSearchResultCardWrap');
     const resultBodyEl = document.getElementById('adminExamineeSearchResults');
     const endpointUrl = <?= json_encode(rtrim(BASE_URL, '/') . '/administrator/search_examinees.php'); ?>;
+    const countFormatter = new Intl.NumberFormat();
+    let lastKnownTotalRecords = null;
 
     const updateSearchPlaceholder = () => {
       searchInput.placeholder = compactSearchMedia.matches
@@ -429,7 +469,65 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
         : 'Search examinee number, full name, or preferred program and press Enter';
     };
 
+    function toValidCount(value) {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed < 0) return null;
+      return Math.trunc(parsed);
+    }
+
+    function formatCount(value) {
+      const normalized = toValidCount(value);
+      if (normalized === null) return null;
+      return countFormatter.format(normalized);
+    }
+
+    function updateCountBadge(filteredRecords = null, totalRecords = null, isFiltered = false) {
+      if (!countBadgeEl) return;
+
+      const normalizedTotal = toValidCount(totalRecords);
+      const normalizedFiltered = toValidCount(filteredRecords);
+
+      if (normalizedTotal !== null) {
+        lastKnownTotalRecords = normalizedTotal;
+      }
+
+      countBadgeEl.classList.toggle('is-filtered', isFiltered);
+
+      if (isFiltered && normalizedFiltered !== null) {
+        const matchedText = formatCount(normalizedFiltered);
+        if (lastKnownTotalRecords !== null) {
+          countBadgeEl.textContent = `Matched: ${matchedText} / ${formatCount(lastKnownTotalRecords)}`;
+        } else {
+          countBadgeEl.textContent = `Matched: ${matchedText}`;
+        }
+        return;
+      }
+
+      if (lastKnownTotalRecords !== null) {
+        countBadgeEl.textContent = `Total: ${formatCount(lastKnownTotalRecords)}`;
+        return;
+      }
+
+      countBadgeEl.textContent = 'Total: --';
+    }
+
+    function loadInitialTotalCount() {
+      fetch(endpointUrl, {
+        method: 'GET',
+        headers: { Accept: 'application/json' }
+      })
+        .then((res) => res.json())
+        .then((payload) => {
+          if (!payload || payload.success !== true) return;
+          updateCountBadge(null, payload.total_records, false);
+        })
+        .catch(() => {
+          updateCountBadge(null, null, false);
+        });
+    }
+
     updateSearchPlaceholder();
+    loadInitialTotalCount();
     if (typeof compactSearchMedia.addEventListener === 'function') {
       compactSearchMedia.addEventListener('change', updateSearchPlaceholder);
     } else if (typeof compactSearchMedia.addListener === 'function') {
@@ -633,6 +731,7 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
       emptyEl.textContent = 'No matching examinees found.';
 
       if (query.length < 2) {
+        updateCountBadge(null, lastKnownTotalRecords, false);
         queryChipEl.textContent = 'Please enter at least 2 characters';
         queryChipEl.classList.remove('d-none');
         resultBodyEl.innerHTML = '';
@@ -656,14 +755,25 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
             throw new Error((payload && payload.message) || 'Failed to search records.');
           }
 
-          renderRows(payload.rows || []);
+          const rows = payload.rows || [];
+          const filteredCount = toValidCount(payload.filtered_records) ?? rows.length;
+          const totalCount = toValidCount(payload.total_records) ?? lastKnownTotalRecords;
+          updateCountBadge(filteredCount, totalCount, true);
+          renderRows(rows);
         })
         .catch((error) => {
           console.error(error);
           resultBodyEl.innerHTML = '';
           emptyEl.textContent = error.message || 'Failed to search placement results.';
           setModalState('empty');
+          updateCountBadge(null, lastKnownTotalRecords, false);
         });
+    });
+
+    searchInput.addEventListener('input', function () {
+      if ((searchInput.value || '').trim() === '') {
+        updateCountBadge(null, lastKnownTotalRecords, false);
+      }
     });
 
     resultBodyEl.addEventListener('click', function (event) {

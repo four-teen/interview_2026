@@ -8,6 +8,7 @@ $flash = guidance_pull_flash();
 $search = trim((string) ($_GET['q'] ?? ''));
 $basisFilter = strtolower(trim((string) ($_GET['basis'] ?? 'all')));
 $scoreStatusFilter = strtolower(trim((string) ($_GET['score_status'] ?? 'all')));
+$preferredProgramFilter = trim((string) ($_GET['preferred_program_filter'] ?? ''));
 $page = max(1, (int) ($_GET['page'] ?? 1));
 $perPage = 15;
 
@@ -17,6 +18,10 @@ if (!in_array($basisFilter, ['all', 'esm', 'overall'], true)) {
 
 if (!in_array($scoreStatusFilter, ['all', 'scored', 'not_scored'], true)) {
     $scoreStatusFilter = 'all';
+}
+
+if (strlen($preferredProgramFilter) > 255) {
+    $preferredProgramFilter = substr($preferredProgramFilter, 0, 255);
 }
 
 $activeBatchId = guidance_get_active_batch_id($conn);
@@ -29,6 +34,8 @@ $summary = [
 $students = [];
 $totalStudents = 0;
 $totalPages = 1;
+$preferredProgramOptions = [];
+$preferredProgramFilterFound = false;
 
 $interviewJoinSql = "
     LEFT JOIN (
@@ -45,6 +52,41 @@ $interviewJoinSql = "
 
 if ($activeBatchId !== null) {
     $esmConditionSql = guidance_build_esm_preferred_program_condition_sql('pr.preferred_program');
+
+    $preferredProgramSql = "
+        SELECT
+            TRIM(pr.preferred_program) AS preferred_program_name,
+            COUNT(*) AS total_students
+        FROM tbl_placement_results pr
+        WHERE pr.upload_batch_id = ?
+          AND pr.preferred_program IS NOT NULL
+          AND TRIM(pr.preferred_program) <> ''
+        GROUP BY TRIM(pr.preferred_program)
+        ORDER BY TRIM(pr.preferred_program) ASC
+    ";
+    $stmtPreferredPrograms = $conn->prepare($preferredProgramSql);
+    if ($stmtPreferredPrograms) {
+        $stmtPreferredPrograms->bind_param('s', $activeBatchId);
+        $stmtPreferredPrograms->execute();
+        $preferredProgramResult = $stmtPreferredPrograms->get_result();
+        while ($preferredProgramResult && $preferredProgramRow = $preferredProgramResult->fetch_assoc()) {
+            $programName = trim((string) ($preferredProgramRow['preferred_program_name'] ?? ''));
+            if ($programName === '') {
+                continue;
+            }
+
+            if (!$preferredProgramFilterFound && strcasecmp($programName, $preferredProgramFilter) === 0) {
+                $preferredProgramFilter = $programName;
+                $preferredProgramFilterFound = true;
+            }
+
+            $preferredProgramOptions[] = [
+                'name' => $programName,
+                'count' => (int) ($preferredProgramRow['total_students'] ?? 0)
+            ];
+        }
+        $stmtPreferredPrograms->close();
+    }
 
     $summarySql = "
         SELECT
@@ -91,6 +133,12 @@ if ($activeBatchId !== null) {
         $where[] = 'COALESCE(ix.has_score, 0) = 1';
     } elseif ($scoreStatusFilter === 'not_scored') {
         $where[] = 'COALESCE(ix.has_score, 0) = 0';
+    }
+
+    if ($preferredProgramFilter !== '') {
+        $where[] = "TRIM(COALESCE(pr.preferred_program, '')) = ?";
+        $types .= 's';
+        $params[] = $preferredProgramFilter;
     }
 
     $whereSql = implode(' AND ', $where);
@@ -340,7 +388,7 @@ $returnQuery = guidance_get_student_return_query($_GET);
                 <div class="card-header">
                   <div class="d-flex flex-column flex-xl-row justify-content-between gap-3">
                     <form method="GET" class="row g-2 align-items-end flex-grow-1">
-                      <div class="col-xl-5">
+                      <div class="col-xl-4">
                         <label class="form-label mb-1">Search</label>
                         <input
                           type="search"
@@ -350,7 +398,27 @@ $returnQuery = guidance_get_student_return_query($_GET);
                           placeholder="Examinee number, name, or preferred program"
                         />
                       </div>
-                      <div class="col-xl-2 col-md-4">
+                      <div class="col-xl-3 col-md-6">
+                        <label class="form-label mb-1">Preferred Program</label>
+                        <select name="preferred_program_filter" class="form-select">
+                          <option value="">All Programs</option>
+                          <?php foreach ($preferredProgramOptions as $preferredProgramOption): ?>
+                            <?php
+                            $optionName = (string) ($preferredProgramOption['name'] ?? '');
+                            $optionCount = (int) ($preferredProgramOption['count'] ?? 0);
+                            ?>
+                            <option value="<?= htmlspecialchars($optionName); ?>"<?= $preferredProgramFilter === $optionName ? ' selected' : ''; ?>>
+                              <?= htmlspecialchars($optionName); ?> (<?= number_format($optionCount); ?>)
+                            </option>
+                          <?php endforeach; ?>
+                          <?php if ($preferredProgramFilter !== '' && !$preferredProgramFilterFound): ?>
+                            <option value="<?= htmlspecialchars($preferredProgramFilter); ?>" selected>
+                              <?= htmlspecialchars($preferredProgramFilter); ?> (0)
+                            </option>
+                          <?php endif; ?>
+                        </select>
+                      </div>
+                      <div class="col-xl-2 col-md-3">
                         <label class="form-label mb-1">Basis</label>
                         <select name="basis" class="form-select">
                           <option value="all"<?= $basisFilter === 'all' ? ' selected' : ''; ?>>All</option>
@@ -358,7 +426,7 @@ $returnQuery = guidance_get_student_return_query($_GET);
                           <option value="overall"<?= $basisFilter === 'overall' ? ' selected' : ''; ?>>Overall</option>
                         </select>
                       </div>
-                      <div class="col-xl-2 col-md-4">
+                      <div class="col-xl-2 col-md-3">
                         <label class="form-label mb-1">Score Status</label>
                         <select name="score_status" class="form-select">
                           <option value="all"<?= $scoreStatusFilter === 'all' ? ' selected' : ''; ?>>All</option>
@@ -366,7 +434,7 @@ $returnQuery = guidance_get_student_return_query($_GET);
                           <option value="not_scored"<?= $scoreStatusFilter === 'not_scored' ? ' selected' : ''; ?>>Not Scored</option>
                         </select>
                       </div>
-                      <div class="col-xl-1 col-md-4 d-grid">
+                      <div class="col-xl-1 col-md-12 d-grid">
                         <button type="submit" class="btn btn-primary">Filter</button>
                       </div>
                     </form>
@@ -534,6 +602,7 @@ $returnQuery = guidance_get_student_return_query($_GET);
               <input type="hidden" name="q" value="<?= htmlspecialchars($search); ?>" />
               <input type="hidden" name="basis" value="<?= htmlspecialchars($basisFilter); ?>" />
               <input type="hidden" name="score_status" value="<?= htmlspecialchars($scoreStatusFilter); ?>" />
+              <input type="hidden" name="preferred_program_filter" value="<?= htmlspecialchars($preferredProgramFilter); ?>" />
               <input type="hidden" name="page" value="<?= (int) $page; ?>" />
 
               <div class="row g-3">

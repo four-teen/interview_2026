@@ -45,25 +45,58 @@ function build_admin_search_esm_preferred_program_condition_sql(string $columnEx
 }
 
 $query = trim((string) ($_GET['q'] ?? ''));
+if (strlen($query) > 100) {
+    $query = substr($query, 0, 100);
+}
+
+$totalRecords = 0;
+$totalStmt = $conn->prepare("SELECT COUNT(*) AS total_records FROM tbl_placement_results");
+if ($totalStmt) {
+    $totalStmt->execute();
+    $totalResult = $totalStmt->get_result();
+    if ($totalResult) {
+        $totalRow = $totalResult->fetch_assoc();
+        $totalRecords = (int) ($totalRow['total_records'] ?? 0);
+    }
+    $totalStmt->close();
+}
+
 if ($query === '') {
     echo json_encode([
         'success' => true,
+        'query' => $query,
+        'total_records' => $totalRecords,
+        'filtered_records' => $totalRecords,
+        'returned_records' => 0,
         'rows' => []
     ]);
     exit;
 }
 
-if (strlen($query) > 100) {
-    $query = substr($query, 0, 100);
-}
-
 $like = '%' . $query . '%';
-$globalSatCutoffState = get_global_sat_cutoff_state($conn);
-$globalSatCutoffEnabled = (bool) ($globalSatCutoffState['enabled'] ?? false);
-$globalSatCutoffValue = isset($globalSatCutoffState['value']) ? (int) $globalSatCutoffState['value'] : null;
-$globalSatCutoffActive = ($globalSatCutoffEnabled && $globalSatCutoffValue !== null);
-$cutoffWhereSql = $globalSatCutoffActive ? ' AND pr.sat_score >= ?' : '';
 $esmConditionSql = build_admin_search_esm_preferred_program_condition_sql('pr.preferred_program');
+
+$filteredRecords = 0;
+$countSql = "
+    SELECT COUNT(*) AS filtered_records
+    FROM tbl_placement_results pr
+    WHERE (
+            pr.examinee_number LIKE ?
+         OR pr.full_name LIKE ?
+         OR pr.preferred_program LIKE ?
+    )
+";
+$countStmt = $conn->prepare($countSql);
+if ($countStmt) {
+    $countStmt->bind_param('sss', $like, $like, $like);
+    $countStmt->execute();
+    $countResult = $countStmt->get_result();
+    if ($countResult) {
+        $countRow = $countResult->fetch_assoc();
+        $filteredRecords = (int) ($countRow['filtered_records'] ?? 0);
+    }
+    $countStmt->close();
+}
 
 $sql = "
     SELECT
@@ -182,7 +215,6 @@ $sql = "
          OR pr.full_name LIKE ?
          OR pr.preferred_program LIKE ?
     )
-      {$cutoffWhereSql}
     ORDER BY pr.created_at DESC, pr.id DESC
     LIMIT 50
 ";
@@ -197,11 +229,7 @@ if (!$stmt) {
     exit;
 }
 
-if ($globalSatCutoffActive) {
-    $stmt->bind_param('sssi', $like, $like, $like, $globalSatCutoffValue);
-} else {
-    $stmt->bind_param('sss', $like, $like, $like);
-}
+$stmt->bind_param('sss', $like, $like, $like);
 $stmt->execute();
 $result = $stmt->get_result();
 
@@ -252,5 +280,8 @@ $stmt->close();
 echo json_encode([
     'success' => true,
     'query' => $query,
+    'total_records' => $totalRecords,
+    'filtered_records' => $filteredRecords,
+    'returned_records' => count($rows),
     'rows' => $rows
 ]);
