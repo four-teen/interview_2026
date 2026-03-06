@@ -177,7 +177,14 @@ if (!function_exists('student_preregistration_fetch_report')) {
             LEFT JOIN tbl_student_credentials sc
                 ON sc.credential_id = spr.credential_id
             WHERE " . implode(' AND ', $where) . "
-            ORDER BY spr.submitted_at DESC, spr.preregistration_id DESC
+            ORDER BY
+                CASE
+                    WHEN spr.locked_rank IS NULL OR spr.locked_rank = 0 THEN 1
+                    ELSE 0
+                END ASC,
+                spr.locked_rank ASC,
+                spr.submitted_at DESC,
+                spr.preregistration_id DESC
             LIMIT ?
         ";
 
@@ -233,6 +240,102 @@ if (!function_exists('student_preregistration_fetch_report')) {
     }
 }
 
+if (!function_exists('student_preregistration_delete_by_program')) {
+    function student_preregistration_delete_by_program(mysqli $conn, int $programId): array
+    {
+        $programId = max(0, $programId);
+        if ($programId <= 0) {
+            return [
+                'success' => false,
+                'deleted' => 0,
+                'message' => 'Invalid program selected.',
+            ];
+        }
+
+        $stmt = $conn->prepare("DELETE FROM tbl_student_preregistration WHERE program_id = ?");
+        if (!$stmt) {
+            return [
+                'success' => false,
+                'deleted' => 0,
+                'message' => 'Server error while preparing cleanup query.',
+            ];
+        }
+
+        $stmt->bind_param('i', $programId);
+        if (!$stmt->execute()) {
+            $stmt->close();
+            return [
+                'success' => false,
+                'deleted' => 0,
+                'message' => 'Failed to remove pre-registrations.',
+            ];
+        }
+
+        $deleted = (int) $stmt->affected_rows;
+        $stmt->close();
+
+        return [
+            'success' => true,
+            'deleted' => $deleted,
+            'message' => $deleted > 0 ? 'Pre-registrations removed.' : 'No pre-registrations found for selected program.',
+        ];
+    }
+}
+
+if (!function_exists('student_preregistration_delete_by_programs')) {
+    function student_preregistration_delete_by_programs(mysqli $conn, array $programIds): array
+    {
+        $normalizedIds = [];
+        foreach ($programIds as $programId) {
+            $id = (int) $programId;
+            if ($id > 0) {
+                $normalizedIds[] = $id;
+            }
+        }
+
+        $normalizedIds = array_values(array_unique($normalizedIds));
+        if (empty($normalizedIds)) {
+            return [
+                'success' => false,
+                'deleted' => 0,
+                'message' => 'No valid program selected.',
+            ];
+        }
+
+        $placeholders = implode(',', array_fill(0, count($normalizedIds), '?'));
+        $deleteSql = "DELETE FROM tbl_student_preregistration WHERE program_id IN ({$placeholders})";
+        $stmt = $conn->prepare($deleteSql);
+        if (!$stmt) {
+            return [
+                'success' => false,
+                'deleted' => 0,
+                'message' => 'Server error while preparing cleanup query.',
+            ];
+        }
+
+        $types = str_repeat('i', count($normalizedIds));
+        $stmt->bind_param($types, ...$normalizedIds);
+        if (!$stmt->execute()) {
+            $stmt->close();
+            return [
+                'success' => false,
+                'deleted' => 0,
+                'message' => 'Failed to remove pre-registrations.',
+            ];
+        }
+
+        $deleted = (int) $stmt->affected_rows;
+        $stmt->close();
+
+        return [
+            'success' => true,
+            'deleted' => $deleted,
+            'message' => $deleted > 0 ? 'Pre-registrations removed.' : 'No pre-registrations found for selected programs.',
+            'program_ids' => $normalizedIds,
+        ];
+    }
+}
+
 if (!function_exists('student_preregistration_get_print_header')) {
     function student_preregistration_get_print_header(): array
     {
@@ -269,6 +372,25 @@ if (!function_exists('student_preregistration_build_print_sections')) {
 
         foreach ($sections as &$section) {
             usort($section['rows'], function (array $left, array $right): int {
+                $leftRank = (int) ($left['locked_rank'] ?? 0);
+                $rightRank = (int) ($right['locked_rank'] ?? 0);
+
+                if ($leftRank === 0) {
+                    $leftRank = 2147483647;
+                }
+
+                if ($rightRank === 0) {
+                    $rightRank = 2147483647;
+                }
+
+                if ($leftRank < $rightRank) {
+                    return -1;
+                }
+
+                if ($leftRank > $rightRank) {
+                    return 1;
+                }
+
                 $leftName = trim((string) ($left['full_name'] ?? ''));
                 $rightName = trim((string) ($right['full_name'] ?? ''));
                 if (function_exists('mb_strtoupper')) {
