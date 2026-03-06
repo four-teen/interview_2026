@@ -413,6 +413,21 @@
                 <span class="badge bg-secondary rounded-pill ms-auto"><?= (int) $sidebarCounts['activity']; ?></span>
               </a>
             </li>
+
+            <li class="menu-item px-2">
+              <a
+                href="student_passwords.php"
+                class="menu-link sidebar-action-card<?= ($sidebarCurrentPage === 'student_passwords.php') ? ' active' : ''; ?>"
+              >
+                <span class="sidebar-action-icon bg-label-warning">
+                  <i class="bx bx-key"></i>
+                </span>
+                <div class="sidebar-action-content">
+                  <div class="sidebar-action-title">Student Passwords</div>
+                  <small class="sidebar-action-sub">Issue new temporary student login password</small>
+                </div>
+              </a>
+            </li>
           </ul>
 
         </aside>

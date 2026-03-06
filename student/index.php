@@ -1,6 +1,7 @@
 <?php
 require_once '../config/db.php';
 require_once '../config/student_credentials.php';
+require_once '../config/program_ranking_lock.php';
 require_once '../config/session_security.php';
 secure_session_start();
 
@@ -120,6 +121,12 @@ if (isset($_SESSION['student_profile_flash']) && is_array($_SESSION['student_pro
     unset($_SESSION['student_profile_flash']);
 }
 
+$preRegistrationFlash = null;
+if (isset($_SESSION['student_prereg_flash']) && is_array($_SESSION['student_prereg_flash'])) {
+    $preRegistrationFlash = $_SESSION['student_prereg_flash'];
+    unset($_SESSION['student_prereg_flash']);
+}
+
 if (empty($_SESSION['student_transfer_csrf'])) {
     try {
         $_SESSION['student_transfer_csrf'] = bin2hex(random_bytes(32));
@@ -133,6 +140,14 @@ if (empty($_SESSION['student_profile_csrf'])) {
         $_SESSION['student_profile_csrf'] = bin2hex(random_bytes(32));
     } catch (Exception $e) {
         $_SESSION['student_profile_csrf'] = sha1(uniqid('student_profile_csrf_', true));
+    }
+}
+
+if (empty($_SESSION['student_prereg_csrf'])) {
+    try {
+        $_SESSION['student_prereg_csrf'] = bin2hex(random_bytes(32));
+    } catch (Exception $e) {
+        $_SESSION['student_prereg_csrf'] = sha1(uniqid('student_prereg_csrf_', true));
     }
 }
 
@@ -262,6 +277,31 @@ function ensure_student_profile_table($conn)
     }
 
     return true;
+}
+
+function ensure_student_preregistration_table($conn)
+{
+    $sql = "
+        CREATE TABLE IF NOT EXISTS tbl_student_preregistration (
+            preregistration_id INT(10) UNSIGNED NOT NULL AUTO_INCREMENT,
+            credential_id INT(10) UNSIGNED NOT NULL,
+            interview_id INT(10) UNSIGNED NOT NULL,
+            examinee_number VARCHAR(50) NOT NULL,
+            program_id INT(10) UNSIGNED NOT NULL,
+            locked_rank INT(10) UNSIGNED DEFAULT NULL,
+            profile_completion_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+            status ENUM('submitted') NOT NULL DEFAULT 'submitted',
+            submitted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (preregistration_id),
+            UNIQUE KEY uq_student_prereg_credential (credential_id),
+            UNIQUE KEY uq_student_prereg_interview (interview_id),
+            KEY idx_student_prereg_program (program_id),
+            KEY idx_student_prereg_examinee (examinee_number)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ";
+
+    return (bool) $conn->query($sql);
 }
 
 function normalize_profile_text($value, $maxLength)
@@ -400,6 +440,11 @@ if (!ensure_student_profile_table($conn)) {
     exit('Student profile storage initialization failed.');
 }
 
+if (!ensure_student_preregistration_table($conn)) {
+    http_response_code(500);
+    exit('Student pre-registration storage initialization failed.');
+}
+
 $studentProfile = [
     'birth_date' => '',
     'sex' => '',
@@ -520,6 +565,32 @@ $studentProfile['parent_guardian_citymun_code'] = (int) ($studentProfile['parent
 $studentProfile['parent_guardian_barangay_code'] = (int) ($studentProfile['parent_guardian_barangay_code'] ?? 0);
 $studentProfileCompletionPercent = calculate_student_profile_completion_percent($studentProfile);
 $studentProfile['profile_completion_percent'] = $studentProfileCompletionPercent;
+
+$studentPreRegistration = null;
+$preRegistrationSql = "
+    SELECT
+        preregistration_id,
+        interview_id,
+        program_id,
+        locked_rank,
+        profile_completion_percent,
+        status,
+        submitted_at,
+        updated_at
+    FROM tbl_student_preregistration
+    WHERE credential_id = ?
+    LIMIT 1
+";
+if ($preRegistrationStmt = $conn->prepare($preRegistrationSql)) {
+    $preRegistrationStmt->bind_param('i', $credentialId);
+    $preRegistrationStmt->execute();
+    $preRegistrationRow = $preRegistrationStmt->get_result()->fetch_assoc();
+    $preRegistrationStmt->close();
+
+    if ($preRegistrationRow) {
+        $studentPreRegistration = $preRegistrationRow;
+    }
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['profile_lookup'])) {
     $lookupType = strtolower(trim((string) ($_GET['profile_lookup'] ?? '')));
@@ -1114,6 +1185,77 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') =
     exit;
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') === 'student_preregistration_submit') {
+    $flashType = 'danger';
+    $flashMessage = 'Pre-registration could not be submitted.';
+
+    $postedCsrf = (string) ($_POST['csrf_token'] ?? '');
+    $sessionCsrf = (string) ($_SESSION['student_prereg_csrf'] ?? '');
+    $interviewId = (int) ($student['interview_id'] ?? 0);
+    $currentProgramId = (int) ($student['first_choice'] ?? 0);
+    $lockContext = program_ranking_get_interview_lock_context($conn, $interviewId);
+    $profileIsComplete = ((float) $studentProfileCompletionPercent >= 100.0);
+
+    if ($postedCsrf === '' || $sessionCsrf === '' || !hash_equals($sessionCsrf, $postedCsrf)) {
+        $flashMessage = 'Invalid pre-registration security token. Refresh the page and try again.';
+    } elseif ($interviewId <= 0) {
+        $flashMessage = 'Interview record is missing. Pre-registration is unavailable.';
+    } elseif ($currentProgramId <= 0) {
+        $flashMessage = 'Program assignment is missing. Pre-registration is unavailable.';
+    } elseif ($lockContext === null) {
+        $flashMessage = 'Pre-registration opens only after your rank is locked.';
+    } elseif (!$profileIsComplete) {
+        $flashMessage = 'Complete your profile to 100% before submitting pre-registration.';
+    } elseif (is_array($studentPreRegistration) && !empty($studentPreRegistration['preregistration_id'])) {
+        $flashType = 'success';
+        $flashMessage = 'Pre-registration was already submitted.';
+    } else {
+        $lockedRank = max(0, (int) ($lockContext['locked_rank'] ?? 0));
+        $insertSql = "
+            INSERT INTO tbl_student_preregistration (
+                credential_id,
+                interview_id,
+                examinee_number,
+                program_id,
+                locked_rank,
+                profile_completion_percent,
+                status
+            ) VALUES (?, ?, ?, ?, NULLIF(?, 0), ?, 'submitted')
+        ";
+        $insertStmt = $conn->prepare($insertSql);
+        if ($insertStmt) {
+            $examineeNumber = (string) ($student['examinee_number'] ?? '');
+            $completionPercent = round((float) $studentProfileCompletionPercent, 2);
+            $insertStmt->bind_param(
+                'iisiid',
+                $credentialId,
+                $interviewId,
+                $examineeNumber,
+                $currentProgramId,
+                $lockedRank,
+                $completionPercent
+            );
+
+            if ($insertStmt->execute()) {
+                $flashType = 'success';
+                $flashMessage = 'Pre-registration submitted successfully.';
+            } else {
+                $flashMessage = 'Failed to save pre-registration.';
+            }
+            $insertStmt->close();
+        } else {
+            $flashMessage = 'Failed to prepare pre-registration.';
+        }
+    }
+
+    $_SESSION['student_prereg_flash'] = [
+        'type' => $flashType,
+        'message' => $flashMessage,
+    ];
+    header('Location: index.php');
+    exit;
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') === 'student_transfer_submit') {
     $flashType = 'danger';
     $flashMessage = 'Transfer request failed.';
@@ -1137,6 +1279,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') =
         $flashMessage = 'Invalid security token. Refresh the page and try again.';
     } elseif ($interviewId <= 0) {
         $flashMessage = 'Interview record is missing. Transfer cannot be processed.';
+    } elseif (program_ranking_is_interview_locked($conn, $interviewId)) {
+        $flashMessage = 'Transfers are no longer available because your current rank is locked.';
     } elseif ($targetProgramId <= 0) {
         $flashMessage = 'Please select a valid transfer program.';
     } elseif ($targetProgramId === $currentFirstChoiceId) {
@@ -1722,12 +1866,82 @@ if ($hasScoredInterview && $firstChoiceRank !== null && $firstChoiceAbsorptiveCa
     $firstChoiceStatusText = 'Capacity not configured';
 }
 
-$transferActionEnabled = $firstChoiceOutsideCapacity;
+$studentLockContext = program_ranking_get_interview_lock_context($conn, (int) ($student['interview_id'] ?? 0));
+$studentRankLocked = ($studentLockContext !== null);
+$studentLockedRank = $studentRankLocked ? max(0, (int) ($studentLockContext['locked_rank'] ?? 0)) : 0;
+
+if ($firstChoiceId > 0 && $hasScoredInterview) {
+    $sharedRankingPayload = program_ranking_fetch_payload($conn, $firstChoiceId, null);
+    if (!empty($sharedRankingPayload['success']) && isset($sharedRankingPayload['rows']) && is_array($sharedRankingPayload['rows'])) {
+        $sharedRankingRows = array_values($sharedRankingPayload['rows']);
+        $firstChoiceRankTotal = count($sharedRankingRows);
+        $currentInterviewId = (int) ($student['interview_id'] ?? 0);
+        $matchingRankingRow = null;
+
+        foreach ($sharedRankingRows as $rankingRow) {
+            $rowInterviewId = (int) ($rankingRow['interview_id'] ?? 0);
+            $rowExamineeNumber = (string) ($rankingRow['examinee_number'] ?? '');
+
+            if ($currentInterviewId > 0 && $rowInterviewId === $currentInterviewId) {
+                $matchingRankingRow = $rankingRow;
+                break;
+            }
+
+            if ($rowExamineeNumber !== '' && $rowExamineeNumber === $currentExaminee) {
+                $matchingRankingRow = $rankingRow;
+            }
+        }
+
+        $firstChoiceRankTotalDisplay = number_format($firstChoiceRankTotal);
+
+        if ($matchingRankingRow !== null) {
+            $firstChoiceRank = max(0, (int) ($matchingRankingRow['rank'] ?? 0));
+            $firstChoiceRankValueDisplay = $firstChoiceRank > 0 ? number_format($firstChoiceRank) : 'N/A';
+            $firstChoiceRankDisplay = $firstChoiceRankValueDisplay . ' / ' . $firstChoiceRankTotalDisplay;
+
+            $isOutsideCapacity = !empty($matchingRankingRow['is_outside_capacity']);
+            $firstChoiceWithinCapacity = !$isOutsideCapacity;
+            $firstChoiceOutsideCapacity = $isOutsideCapacity;
+
+            if (!empty($matchingRankingRow['is_locked'])) {
+                $studentRankLocked = true;
+                if ($studentLockedRank <= 0) {
+                    $studentLockedRank = max(0, (int) ($matchingRankingRow['locked_rank'] ?? $firstChoiceRank));
+                }
+            }
+
+            if ($studentRankLocked) {
+                $firstChoiceStatusText = $studentLockedRank > 0
+                    ? ('Rank locked at #' . number_format($studentLockedRank))
+                    : 'Rank locked for pre-registration';
+                $firstChoiceStatusClass = 'status-ok';
+            } elseif ($firstChoiceOutsideCapacity) {
+                $firstChoiceStatusText = 'Outside absorptive capacity';
+                $firstChoiceStatusClass = 'status-out';
+            } else {
+                $firstChoiceStatusText = 'Within ranked pool';
+                $firstChoiceStatusClass = 'status-ok';
+            }
+        } elseif ($hasScoredInterview) {
+            $firstChoiceRankValueDisplay = 'N/A';
+            $firstChoiceRankDisplay = 'N/A / ' . $firstChoiceRankTotalDisplay;
+            $firstChoiceStatusText = 'Not included in the ranked pool';
+            $firstChoiceStatusClass = 'status-out';
+            $firstChoiceWithinCapacity = false;
+            $firstChoiceOutsideCapacity = true;
+        }
+    }
+}
+
+$transferActionEnabled = (!$studentRankLocked && $firstChoiceOutsideCapacity);
 $transferActionHref = $transferActionEnabled ? '#program-slot-availability-tab' : 'javascript:void(0);';
 $transferActionClass = $transferActionEnabled ? '' : ' is-disabled';
-$transferActionSub = $transferActionEnabled
-    ? 'Outside capacity: explore open programs'
-    : 'Available when rank is outside capacity';
+$transferActionTitle = $studentRankLocked ? 'Transfer Closed' : 'Transfer';
+$transferActionSub = $studentRankLocked
+    ? 'Transfers closed after your rank was locked'
+    : ($transferActionEnabled
+        ? 'Outside capacity: explore open programs'
+        : 'Available when rank is outside capacity');
 
 $studentSatScore = null;
 if (isset($student['sat_score']) && $student['sat_score'] !== '' && $student['sat_score'] !== null) {
@@ -1995,7 +2209,14 @@ if ($allProgramsStmt = $conn->prepare($allProgramsSql)) {
     $allProgramsStmt->close();
 }
 
-$slotPrograms = $allPrograms;
+if ($studentRankLocked) {
+    foreach ($allPrograms as &$programItem) {
+        $programItem['transfer_open'] = false;
+    }
+    unset($programItem);
+}
+
+$slotPrograms = $studentRankLocked ? [] : $allPrograms;
 
 $programIndexById = [];
 foreach ($allPrograms as $programItem) {
@@ -2074,7 +2295,7 @@ $programChoiceCards = [
         'program' => format_program_label($student['first_program_name'] ?? '', $student['first_program_major'] ?? ''),
         'program_code' => $firstChoiceSlotDetails['program_code'],
         'is_primary' => true,
-        'stat_label' => 'Rank / Total Scored',
+        'stat_label' => 'Rank / Total Ranked',
         'stat_value' => $firstChoiceRankDisplay,
         'stat_primary_value' => $firstChoiceRankValueDisplay,
         'stat_secondary_value' => $firstChoiceRankTotalDisplay,
@@ -2149,6 +2370,17 @@ $programChoiceCards = [
     ],
 ];
 
+if ($studentRankLocked) {
+    $programChoiceCards = [reset($programChoiceCards)];
+    foreach ($programChoiceCards as $choiceIndex => &$choiceCard) {
+        $choiceCard['show_transfer'] = false;
+        if ($choiceIndex > 0) {
+            $choiceCard['qualification_note'] = 'Transfer closed after rank lock.';
+        }
+    }
+    unset($choiceCard);
+}
+
 $studentEmail = trim((string) ($student['active_email'] ?? ($_SESSION['email'] ?? 'No email on file')));
 if ($studentEmail === '') {
     $studentEmail = 'No email on file';
@@ -2180,6 +2412,71 @@ $profileParentGuardianProvinceCode = (int) ($studentProfile['parent_guardian_pro
 $profileParentGuardianCitymunCode = (int) ($studentProfile['parent_guardian_citymun_code'] ?? 0);
 $profileParentGuardianBarangayCode = (int) ($studentProfile['parent_guardian_barangay_code'] ?? 0);
 $profileCompletionBadge = number_format((float) $studentProfileCompletionPercent, 0) . '% Complete';
+$isProfileComplete = ((float) $studentProfileCompletionPercent >= 100.0);
+$preRegistrationSubmitted = is_array($studentPreRegistration) && !empty($studentPreRegistration['preregistration_id']);
+$preRegistrationSubmittedAtDisplay = '';
+if ($preRegistrationSubmitted) {
+    $submittedAt = (string) ($studentPreRegistration['submitted_at'] ?? '');
+    $submittedAtTimestamp = ($submittedAt !== '') ? strtotime($submittedAt) : false;
+    $preRegistrationSubmittedAtDisplay = ($submittedAtTimestamp !== false)
+        ? date('F j, Y g:i A', $submittedAtTimestamp)
+        : $submittedAt;
+}
+
+$canUpdateProfile = $studentRankLocked;
+$canSubmitPreRegistration = ($studentRankLocked && $isProfileComplete && !$preRegistrationSubmitted);
+$preRegistrationButtonLabel = $preRegistrationSubmitted ? 'Pre-Registration Submitted' : 'Submit Pre-Registration';
+$preRegistrationButtonClass = $preRegistrationSubmitted ? 'btn-success' : 'btn-primary';
+$preRegistrationButtonTitle = 'Pre-registration has already been submitted.';
+if (!$preRegistrationSubmitted) {
+    if (!$studentRankLocked) {
+        $preRegistrationButtonTitle = 'Available once your rank is locked.';
+    } elseif (!$isProfileComplete) {
+        $preRegistrationButtonTitle = 'Complete your profile to 100% first.';
+    } else {
+        $preRegistrationButtonTitle = 'Submit your locked program for pre-registration.';
+    }
+}
+$updateProfileButtonTitle = $canUpdateProfile
+    ? 'Update your profile details.'
+    : 'Profile updates open once your rank is locked.';
+
+$preRegistrationCardTitle = 'Pre-Registration';
+$preRegistrationCardMessage = 'Pre-registration opens after your rank is locked.';
+$preRegistrationStatusBadgeClass = 'bg-label-secondary';
+$preRegistrationStatusBadgeText = 'Awaiting Lock';
+
+if ($preRegistrationSubmitted) {
+    $preRegistrationCardTitle = 'Pre-Registration Submitted';
+    $preRegistrationCardMessage = $preRegistrationSubmittedAtDisplay !== ''
+        ? ('Your pre-registration was recorded on ' . $preRegistrationSubmittedAtDisplay . '.')
+        : 'Your pre-registration was recorded successfully.';
+    $preRegistrationStatusBadgeClass = 'bg-label-success';
+    $preRegistrationStatusBadgeText = 'Submitted';
+} elseif ($studentRankLocked) {
+    $preRegistrationCardTitle = 'Pre-Registration Ready';
+    if ($isProfileComplete) {
+        $preRegistrationCardMessage = $studentLockedRank > 0
+            ? ('Your rank is locked at #' . number_format($studentLockedRank) . '. You can now submit pre-registration.')
+            : 'Your rank is locked. You can now submit pre-registration.';
+        $preRegistrationStatusBadgeClass = 'bg-label-success';
+        $preRegistrationStatusBadgeText = 'Ready to Submit';
+    } else {
+        $preRegistrationCardMessage = $studentLockedRank > 0
+            ? ('Your rank is locked at #' . number_format($studentLockedRank) . '. Complete your profile to 100% to continue.')
+            : 'Your rank is locked. Complete your profile to 100% to continue.';
+        $preRegistrationStatusBadgeClass = 'bg-label-warning';
+        $preRegistrationStatusBadgeText = 'Profile Incomplete';
+    }
+} elseif ($hasScoredInterview) {
+    $preRegistrationCardMessage = 'Your interview has been scored. Wait for your program rank to be locked before continuing.';
+    $preRegistrationStatusBadgeClass = 'bg-label-info';
+    $preRegistrationStatusBadgeText = 'Waiting for Rank Lock';
+} else {
+    $preRegistrationCardMessage = 'Pre-registration will open after your interview score and rank are finalized.';
+    $preRegistrationStatusBadgeClass = 'bg-label-warning';
+    $preRegistrationStatusBadgeText = 'Interview Pending';
+}
 ?>
 <!DOCTYPE html>
 <html
@@ -2341,6 +2638,21 @@ $profileCompletionBadge = number_format((float) $studentProfileCompletionPercent
 
       .student-rank-number-outside {
         color: #d93025;
+      }
+
+      .student-rank-lock-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.28rem;
+        margin-left: 0.45rem;
+        padding: 0.16rem 0.44rem;
+        border-radius: 999px;
+        background: #fff4d6;
+        border: 1px solid #f0cf7b;
+        color: #9a6700;
+        font-size: 0.72rem;
+        font-weight: 700;
+        vertical-align: middle;
       }
 
       .student-program-status {
@@ -2536,7 +2848,7 @@ $profileCompletionBadge = number_format((float) $studentProfileCompletionPercent
               <a href="<?= htmlspecialchars($transferActionHref); ?>" class="menu-link sidebar-action-card<?= $transferActionClass; ?>">
                 <span class="sidebar-action-icon bg-label-warning"><i class="bx bx-transfer-alt"></i></span>
                 <div>
-                  <div class="sidebar-action-title">Transfer</div>
+                  <div class="sidebar-action-title"><?= htmlspecialchars($transferActionTitle); ?></div>
                   <small class="sidebar-action-sub"><?= htmlspecialchars($transferActionSub); ?></small>
                 </div>
               </a>
@@ -2579,17 +2891,21 @@ $profileCompletionBadge = number_format((float) $studentProfileCompletionPercent
 
             <div class="navbar-nav-right d-flex align-items-center w-100" id="navbar-collapse">
               <div class="navbar-nav align-items-center flex-grow-1 me-3">
-                <form id="studentProgramSearchForm" class="nav-item d-flex align-items-center w-100" autocomplete="off">
-                  <i class="bx bx-search fs-4 lh-0"></i>
-                  <input
-                    type="search"
-                    id="studentProgramSearchInput"
-                    class="form-control border-0 shadow-none w-100"
-                    style="max-width: 42rem;"
-                    placeholder="Search program name/code and press Enter to view available slots"
-                    aria-label="Search programs"
-                  />
-                </form>
+                <?php if (!$studentRankLocked): ?>
+                  <form id="studentProgramSearchForm" class="nav-item d-flex align-items-center w-100" autocomplete="off">
+                    <i class="bx bx-search fs-4 lh-0"></i>
+                    <input
+                      type="search"
+                      id="studentProgramSearchInput"
+                      class="form-control border-0 shadow-none w-100"
+                      style="max-width: 42rem;"
+                      placeholder="Search program name/code and press Enter to view available slots"
+                      aria-label="Search programs"
+                    />
+                  </form>
+                <?php else: ?>
+                  <div class="small text-muted">Program transfers are closed because your rank is already locked.</div>
+                <?php endif; ?>
               </div>
 
               <ul class="navbar-nav flex-row align-items-center ms-auto">
@@ -2628,6 +2944,11 @@ $profileCompletionBadge = number_format((float) $studentProfileCompletionPercent
                 <div class="alert alert-<?= htmlspecialchars($profileAlertType); ?>"><?= htmlspecialchars((string) $profileFlash['message']); ?></div>
               <?php endif; ?>
 
+              <?php if (is_array($preRegistrationFlash) && !empty($preRegistrationFlash['message'])): ?>
+                <?php $preRegistrationAlertType = ((string) ($preRegistrationFlash['type'] ?? '') === 'success') ? 'success' : 'danger'; ?>
+                <div class="alert alert-<?= htmlspecialchars($preRegistrationAlertType); ?>"><?= htmlspecialchars((string) $preRegistrationFlash['message']); ?></div>
+              <?php endif; ?>
+
               <?php if (isset($_GET['password_changed']) && $_GET['password_changed'] === '1'): ?>
                 <?php $emailNotice = (string) ($_GET['email_notice'] ?? ''); ?>
                 <?php if ($emailNotice === 'sent'): ?>
@@ -2645,14 +2966,36 @@ $profileCompletionBadge = number_format((float) $studentProfileCompletionPercent
                     <div class="d-flex align-items-end row">
                       <div class="col-sm-7">
                         <div class="card-body">
-                          <h5 class="card-title text-primary">Student Dashboard</h5>
-                          <p class="mb-4">Track your interview progress, verify your details, and explore available program slots.</p>
+                          <h5 class="card-title text-primary"><?= htmlspecialchars($preRegistrationCardTitle); ?></h5>
+                          <p class="mb-4"><?= htmlspecialchars($preRegistrationCardMessage); ?></p>
                           <div class="d-flex flex-wrap gap-2 mb-4">
                             <span class="badge <?= $hasScoredInterview ? 'bg-label-success' : 'bg-label-warning'; ?>">Interview: <?= $hasScoredInterview ? 'Scored' : 'Pending'; ?></span>
+                            <span class="badge <?= htmlspecialchars($preRegistrationStatusBadgeClass); ?>"><?= htmlspecialchars($preRegistrationStatusBadgeText); ?></span>
+                            <?php if ($studentRankLocked && $studentLockedRank > 0): ?>
+                              <span class="badge bg-label-warning"><i class="bx bx-lock-alt me-1"></i>Locked Rank #<?= htmlspecialchars(number_format($studentLockedRank)); ?></span>
+                            <?php endif; ?>
                           </div>
                           <div class="d-flex flex-wrap align-items-center gap-2">
-                            <button type="button" class="btn btn-sm btn-primary" disabled>Register Me!</button>
-                            <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#studentProfileModal">
+                            <form method="post" class="d-inline">
+                              <input type="hidden" name="action" value="student_preregistration_submit" />
+                              <input type="hidden" name="csrf_token" value="<?= htmlspecialchars((string) ($_SESSION['student_prereg_csrf'] ?? ''), ENT_QUOTES); ?>" />
+                              <button
+                                type="submit"
+                                class="btn btn-sm <?= htmlspecialchars($preRegistrationButtonClass); ?>"
+                                <?= $canSubmitPreRegistration ? '' : 'disabled'; ?>
+                                title="<?= htmlspecialchars($preRegistrationButtonTitle); ?>"
+                              >
+                                <?= htmlspecialchars($preRegistrationButtonLabel); ?>
+                              </button>
+                            </form>
+                            <button
+                              type="button"
+                              class="btn btn-sm btn-outline-primary"
+                              data-bs-toggle="modal"
+                              data-bs-target="#studentProfileModal"
+                              <?= $canUpdateProfile ? '' : 'disabled'; ?>
+                              title="<?= htmlspecialchars($updateProfileButtonTitle); ?>"
+                            >
                               Update My Profile
                             </button>
                             <span class="badge bg-label-info student-profile-progress-chip"><?= htmlspecialchars($profileCompletionBadge); ?></span>
@@ -2712,7 +3055,7 @@ $profileCompletionBadge = number_format((float) $studentProfileCompletionPercent
                           </li>
                           <li class="nav-item" role="presentation">
                             <button
-                              class="nav-link"
+                              class="nav-link<?= $studentRankLocked ? ' d-none' : ''; ?>"
                               id="program-slot-availability-tab"
                               data-bs-toggle="tab"
                               data-bs-target="#program-slot-availability-pane"
@@ -2755,12 +3098,18 @@ $profileCompletionBadge = number_format((float) $studentProfileCompletionPercent
                                     <div class="student-program-code"><?= htmlspecialchars((string) $choiceCard['program_code']); ?></div>
                                   <?php endif; ?>
                                   <div class="student-program-card-title mt-3"><?= htmlspecialchars($choiceCard['stat_label']); ?></div>
-                                  <?php if ($index === 0 && $choiceCard['stat_primary_value'] !== null && $choiceCard['stat_secondary_value'] !== null): ?>
+                                <?php if ($index === 0 && $choiceCard['stat_primary_value'] !== null && $choiceCard['stat_secondary_value'] !== null): ?>
                                     <div class="student-program-card-value">
                                       <span class="<?= !empty($choiceCard['stat_primary_outside']) ? 'student-rank-number-outside' : ''; ?>">
                                         <?= htmlspecialchars((string) $choiceCard['stat_primary_value']); ?>
                                       </span>
                                       <span>/<?= htmlspecialchars((string) $choiceCard['stat_secondary_value']); ?></span>
+                                      <?php if ($index === 0 && $studentRankLocked): ?>
+                                        <span class="student-rank-lock-pill" title="Locked rank" aria-label="Locked rank">
+                                          <i class="bx bx-lock-alt"></i>
+                                          <span>Locked</span>
+                                        </span>
+                                      <?php endif; ?>
                                     </div>
                                   <?php else: ?>
                                     <div class="student-program-card-value"><?= htmlspecialchars($choiceCard['stat_value']); ?></div>
@@ -2808,7 +3157,7 @@ $profileCompletionBadge = number_format((float) $studentProfileCompletionPercent
                           </div>
                         </div>
                         <div
-                          class="tab-pane fade"
+                          class="tab-pane fade<?= $studentRankLocked ? ' d-none' : ''; ?>"
                           id="program-slot-availability-pane"
                           role="tabpanel"
                           aria-labelledby="program-slot-availability-tab"
