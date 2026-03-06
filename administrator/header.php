@@ -460,6 +460,10 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
     const cardWrapEl = document.getElementById('adminSearchResultCardWrap');
     const resultBodyEl = document.getElementById('adminExamineeSearchResults');
     const endpointUrl = <?= json_encode(rtrim(BASE_URL, '/') . '/administrator/search_examinees.php'); ?>;
+    const workspaceBaseUrl = <?= json_encode(rtrim(BASE_URL, '/') . '/administrator/student_workspace.php'); ?>;
+    const transferBaseUrl = <?= json_encode(rtrim(BASE_URL, '/') . '/administrator/transfer_student.php'); ?>;
+    const ratingBaseUrl = <?= json_encode(rtrim(BASE_URL, '/') . '/progchair/interview_scores.php'); ?>;
+    const currentAdminUrlOverride = <?= json_encode(isset($adminCurrentPageReturnUrlOverride) ? (string) $adminCurrentPageReturnUrlOverride : ''); ?>;
     const countFormatter = new Intl.NumberFormat();
     let lastKnownTotalRecords = null;
 
@@ -641,9 +645,13 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
         const detailRowId = `adminSearchDetailsRow-${index}`;
         const examinee = escapeHtml(row.examinee_number || '-');
         const fullName = escapeHtml(row.full_name || '-');
+        const currentAdminUrl = currentAdminUrlOverride !== ''
+          ? currentAdminUrlOverride
+          : `${window.location.pathname}${window.location.search}`;
         const firstChoiceLabel = buildProgramChoiceLabel(row.first_choice_label, row.first_choice_id);
         const secondChoiceLabel = buildProgramChoiceLabel(row.second_choice_label, row.second_choice_id);
         const thirdChoiceLabel = buildProgramChoiceLabel(row.third_choice_label, row.third_choice_id);
+        const currentProgramLabel = String(row.current_program_label || '').trim() || 'No active program';
         const basisLabel = String(row.basis_label || 'Overall');
         const statusLabel = String(row.status_label || 'No Interview');
         const satScore = formatScore(row.sat_score);
@@ -658,13 +666,25 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
         const mobileNumber = String(row.mobile_number || '').trim() || 'N/A';
         const interviewId = Number(row.interview_id || 0);
         const placementResultId = Number(row.placement_result_id || 0);
+        const credentialStatus = String(row.credential_status || '').trim() || 'No Student Login';
+        const pendingTransferCount = Number(row.pending_transfer_count || 0);
         const finalScoreText = row.final_score !== null && row.final_score !== undefined && row.final_score !== ''
           ? `${formatScore(row.final_score, 2)}%`
           : 'N/A';
+        const workspaceUrl = placementResultId > 0
+          ? `${workspaceBaseUrl}?placement_result_id=${encodeURIComponent(String(placementResultId))}`
+          : '';
+        const transferUrl = placementResultId > 0
+          ? `${transferBaseUrl}?placement_result_id=${encodeURIComponent(String(placementResultId))}&return_to=${encodeURIComponent(currentAdminUrl)}`
+          : '';
+        const ratingUrl = interviewId > 0
+          ? `${ratingBaseUrl}?interview_id=${encodeURIComponent(String(interviewId))}&admin_override=1&return_to=${encodeURIComponent(currentAdminUrl)}`
+          : '';
 
         const detailsHtml = [
           buildDetailItem('Interview ID', interviewId > 0 ? String(interviewId) : 'N/A'),
           buildDetailItem('Placement Result ID', placementResultId > 0 ? String(placementResultId) : 'N/A'),
+          buildDetailItem('Current Program', currentProgramLabel),
           buildDetailItem('Interviewed By', interviewerName),
           buildDetailItem('Interview Date/Time', formatDateTime(row.interview_datetime)),
           buildDetailItem('1st Choice', firstChoiceLabel),
@@ -676,10 +696,13 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
           buildDetailItem('SHS Track', shsTrack),
           buildDetailItem('Interview Campus', campusName),
           buildDetailItem('Mobile Number', mobileNumber),
-          buildDetailItem('Interview Status', String(row.status_label || 'No Interview'))
+          buildDetailItem('Interview Status', String(row.status_label || 'No Interview')),
+          buildDetailItem('Student Login', credentialStatus),
+          buildDetailItem('Pending Transfer', pendingTransferCount > 0 ? String(pendingTransferCount) : 'None')
         ].join('');
 
         const summaryMetricsHtml = [
+          buildMetricItem('Current Program', currentProgramLabel, 'admin-search-kv__value--program'),
           buildMetricItem('Preferred Program', String(row.preferred_program || 'N/A'), 'admin-search-kv__value--program'),
           buildMetricItem('1st Choice', firstChoiceLabel, 'admin-search-kv__value--program'),
           buildMetricItem('SAT', satScore, 'admin-search-kv__value--score'),
@@ -687,8 +710,18 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
           buildMetricItem('Overall', overallScore, 'admin-search-kv__value--score'),
           buildMetricItem('Final Score', finalScoreText, 'admin-search-kv__value--final-score'),
           buildMetricItem('Interviewed By', interviewerName),
-          buildMetricItem('When', interviewDate)
+          buildMetricItem('Pending Transfer', pendingTransferCount > 0 ? String(pendingTransferCount) : 'None')
         ].join('');
+
+        const workspaceActionHtml = workspaceUrl !== ''
+          ? `<a href="${escapeHtml(workspaceUrl)}" class="btn btn-sm btn-outline-secondary">Workspace</a>`
+          : `<button type="button" class="btn btn-sm btn-outline-secondary" disabled>Workspace</button>`;
+        const transferActionHtml = transferUrl !== ''
+          ? `<a href="${escapeHtml(transferUrl)}" class="btn btn-sm btn-outline-warning">Transfer</a>`
+          : `<button type="button" class="btn btn-sm btn-outline-warning" disabled>Transfer</button>`;
+        const ratingActionHtml = ratingUrl !== ''
+          ? `<a href="${escapeHtml(ratingUrl)}" class="btn btn-sm btn-outline-primary">Ratings</a>`
+          : `<button type="button" class="btn btn-sm btn-outline-primary" disabled>Ratings</button>`;
 
         return `
           <article class="admin-search-card">
@@ -700,6 +733,9 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
               <div class="admin-search-card__actions">
                 <span class="admin-search-badge ${getBasisBadgeClass(row.basis_label)}">${escapeHtml(basisLabel)}</span>
                 <span class="admin-search-badge ${getStatusBadgeClass(row.status_label)}">${escapeHtml(statusLabel)}</span>
+                ${workspaceActionHtml}
+                ${transferActionHtml}
+                ${ratingActionHtml}
                 <button
                   type="button"
                   class="btn btn-sm admin-search-toggle js-toggle-search-details"

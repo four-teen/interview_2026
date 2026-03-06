@@ -1,6 +1,8 @@
 <?php
 require_once '../config/db.php';
 require_once '../config/system_controls.php';
+require_once '../config/student_credentials.php';
+require_once '../config/admin_student_management.php';
 session_start();
 
 header('Content-Type: application/json');
@@ -13,6 +15,9 @@ if (!isset($_SESSION['logged_in']) || (($_SESSION['role'] ?? '') !== 'administra
     ]);
     exit;
 }
+
+ensure_student_credentials_table($conn);
+admin_student_management_ensure_transfer_history_table($conn);
 
 function build_admin_search_esm_preferred_program_condition_sql(string $columnExpression): string
 {
@@ -126,6 +131,13 @@ $sql = "
         COALESCE(icam.campus_name, '') AS interview_campus_name,
         COALESCE(track.track, '') AS shs_track_name,
         COALESCE(etg.class_desc, '') AS etg_class_name,
+        COALESCE(current_program.program_code, '') AS current_program_code,
+        COALESCE(current_program.program_name, '') AS current_program_name,
+        COALESCE(current_program.major, '') AS current_program_major,
+        COALESCE(sc.credential_id, 0) AS credential_id,
+        COALESCE(sc.status, '') AS credential_status,
+        COALESCE(sc.must_change_password, 0) AS must_change_password,
+        COALESCE(transfer_stats.pending_transfer_count, 0) AS pending_transfer_count,
         TRIM(CONCAT(
             COALESCE(p1.program_code, ''),
             CASE
@@ -198,12 +210,23 @@ $sql = "
         ON ixd.placement_result_id = pr.id
     LEFT JOIN tblaccount interviewer
         ON interviewer.accountid = ixd.program_chair_id
+    LEFT JOIN tbl_program current_program
+        ON current_program.program_id = COALESCE(NULLIF(ixd.program_id, 0), NULLIF(ixd.first_choice, 0))
     LEFT JOIN tbl_campus icam
         ON icam.campus_id = ixd.campus_id
     LEFT JOIN tb_ltrack track
         ON track.trackid = ixd.shs_track_id
     LEFT JOIN tbl_etg_class etg
         ON etg.etgclassid = ixd.etg_class_id
+    LEFT JOIN tbl_student_credentials sc
+        ON sc.placement_result_id = pr.id
+    LEFT JOIN (
+        SELECT interview_id, COUNT(*) AS pending_transfer_count
+        FROM tbl_student_transfer_history
+        WHERE status = 'pending'
+        GROUP BY interview_id
+    ) transfer_stats
+        ON transfer_stats.interview_id = ixd.interview_id
     LEFT JOIN tbl_program p1
         ON p1.program_id = ixd.first_choice
     LEFT JOIN tbl_program p2
@@ -266,6 +289,19 @@ while ($row = $result->fetch_assoc()) {
         'interview_campus_name' => (string) ($row['interview_campus_name'] ?? ''),
         'shs_track_name' => (string) ($row['shs_track_name'] ?? ''),
         'etg_class_name' => (string) ($row['etg_class_name'] ?? ''),
+        'current_program_label' => trim(implode(' ', array_filter([
+            trim((string) ($row['current_program_code'] ?? '')),
+            trim((string) ($row['current_program_name'] ?? '')) !== ''
+                ? ('- ' . trim((string) ($row['current_program_name'] ?? '')))
+                : '',
+            trim((string) ($row['current_program_major'] ?? '')) !== ''
+                ? ('(' . trim((string) ($row['current_program_major'] ?? '')) . ')')
+                : '',
+        ]))),
+        'credential_id' => (int) ($row['credential_id'] ?? 0),
+        'credential_status' => (string) ($row['credential_status'] ?? ''),
+        'must_change_password' => ((int) ($row['must_change_password'] ?? 0) === 1),
+        'pending_transfer_count' => (int) ($row['pending_transfer_count'] ?? 0),
         'first_choice_id' => (int) ($row['first_choice_id'] ?? 0),
         'second_choice_id' => (int) ($row['second_choice_id'] ?? 0),
         'third_choice_id' => (int) ($row['third_choice_id'] ?? 0),

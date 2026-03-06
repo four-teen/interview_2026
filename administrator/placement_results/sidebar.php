@@ -72,6 +72,8 @@
 
             if ($sidebarSection === 'accounts') {
                 $sidebarActiveKey = 'accounts';
+            } elseif ($sidebarCurrentPage === 'student_workspace.php') {
+                $sidebarActiveKey = 'student_workspace';
             } elseif ($sidebarCurrentPage === 'preregistrations.php') {
                 $sidebarActiveKey = 'preregistrations';
             } elseif ($sidebarSection === 'campuses') {
@@ -254,6 +256,21 @@
                 <div class="sidebar-action-content">
                   <div class="sidebar-action-title">Placement Results</div>
                   <small class="sidebar-action-sub">Upload and validate test data</small>
+                </div>
+              </a>
+            </li>
+
+            <li class="menu-item px-2">
+              <a
+                href="<?= $sidebarHrefPrefix; ?>student_workspace.php"
+                class="menu-link sidebar-action-card<?= $sidebarActiveKey === 'student_workspace' ? ' active' : ''; ?>"
+              >
+                <span class="sidebar-action-icon bg-label-secondary">
+                  <i class="bx bx-search-alt-2"></i>
+                </span>
+                <div class="sidebar-action-content">
+                  <div class="sidebar-action-title">Student Workspace</div>
+                  <small class="sidebar-action-sub">Search, review, transfer, and rate a student</small>
                 </div>
               </a>
             </li>

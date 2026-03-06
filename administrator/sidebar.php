@@ -1,6 +1,48 @@
         <aside id="layout-menu" class="layout-menu menu-vertical menu bg-menu-theme">
           <div class="app-brand demo">
-            <a href="index.php" class="app-brand-link">
+            <?php
+              $sidebarCurrentPage = basename($_SERVER['PHP_SELF'] ?? '');
+              $sidebarSection = basename(dirname($_SERVER['PHP_SELF'] ?? ''));
+              $sidebarHrefPrefixOverride = isset($sidebarHrefPrefixOverride)
+                  ? trim((string) $sidebarHrefPrefixOverride)
+                  : '';
+              $sidebarActiveKeyOverride = isset($sidebarActiveKeyOverride)
+                  ? trim((string) $sidebarActiveKeyOverride)
+                  : '';
+              $sidebarHrefPrefix = $sidebarHrefPrefixOverride !== ''
+                  ? $sidebarHrefPrefixOverride
+                  : (($sidebarSection === 'administrator') ? '' : '../');
+              $sidebarActiveKey = $sidebarActiveKeyOverride !== '' ? $sidebarActiveKeyOverride : 'dashboard';
+
+              if ($sidebarActiveKeyOverride === '') {
+                  if ($sidebarSection === 'accounts') {
+                      $sidebarActiveKey = 'accounts';
+                  } elseif ($sidebarCurrentPage === 'student_passwords.php') {
+                      $sidebarActiveKey = 'student_passwords';
+                  } elseif ($sidebarCurrentPage === 'student_workspace.php') {
+                      $sidebarActiveKey = 'student_workspace';
+                  } elseif ($sidebarCurrentPage === 'student_monitoring.php') {
+                      $sidebarActiveKey = 'student_monitoring';
+                  } elseif ($sidebarCurrentPage === 'preregistrations.php') {
+                      $sidebarActiveKey = 'preregistrations';
+                  } elseif ($sidebarCurrentPage === 'progchair_monitoring.php') {
+                      $sidebarActiveKey = 'progchair_monitoring';
+                  } elseif ($sidebarSection === 'campuses') {
+                      $sidebarActiveKey = 'campuses';
+                  } elseif ($sidebarSection === 'colleges') {
+                      $sidebarActiveKey = 'colleges';
+                  } elseif ($sidebarSection === 'programs') {
+                      $sidebarActiveKey = 'programs';
+                  } elseif ($sidebarSection === 'dbmanagement') {
+                      $sidebarActiveKey = 'dbmanagement';
+                  } elseif ($sidebarSection === 'placement_results') {
+                      $sidebarActiveKey = 'placement_results';
+                  } elseif ($sidebarCurrentPage === 'index.php') {
+                      $sidebarActiveKey = 'dashboard';
+                  }
+              }
+            ?>
+            <a href="<?= htmlspecialchars($sidebarHrefPrefix); ?>index.php" class="app-brand-link">
               <span class="app-brand-logo demo">
                 <svg
                   width="25"
@@ -63,37 +105,6 @@
               <i class="bx bx-chevron-left bx-sm align-middle"></i>
             </a>
           </div>
-
-          <?php
-            $sidebarCurrentPage = basename($_SERVER['PHP_SELF'] ?? '');
-            $sidebarSection = basename(dirname($_SERVER['PHP_SELF'] ?? ''));
-            $sidebarHrefPrefix = ($sidebarSection === 'administrator') ? '' : '../';
-            $sidebarActiveKey = 'dashboard';
-
-            if ($sidebarSection === 'accounts') {
-                $sidebarActiveKey = 'accounts';
-            } elseif ($sidebarCurrentPage === 'student_passwords.php') {
-                $sidebarActiveKey = 'student_passwords';
-            } elseif ($sidebarCurrentPage === 'student_monitoring.php') {
-                $sidebarActiveKey = 'student_monitoring';
-            } elseif ($sidebarCurrentPage === 'preregistrations.php') {
-                $sidebarActiveKey = 'preregistrations';
-            } elseif ($sidebarCurrentPage === 'progchair_monitoring.php') {
-                $sidebarActiveKey = 'progchair_monitoring';
-            } elseif ($sidebarSection === 'campuses') {
-                $sidebarActiveKey = 'campuses';
-            } elseif ($sidebarSection === 'colleges') {
-                $sidebarActiveKey = 'colleges';
-            } elseif ($sidebarSection === 'programs') {
-                $sidebarActiveKey = 'programs';
-            } elseif ($sidebarSection === 'dbmanagement') {
-                $sidebarActiveKey = 'dbmanagement';
-            } elseif ($sidebarSection === 'placement_results') {
-                $sidebarActiveKey = 'placement_results';
-            } elseif ($sidebarCurrentPage === 'index.php') {
-                $sidebarActiveKey = 'dashboard';
-            }
-          ?>
 
           <style>
             #layout-menu .sidebar-action-card {
@@ -200,6 +211,21 @@
                 <div class="sidebar-action-content">
                   <div class="sidebar-action-title">Student Passwords</div>
                   <small class="sidebar-action-sub">Reset forgotten student access</small>
+                </div>
+              </a>
+            </li>
+
+            <li class="menu-item px-2">
+              <a
+                href="<?= $sidebarHrefPrefix; ?>student_workspace.php"
+                class="menu-link sidebar-action-card<?= $sidebarActiveKey === 'student_workspace' ? ' active' : ''; ?>"
+              >
+                <span class="sidebar-action-icon bg-label-secondary">
+                  <i class="bx bx-search-alt-2"></i>
+                </span>
+                <div class="sidebar-action-content">
+                  <div class="sidebar-action-title">Student Workspace</div>
+                  <small class="sidebar-action-sub">Search, review, transfer, and rate a student</small>
                 </div>
               </a>
             </li>

@@ -18,25 +18,63 @@
 require_once '../config/db.php';
 require_once '../config/score_receipt_security.php';
 require_once '../config/program_ranking_lock.php';
+require_once '../config/admin_student_management.php';
 session_start();
 
-// ======================================================
-// GUARD
-// ======================================================
-if (
-    !isset($_SESSION['logged_in']) ||
-    $_SESSION['role'] !== 'progchair' ||
-    empty($_SESSION['accountid'])
-) {
+function build_interview_scores_page_url(
+    int $interviewId,
+    bool $isAdministratorOverride = false,
+    string $returnTo = '',
+    array $extraQuery = []
+): string {
+    $query = [
+        'interview_id' => $interviewId,
+    ];
+
+    if ($isAdministratorOverride) {
+        $query['admin_override'] = '1';
+        if ($returnTo !== '') {
+            $query['return_to'] = $returnTo;
+        }
+    }
+
+    foreach ($extraQuery as $key => $value) {
+        if ($value === null || $value === '') {
+            continue;
+        }
+        $query[$key] = (string) $value;
+    }
+
+    return 'interview_scores.php?' . http_build_query($query);
+}
+
+$sessionRole = (string) ($_SESSION['role'] ?? '');
+$hasValidSession = isset($_SESSION['logged_in']) && !empty($_SESSION['accountid']);
+$isAdministratorOverride = $hasValidSession
+    && $sessionRole === 'administrator'
+    && (string) ($_GET['admin_override'] ?? '') === '1';
+$isProgramChairSession = $hasValidSession && $sessionRole === 'progchair';
+
+if (!$isProgramChairSession && !$isAdministratorOverride) {
     header('Location: ../index.php');
     exit;
 }
 
 $accountId   = (int) $_SESSION['accountid'];
 $interviewId = isset($_GET['interview_id']) ? (int) $_GET['interview_id'] : 0;
+$adminReturnTo = $isAdministratorOverride
+    ? admin_student_management_normalize_return_url(
+        (string) ($_GET['return_to'] ?? ''),
+        rtrim(BASE_URL, '/') . '/administrator/index.php'
+    )
+    : '';
+$listPageUrl = $isAdministratorOverride ? $adminReturnTo : 'index.php';
+$listErrorUrl = $isAdministratorOverride ? $adminReturnTo : 'index.php?error=1';
+$backButtonLabel = $isAdministratorOverride ? 'Back to Administrator' : 'Back to List';
+$adminOverrideBanner = 'Administrator override is active. This page still uses the same interview scoring rules, save transaction, and rank-lock validation.';
 
 if ($interviewId <= 0) {
-    header('Location: index.php');
+    header('Location: ' . $listPageUrl);
     exit;
 }
 
@@ -127,7 +165,7 @@ $baseSql = "
 $stmtBase = $conn->prepare($baseSql);
 if (!$stmtBase) {
     error_log("Prepare failed (baseSql): " . $conn->error);
-    header('Location: index.php?error=1');
+    header('Location: ' . $listErrorUrl);
     exit;
 }
 $stmtBase->bind_param("i", $interviewId);
@@ -135,7 +173,7 @@ $stmtBase->execute();
 $resBase = $stmtBase->get_result();
 
 if ($resBase->num_rows === 0) {
-    header('Location: index.php');
+    header('Location: ' . $listPageUrl);
     exit;
 }
 
@@ -186,7 +224,8 @@ if ($normalizedStudentName !== '' && strpos($normalizedStudentName, ',') !== fal
     $displayOtherNames = strtolower($normalizedStudentName);
 }
 
-$isOwner = ($ownerProgramChairId === $accountId);
+$isRecordOwner = ($ownerProgramChairId === $accountId);
+$isOwner = $isAdministratorOverride || $isRecordOwner;
 $lockContext = program_ranking_get_interview_lock_context($conn, $interviewId);
 $isRankLocked = ($lockContext !== null);
 $lockMessage = '';
@@ -275,7 +314,7 @@ $componentSql = "
 $componentResult = $conn->query($componentSql);
 if (!$componentResult) {
     error_log("Component Query Error: " . $conn->error);
-    header('Location: index.php?error=1');
+    header('Location: ' . $listErrorUrl);
     exit;
 }
 
@@ -294,17 +333,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_scores'])) {
 
     // OWNER ONLY
     if (!$isOwner) {
-        header("Location: interview_scores.php?interview_id={$interviewId}&forbidden=1");
+        header('Location: ' . build_interview_scores_page_url($interviewId, $isAdministratorOverride, $adminReturnTo, [
+            'forbidden' => '1',
+        ]));
         exit;
     }
 
     if ($isRankLocked) {
-        header("Location: interview_scores.php?interview_id={$interviewId}&locked=1");
+        header('Location: ' . build_interview_scores_page_url($interviewId, $isAdministratorOverride, $adminReturnTo, [
+            'locked' => '1',
+        ]));
         exit;
     }
 
     if (!isset($_POST['raw_score']) || !is_array($_POST['raw_score'])) {
-        header("Location: interview_scores.php?interview_id={$interviewId}&error=1");
+        header('Location: ' . build_interview_scores_page_url($interviewId, $isAdministratorOverride, $adminReturnTo, [
+            'error' => '1',
+        ]));
         exit;
     }
 
@@ -546,7 +591,9 @@ $stmtAudit2->execute();
         $conn->commit();
 
         // Redirect (Swal will run after page loads)
-        header("Location: interview_scores.php?interview_id={$interviewId}&saved=1");
+        header('Location: ' . build_interview_scores_page_url($interviewId, $isAdministratorOverride, $adminReturnTo, [
+            'saved' => '1',
+        ]));
         exit;
 
     } catch (Exception $e) {
@@ -554,9 +601,13 @@ $stmtAudit2->execute();
         $conn->rollback();
         error_log("Save failed: " . $e->getMessage());
         if ($e->getMessage() === 'RAW_SCORE_EXCEEDS_MAX') {
-            header("Location: interview_scores.php?interview_id={$interviewId}&invalid_score=1");
+            header('Location: ' . build_interview_scores_page_url($interviewId, $isAdministratorOverride, $adminReturnTo, [
+                'invalid_score' => '1',
+            ]));
         } else {
-            header("Location: interview_scores.php?interview_id={$interviewId}&error=1");
+            header('Location: ' . build_interview_scores_page_url($interviewId, $isAdministratorOverride, $adminReturnTo, [
+                'error' => '1',
+            ]));
         }
         exit;
     }
@@ -575,7 +626,7 @@ $savedSql = "
 $stmtSaved = $conn->prepare($savedSql);
 if (!$stmtSaved) {
     error_log("Prepare failed (savedSql): " . $conn->error);
-    header('Location: index.php?error=1');
+    header('Location: ' . $listErrorUrl);
     exit;
 }
 $stmtSaved->bind_param("i", $interviewId);
@@ -748,10 +799,23 @@ if (is_array($readingFiles)) {
 <div class="layout-wrapper layout-content-navbar">
   <div class="layout-container">
 
-    <?php include 'sidebar.php'; ?>
+    <?php if ($isAdministratorOverride): ?>
+      <?php
+        $sidebarHrefPrefixOverride = rtrim(BASE_URL, '/') . '/administrator/';
+        $sidebarActiveKeyOverride = 'student_monitoring';
+        include '../administrator/sidebar.php';
+      ?>
+    <?php else: ?>
+      <?php include 'sidebar.php'; ?>
+    <?php endif; ?>
 
     <div class="layout-page">
-      <?php include 'header.php'; ?>
+      <?php if ($isAdministratorOverride): ?>
+        <?php $adminCurrentPageReturnUrlOverride = $adminReturnTo; ?>
+        <?php include '../administrator/header.php'; ?>
+      <?php else: ?>
+        <?php include 'header.php'; ?>
+      <?php endif; ?>
 
       <div class="content-wrapper">
         <div class="container-xxl flex-grow-1 container-p-y">
@@ -775,12 +839,18 @@ if (is_array($readingFiles)) {
                   </small>
                 </div>
 
-                <a href="index.php" class="btn btn-label-secondary btn-sm btn-primary">
-                  <i class="bx bx-arrow-back me-1"></i> Back to List
+                <a href="<?= htmlspecialchars($listPageUrl); ?>" class="btn btn-label-secondary btn-sm btn-primary">
+                  <i class="bx bx-arrow-back me-1"></i> <?= htmlspecialchars($backButtonLabel); ?>
                 </a>
               </div>
             </div>
           </div>
+
+          <?php if ($isAdministratorOverride): ?>
+            <div class="alert alert-warning mb-4" role="alert">
+              <?= htmlspecialchars($adminOverrideBanner); ?>
+            </div>
+          <?php endif; ?>
 
           <div class="row g-4">
             <div class="col-xxl-8">
@@ -949,6 +1019,14 @@ if (is_array($readingFiles)) {
                       <div class="mt-2 text-end">
                         <small class="text-muted">
                           You can view only. Only the encoder can update scores.
+                        </small>
+                      </div>
+                    <?php endif; ?>
+
+                    <?php if ($isAdministratorOverride): ?>
+                      <div class="mt-2 text-end">
+                        <small class="text-warning">
+                          Administrator override can edit this record even when a different program chair owns it.
                         </small>
                       </div>
                     <?php endif; ?>
