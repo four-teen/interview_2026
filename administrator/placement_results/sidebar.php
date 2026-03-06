@@ -72,6 +72,8 @@
 
             if ($sidebarSection === 'accounts') {
                 $sidebarActiveKey = 'accounts';
+            } elseif ($sidebarCurrentPage === 'preregistrations.php') {
+                $sidebarActiveKey = 'preregistrations';
             } elseif ($sidebarSection === 'campuses') {
                 $sidebarActiveKey = 'campuses';
             } elseif ($sidebarSection === 'colleges') {
@@ -252,6 +254,21 @@
                 <div class="sidebar-action-content">
                   <div class="sidebar-action-title">Placement Results</div>
                   <small class="sidebar-action-sub">Upload and validate test data</small>
+                </div>
+              </a>
+            </li>
+
+            <li class="menu-item px-2">
+              <a
+                href="<?= $sidebarHrefPrefix; ?>preregistrations.php"
+                class="menu-link sidebar-action-card<?= $sidebarActiveKey === 'preregistrations' ? ' active' : ''; ?>"
+              >
+                <span class="sidebar-action-icon bg-label-success">
+                  <i class="bx bx-clipboard"></i>
+                </span>
+                <div class="sidebar-action-content">
+                  <div class="sidebar-action-title">Pre-Registrations</div>
+                  <small class="sidebar-action-sub">Review submitted student pre-registration</small>
                 </div>
               </a>
             </li>

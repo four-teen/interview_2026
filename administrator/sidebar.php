@@ -76,6 +76,8 @@
                 $sidebarActiveKey = 'student_passwords';
             } elseif ($sidebarCurrentPage === 'student_monitoring.php') {
                 $sidebarActiveKey = 'student_monitoring';
+            } elseif ($sidebarCurrentPage === 'preregistrations.php') {
+                $sidebarActiveKey = 'preregistrations';
             } elseif ($sidebarCurrentPage === 'progchair_monitoring.php') {
                 $sidebarActiveKey = 'progchair_monitoring';
             } elseif ($sidebarSection === 'campuses') {
@@ -213,6 +215,21 @@
                 <div class="sidebar-action-content">
                   <div class="sidebar-action-title">Student Monitoring</div>
                   <small class="sidebar-action-sub">View student progress and status</small>
+                </div>
+              </a>
+            </li>
+
+            <li class="menu-item px-2">
+              <a
+                href="<?= $sidebarHrefPrefix; ?>preregistrations.php"
+                class="menu-link sidebar-action-card<?= $sidebarActiveKey === 'preregistrations' ? ' active' : ''; ?>"
+              >
+                <span class="sidebar-action-icon bg-label-success">
+                  <i class="bx bx-clipboard"></i>
+                </span>
+                <div class="sidebar-action-content">
+                  <div class="sidebar-action-title">Pre-Registrations</div>
+                  <small class="sidebar-action-sub">Review submitted student pre-registration</small>
                 </div>
               </a>
             </li>

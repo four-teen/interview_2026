@@ -171,5 +171,19 @@ $sidebarCurrentPage = basename($_SERVER['PHP_SELF'] ?? '');
         </div>
       </a>
     </li>
+    <li class="menu-item px-2">
+      <a
+        href="preregistrations.php"
+        class="menu-link sidebar-action-card<?= $sidebarCurrentPage === 'preregistrations.php' ? ' active' : ''; ?>"
+      >
+        <span class="sidebar-action-icon bg-label-success">
+          <i class="bx bx-clipboard"></i>
+        </span>
+        <div class="sidebar-action-content">
+          <div class="sidebar-action-title">Pre-Registrations</div>
+          <small class="sidebar-action-sub">Submitted students with per-program filter</small>
+        </div>
+      </a>
+    </li>
   </ul>
 </aside>

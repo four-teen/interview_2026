@@ -290,6 +290,8 @@ function ensure_student_preregistration_table($conn)
             program_id INT(10) UNSIGNED NOT NULL,
             locked_rank INT(10) UNSIGNED DEFAULT NULL,
             profile_completion_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+            agreement_accepted TINYINT(1) NOT NULL DEFAULT 0,
+            agreement_accepted_at DATETIME DEFAULT NULL,
             status ENUM('submitted') NOT NULL DEFAULT 'submitted',
             submitted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -301,7 +303,33 @@ function ensure_student_preregistration_table($conn)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ";
 
-    return (bool) $conn->query($sql);
+    if (!$conn->query($sql)) {
+        return false;
+    }
+
+    $columnsToEnsure = [
+        'agreement_accepted' => "ALTER TABLE tbl_student_preregistration ADD COLUMN agreement_accepted TINYINT(1) NOT NULL DEFAULT 0 AFTER profile_completion_percent",
+        'agreement_accepted_at' => "ALTER TABLE tbl_student_preregistration ADD COLUMN agreement_accepted_at DATETIME DEFAULT NULL AFTER agreement_accepted",
+    ];
+
+    foreach ($columnsToEnsure as $columnName => $alterSql) {
+        $columnResult = $conn->query("SHOW COLUMNS FROM tbl_student_preregistration LIKE '" . $conn->real_escape_string($columnName) . "'");
+        if (!$columnResult) {
+            return false;
+        }
+
+        $hasColumn = ($columnResult->num_rows > 0);
+        $columnResult->free();
+        if ($hasColumn) {
+            continue;
+        }
+
+        if (!$conn->query($alterSql)) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 function normalize_profile_text($value, $maxLength)
@@ -318,35 +346,44 @@ function normalize_profile_text($value, $maxLength)
     return (string) substr($value, 0, (int) $maxLength);
 }
 
+function student_profile_completion_requirements()
+{
+    return [
+        'text' => [
+            'birth_date' => 'Birth Date',
+            'sex' => 'Sex',
+            'civil_status' => 'Civil Status',
+            'nationality' => 'Nationality',
+            'religion' => 'Religion',
+            'secondary_school_name' => 'Secondary School',
+            'secondary_school_type' => 'School Type',
+            'secondary_postal_code' => 'Secondary School Postal Code',
+            'address_line1' => 'House No. / Street / Purok',
+            'postal_code' => 'Postal Code',
+            'guardian_name' => 'Parent / Guardian Name',
+            'parent_guardian_address_line1' => 'Parent / Guardian House No. / Street / Purok',
+            'parent_guardian_postal_code' => 'Parent / Guardian Postal Code',
+        ],
+        'code' => [
+            'secondary_province_code' => 'Secondary School Province',
+            'secondary_citymun_code' => 'Secondary School City / Municipality',
+            'region_code' => 'Region',
+            'province_code' => 'Province',
+            'citymun_code' => 'City / Municipality',
+            'barangay_code' => 'Barangay',
+            'parent_guardian_region_code' => 'Parent / Guardian Region',
+            'parent_guardian_province_code' => 'Parent / Guardian Province',
+            'parent_guardian_citymun_code' => 'Parent / Guardian City / Municipality',
+            'parent_guardian_barangay_code' => 'Parent / Guardian Barangay',
+        ],
+    ];
+}
+
 function calculate_student_profile_completion_percent(array $profileData)
 {
-    $requiredTextFields = [
-        'birth_date',
-        'sex',
-        'civil_status',
-        'nationality',
-        'religion',
-        'secondary_school_name',
-        'secondary_school_type',
-        'secondary_postal_code',
-        'address_line1',
-        'postal_code',
-        'guardian_name',
-        'parent_guardian_address_line1',
-        'parent_guardian_postal_code',
-    ];
-    $requiredCodeFields = [
-        'secondary_province_code',
-        'secondary_citymun_code',
-        'region_code',
-        'province_code',
-        'citymun_code',
-        'barangay_code',
-        'parent_guardian_region_code',
-        'parent_guardian_province_code',
-        'parent_guardian_citymun_code',
-        'parent_guardian_barangay_code',
-    ];
+    $requirements = student_profile_completion_requirements();
+    $requiredTextFields = array_keys($requirements['text']);
+    $requiredCodeFields = array_keys($requirements['code']);
 
     $filledCount = 0;
     $requiredCount = count($requiredTextFields) + count($requiredCodeFields);
@@ -378,6 +415,27 @@ function calculate_student_profile_completion_percent(array $profileData)
     }
 
     return $percent;
+}
+
+function get_student_profile_missing_fields(array $profileData)
+{
+    $requirements = student_profile_completion_requirements();
+    $missing = [];
+
+    foreach (($requirements['text'] ?? []) as $field => $label) {
+        $value = trim((string) ($profileData[$field] ?? ''));
+        if ($value === '') {
+            $missing[$field] = (string) $label;
+        }
+    }
+
+    foreach (($requirements['code'] ?? []) as $field => $label) {
+        if ((int) ($profileData[$field] ?? 0) <= 0) {
+            $missing[$field] = (string) $label;
+        }
+    }
+
+    return $missing;
 }
 
 function send_profile_lookup_json($payload, $statusCode = 200)
@@ -564,6 +622,20 @@ $studentProfile['parent_guardian_province_code'] = (int) ($studentProfile['paren
 $studentProfile['parent_guardian_citymun_code'] = (int) ($studentProfile['parent_guardian_citymun_code'] ?? 0);
 $studentProfile['parent_guardian_barangay_code'] = (int) ($studentProfile['parent_guardian_barangay_code'] ?? 0);
 $studentProfileCompletionPercent = calculate_student_profile_completion_percent($studentProfile);
+$studentProfileMissingFields = get_student_profile_missing_fields($studentProfile);
+$studentProfileMissingLabels = array_values($studentProfileMissingFields);
+$studentProfileMissingSummary = '';
+if (count($studentProfileMissingLabels) === 1) {
+    $studentProfileMissingSummary = '1 required field remaining: ' . $studentProfileMissingLabels[0] . '.';
+} elseif (count($studentProfileMissingLabels) > 1) {
+    $previewLabels = array_slice($studentProfileMissingLabels, 0, 3);
+    $studentProfileMissingSummary = count($studentProfileMissingLabels) . ' required fields remaining: ' . implode(', ', $previewLabels);
+    if (count($studentProfileMissingLabels) > 3) {
+        $studentProfileMissingSummary .= ', and more.';
+    } else {
+        $studentProfileMissingSummary .= '.';
+    }
+}
 $studentProfile['profile_completion_percent'] = $studentProfileCompletionPercent;
 
 $studentPreRegistration = null;
@@ -574,6 +646,8 @@ $preRegistrationSql = "
         program_id,
         locked_rank,
         profile_completion_percent,
+        agreement_accepted,
+        agreement_accepted_at,
         status,
         submitted_at,
         updated_at
@@ -1114,14 +1188,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') =
             if (!$saveProfileStmt) {
                 $flashMessage = 'Failed to prepare profile save.';
             } else {
+                // Keep types aligned with the INSERT column order.
                 $bindTypes = 'i'
                     . str_repeat('s', 9)
                     . str_repeat('i', 4)
                     . str_repeat('s', 2)
                     . str_repeat('i', 4)
-                    . 's'
+                    . str_repeat('s', 2)
                     . str_repeat('i', 4)
-                    . 's'
                     . str_repeat('s', 11)
                     . 'd';
                 $saveProfileStmt->bind_param(
@@ -1191,6 +1265,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') =
 
     $postedCsrf = (string) ($_POST['csrf_token'] ?? '');
     $sessionCsrf = (string) ($_SESSION['student_prereg_csrf'] ?? '');
+    $agreementAccepted = ((string) ($_POST['prereg_agreement_accept'] ?? '') === '1');
     $interviewId = (int) ($student['interview_id'] ?? 0);
     $currentProgramId = (int) ($student['first_choice'] ?? 0);
     $lockContext = program_ranking_get_interview_lock_context($conn, $interviewId);
@@ -1209,6 +1284,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') =
     } elseif (is_array($studentPreRegistration) && !empty($studentPreRegistration['preregistration_id'])) {
         $flashType = 'success';
         $flashMessage = 'Pre-registration was already submitted.';
+    } elseif (!$agreementAccepted) {
+        $flashMessage = 'You must accept the SKSU Pre-Registration Agreement before submitting.';
     } else {
         $lockedRank = max(0, (int) ($lockContext['locked_rank'] ?? 0));
         $insertSql = "
@@ -1219,8 +1296,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') =
                 program_id,
                 locked_rank,
                 profile_completion_percent,
+                agreement_accepted,
+                agreement_accepted_at,
                 status
-            ) VALUES (?, ?, ?, ?, NULLIF(?, 0), ?, 'submitted')
+            ) VALUES (?, ?, ?, ?, NULLIF(?, 0), ?, 1, NOW(), 'submitted')
         ";
         $insertStmt = $conn->prepare($insertSql);
         if ($insertStmt) {
@@ -1938,10 +2017,18 @@ $transferActionHref = $transferActionEnabled ? '#program-slot-availability-tab' 
 $transferActionClass = $transferActionEnabled ? '' : ' is-disabled';
 $transferActionTitle = $studentRankLocked ? 'Transfer Closed' : 'Transfer';
 $transferActionSub = $studentRankLocked
-    ? 'Transfers closed after your rank was locked'
+    ? 'Unavailable while your program rank is locked'
     : ($transferActionEnabled
         ? 'Outside capacity: explore open programs'
         : 'Available when rank is outside capacity');
+$changePasswordActionHref = $studentRankLocked ? 'javascript:void(0);' : 'change_password.php';
+$changePasswordActionClass = $studentRankLocked ? ' is-disabled' : '';
+$changePasswordActionSub = $studentRankLocked
+    ? 'Unavailable while pre-registration is active'
+    : 'Update account security';
+$logsActionSub = $studentRankLocked
+    ? 'Unavailable while pre-registration is active'
+    : 'Feature coming soon';
 
 $studentSatScore = null;
 if (isset($student['sat_score']) && $student['sat_score'] !== '' && $student['sat_score'] !== null) {
@@ -2425,7 +2512,9 @@ if ($preRegistrationSubmitted) {
 
 $canUpdateProfile = $studentRankLocked;
 $canSubmitPreRegistration = ($studentRankLocked && $isProfileComplete && !$preRegistrationSubmitted);
-$preRegistrationButtonLabel = $preRegistrationSubmitted ? 'Pre-Registration Submitted' : 'Submit Pre-Registration';
+$preRegistrationButtonLabel = $preRegistrationSubmitted
+    ? 'Pre-Registration Submitted'
+    : ($canSubmitPreRegistration ? 'Review Agreement & Submit' : 'Submit Pre-Registration');
 $preRegistrationButtonClass = $preRegistrationSubmitted ? 'btn-success' : 'btn-primary';
 $preRegistrationButtonTitle = 'Pre-registration has already been submitted.';
 if (!$preRegistrationSubmitted) {
@@ -2434,12 +2523,18 @@ if (!$preRegistrationSubmitted) {
     } elseif (!$isProfileComplete) {
         $preRegistrationButtonTitle = 'Complete your profile to 100% first.';
     } else {
-        $preRegistrationButtonTitle = 'Submit your locked program for pre-registration.';
+        $preRegistrationButtonTitle = 'Review the agreement and submit your locked program for pre-registration.';
     }
 }
 $updateProfileButtonTitle = $canUpdateProfile
     ? 'Update your profile details.'
     : 'Profile updates open once your rank is locked.';
+$updateProfileButtonLabel = $canUpdateProfile
+    ? ($isProfileComplete ? 'Review Profile Details' : 'Complete Profile Details')
+    : 'Update My Profile';
+$profileMenuSubtext = $studentRankLocked
+    ? 'Complete your pre-registration details'
+    : 'View your student details';
 
 $preRegistrationCardTitle = 'Pre-Registration';
 $preRegistrationCardMessage = 'Pre-registration opens after your rank is locked.';
@@ -2457,8 +2552,8 @@ if ($preRegistrationSubmitted) {
     $preRegistrationCardTitle = 'Pre-Registration Ready';
     if ($isProfileComplete) {
         $preRegistrationCardMessage = $studentLockedRank > 0
-            ? ('Your rank is locked at #' . number_format($studentLockedRank) . '. You can now submit pre-registration.')
-            : 'Your rank is locked. You can now submit pre-registration.';
+            ? ('Your rank is locked at #' . number_format($studentLockedRank) . '. Review the agreement and submit your pre-registration.')
+            : 'Your rank is locked. Review the agreement and submit your pre-registration.';
         $preRegistrationStatusBadgeClass = 'bg-label-success';
         $preRegistrationStatusBadgeText = 'Ready to Submit';
     } else {
@@ -2477,6 +2572,611 @@ if ($preRegistrationSubmitted) {
     $preRegistrationStatusBadgeClass = 'bg-label-warning';
     $preRegistrationStatusBadgeText = 'Interview Pending';
 }
+
+if ($studentRankLocked && isset($programChoiceCards[0])) {
+    $lockedRankDisplay = $studentLockedRank > 0
+        ? number_format($studentLockedRank)
+        : ((string) $firstChoiceRankValueDisplay !== '' ? (string) $firstChoiceRankValueDisplay : 'N/A');
+
+    $programChoiceCards[0]['stat_label'] = 'Locked Rank';
+    $programChoiceCards[0]['stat_value'] = $lockedRankDisplay;
+    $programChoiceCards[0]['stat_primary_value'] = null;
+    $programChoiceCards[0]['stat_secondary_value'] = null;
+    $programChoiceCards[0]['meta_rows'] = [
+        ['label' => 'Cutoff SAT', 'value' => $firstChoiceSlotDetails['cutoff_display']],
+        ['label' => 'Profile', 'value' => $profileCompletionBadge],
+    ];
+}
+
+$nationalitySuggestions = [
+    'Philippines',
+    'Afghanistan',
+    'Albania',
+    'Algeria',
+    'Andorra',
+    'Angola',
+    'Antigua and Barbuda',
+    'Argentina',
+    'Armenia',
+    'Australia',
+    'Austria',
+    'Azerbaijan',
+    'Bahamas',
+    'Bahrain',
+    'Bangladesh',
+    'Barbados',
+    'Belarus',
+    'Belgium',
+    'Belize',
+    'Benin',
+    'Bhutan',
+    'Bolivia',
+    'Bosnia and Herzegovina',
+    'Botswana',
+    'Brazil',
+    'Brunei',
+    'Bulgaria',
+    'Burkina Faso',
+    'Burundi',
+    'Cambodia',
+    'Cameroon',
+    'Canada',
+    'Cabo Verde',
+    'Central African Republic',
+    'Chad',
+    'Chile',
+    'China',
+    'Colombia',
+    'Comoros',
+    'Congo',
+    'Costa Rica',
+    'Cote d\'Ivoire',
+    'Croatia',
+    'Cuba',
+    'Cyprus',
+    'Czech Republic',
+    'Denmark',
+    'Djibouti',
+    'Dominica',
+    'Dominican Republic',
+    'Ecuador',
+    'Egypt',
+    'El Salvador',
+    'Equatorial Guinea',
+    'Eritrea',
+    'Estonia',
+    'Eswatini',
+    'Ethiopia',
+    'Fiji',
+    'Finland',
+    'France',
+    'Gabon',
+    'Gambia',
+    'Georgia',
+    'Germany',
+    'Ghana',
+    'Greece',
+    'Grenada',
+    'Guatemala',
+    'Guinea',
+    'Guinea-Bissau',
+    'Guyana',
+    'Haiti',
+    'Honduras',
+    'Hong Kong',
+    'Hungary',
+    'Iceland',
+    'India',
+    'Indonesia',
+    'Iran',
+    'Iraq',
+    'Ireland',
+    'Israel',
+    'Italy',
+    'Jamaica',
+    'Japan',
+    'Jordan',
+    'Kazakhstan',
+    'Kenya',
+    'Kiribati',
+    'Kuwait',
+    'Kyrgyzstan',
+    'Laos',
+    'Latvia',
+    'Lebanon',
+    'Lesotho',
+    'Liberia',
+    'Libya',
+    'Liechtenstein',
+    'Lithuania',
+    'Luxembourg',
+    'Macau',
+    'Madagascar',
+    'Malawi',
+    'Malaysia',
+    'Maldives',
+    'Mali',
+    'Malta',
+    'Marshall Islands',
+    'Mauritania',
+    'Mauritius',
+    'Mexico',
+    'Micronesia',
+    'Moldova',
+    'Monaco',
+    'Mongolia',
+    'Montenegro',
+    'Morocco',
+    'Mozambique',
+    'Myanmar',
+    'Namibia',
+    'Nauru',
+    'Nepal',
+    'Netherlands',
+    'New Zealand',
+    'Nicaragua',
+    'Niger',
+    'Nigeria',
+    'North Korea',
+    'North Macedonia',
+    'Norway',
+    'Oman',
+    'Pakistan',
+    'Palau',
+    'Palestine',
+    'Panama',
+    'Papua New Guinea',
+    'Paraguay',
+    'Peru',
+    'Poland',
+    'Portugal',
+    'Qatar',
+    'Romania',
+    'Russia',
+    'Rwanda',
+    'Saint Kitts and Nevis',
+    'Saint Lucia',
+    'Saint Vincent and the Grenadines',
+    'Samoa',
+    'San Marino',
+    'Sao Tome and Principe',
+    'Saudi Arabia',
+    'Senegal',
+    'Serbia',
+    'Seychelles',
+    'Sierra Leone',
+    'Singapore',
+    'Slovakia',
+    'Slovenia',
+    'Solomon Islands',
+    'Somalia',
+    'South Africa',
+    'South Korea',
+    'South Sudan',
+    'Spain',
+    'Sri Lanka',
+    'Sudan',
+    'Suriname',
+    'Sweden',
+    'Switzerland',
+    'Syria',
+    'Taiwan',
+    'Tajikistan',
+    'Tanzania',
+    'Thailand',
+    'Timor-Leste',
+    'Togo',
+    'Tonga',
+    'Trinidad and Tobago',
+    'Tunisia',
+    'Turkey',
+    'Turkmenistan',
+    'Tuvalu',
+    'Uganda',
+    'Ukraine',
+    'United Arab Emirates',
+    'United Kingdom',
+    'United States',
+    'Uruguay',
+    'Uzbekistan',
+    'Vanuatu',
+    'Vatican City',
+    'Venezuela',
+    'Vietnam',
+    'Yemen',
+    'Zambia',
+    'Zimbabwe',
+];
+
+$religionSuggestions = [
+    'Roman Catholic',
+    'Islam',
+    'Iglesia ni Cristo',
+    'Philippine Independent Church (Aglipayan)',
+    'Born Again Christian',
+    'Christian',
+    'Protestant',
+    'Bible Baptist',
+    'Baptist',
+    'Evangelical Christian',
+    'Pentecostal',
+    'Seventh-day Adventist',
+    'Jehovah\'s Witnesses',
+    'United Church of Christ in the Philippines',
+    'Methodist',
+    'Presbyterian',
+    'Church of Christ',
+    'The Church of Jesus Christ of Latter-day Saints',
+    'Members Church of God International',
+    'Jesus Is Lord Church',
+    'Buddhist',
+    'Hindu',
+    'Sikh',
+    'Traditional/Indigenous Beliefs',
+    'None',
+    'Other',
+];
+
+ob_start();
+?>
+              <div class="student-profile-panel">
+                <div class="student-profile-section-title">Basic Information</div>
+                <div class="row g-3">
+                  <div class="col-md-4">
+                    <label class="form-label">Full Name</label>
+                    <input type="text" class="form-control" value="<?= htmlspecialchars($studentName); ?>" readonly />
+                  </div>
+                  <div class="col-md-4">
+                    <label class="form-label">Examinee Number</label>
+                    <input type="text" class="form-control" value="<?= htmlspecialchars((string) ($student['examinee_number'] ?? '')); ?>" readonly />
+                  </div>
+                  <div class="col-md-4">
+                    <label class="form-label">Current Mobile Number</label>
+                    <input type="text" class="form-control" value="<?= htmlspecialchars((string) ($student['mobile_number'] ?? '')); ?>" readonly />
+                  </div>
+
+                  <div class="col-md-4">
+                    <label for="profileBirthDate" class="form-label">Birth Date</label>
+                    <input type="date" class="form-control" id="profileBirthDate" name="birth_date" value="<?= htmlspecialchars((string) ($studentProfile['birth_date'] ?? '')); ?>" required />
+                  </div>
+                  <div class="col-md-4">
+                    <label for="profileSex" class="form-label">Sex</label>
+                    <select class="form-select" id="profileSex" name="sex" required>
+                      <option value="">Select Sex</option>
+                      <option value="Male" <?= ((string) ($studentProfile['sex'] ?? '') === 'Male') ? 'selected' : ''; ?>>Male</option>
+                      <option value="Female" <?= ((string) ($studentProfile['sex'] ?? '') === 'Female') ? 'selected' : ''; ?>>Female</option>
+                      <option value="Other" <?= ((string) ($studentProfile['sex'] ?? '') === 'Other') ? 'selected' : ''; ?>>Other</option>
+                    </select>
+                  </div>
+                  <div class="col-md-4">
+                    <label for="profileCivilStatus" class="form-label">Civil Status</label>
+                    <select class="form-select" id="profileCivilStatus" name="civil_status" required>
+                      <option value="">Select Civil Status</option>
+                      <option value="Single" <?= ((string) ($studentProfile['civil_status'] ?? '') === 'Single') ? 'selected' : ''; ?>>Single</option>
+                      <option value="Married" <?= ((string) ($studentProfile['civil_status'] ?? '') === 'Married') ? 'selected' : ''; ?>>Married</option>
+                      <option value="Separated" <?= ((string) ($studentProfile['civil_status'] ?? '') === 'Separated') ? 'selected' : ''; ?>>Separated</option>
+                      <option value="Widowed" <?= ((string) ($studentProfile['civil_status'] ?? '') === 'Widowed') ? 'selected' : ''; ?>>Widowed</option>
+                      <option value="Other" <?= ((string) ($studentProfile['civil_status'] ?? '') === 'Other') ? 'selected' : ''; ?>>Other</option>
+                    </select>
+                  </div>
+                  <div class="col-md-6">
+                    <label for="profileNationality" class="form-label">Nationality</label>
+                    <input
+                      type="text"
+                      class="form-control"
+                      id="profileNationality"
+                      name="nationality"
+                      maxlength="100"
+                      list="profileNationalityOptions"
+                      placeholder="Select or type nationality"
+                      value="<?= htmlspecialchars((string) ($studentProfile['nationality'] ?? '')); ?>"
+                      required
+                    />
+                    <datalist id="profileNationalityOptions">
+                      <?php foreach ($nationalitySuggestions as $nationalityOption): ?>
+                        <option value="<?= htmlspecialchars($nationalityOption); ?>"></option>
+                      <?php endforeach; ?>
+                    </datalist>
+                    <small class="text-muted">Common country options are provided. You can still type a custom value.</small>
+                  </div>
+                  <div class="col-md-6">
+                    <label for="profileReligion" class="form-label">Religion</label>
+                    <input
+                      type="text"
+                      class="form-control"
+                      id="profileReligion"
+                      name="religion"
+                      maxlength="120"
+                      list="profileReligionOptions"
+                      placeholder="Select or type religion"
+                      value="<?= htmlspecialchars((string) ($studentProfile['religion'] ?? '')); ?>"
+                      required
+                    />
+                    <datalist id="profileReligionOptions">
+                      <?php foreach ($religionSuggestions as $religionOption): ?>
+                        <option value="<?= htmlspecialchars($religionOption); ?>"></option>
+                      <?php endforeach; ?>
+                    </datalist>
+                    <small class="text-muted">Includes common religions in the Philippines. You can still type a custom value.</small>
+                  </div>
+                </div>
+              </div>
+
+              <div class="student-profile-panel mt-4">
+                <div class="student-profile-section-title">Secondary School Information</div>
+                <div class="row g-3 mb-3">
+                  <div class="col-md-8">
+                    <label for="profileSecondarySchool" class="form-label">Secondary School</label>
+                    <input
+                      type="text"
+                      class="form-control"
+                      id="profileSecondarySchool"
+                      name="secondary_school_name"
+                      maxlength="190"
+                      value="<?= htmlspecialchars((string) ($studentProfile['secondary_school_name'] ?? '')); ?>"
+                      required
+                    />
+                  </div>
+                  <div class="col-md-4">
+                    <label for="profileSchoolType" class="form-label">School Type</label>
+                    <select class="form-select" id="profileSchoolType" name="secondary_school_type" required>
+                      <option value="">Select School Type</option>
+                      <option value="Private" <?= ((string) ($studentProfile['secondary_school_type'] ?? '') === 'Private') ? 'selected' : ''; ?>>Private</option>
+                      <option value="Public" <?= ((string) ($studentProfile['secondary_school_type'] ?? '') === 'Public') ? 'selected' : ''; ?>>Public</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="student-profile-section-title">Secondary School Address</div>
+                <input
+                  type="hidden"
+                  id="profileSecondaryAddressLine1"
+                  name="secondary_address_line1"
+                  value="<?= htmlspecialchars((string) ($studentProfile['secondary_address_line1'] ?? '')); ?>"
+                />
+                <select class="d-none" id="profileSecondaryRegion" name="secondary_region_code">
+                  <option value="">Select Region</option>
+                  <?php foreach ($regionOptions as $regionOption): ?>
+                    <option value="<?= htmlspecialchars((string) ($regionOption['code'] ?? 0)); ?>" <?= ((int) ($regionOption['code'] ?? 0) === $profileSecondaryRegionCode) ? 'selected' : ''; ?>>
+                      <?= htmlspecialchars((string) ($regionOption['label'] ?? '')); ?>
+                    </option>
+                  <?php endforeach; ?>
+                </select>
+                <select
+                  class="d-none"
+                  id="profileSecondaryBarangay"
+                  name="secondary_barangay_code"
+                  data-selected="<?= htmlspecialchars((string) $profileSecondaryBarangayCode); ?>"
+                >
+                  <option value="">Select Barangay</option>
+                  <?php if ($profileSecondaryBarangayCode > 0 && trim((string) ($studentProfile['secondary_barangay_name'] ?? '')) !== ''): ?>
+                    <option value="<?= htmlspecialchars((string) $profileSecondaryBarangayCode); ?>" selected><?= htmlspecialchars((string) ($studentProfile['secondary_barangay_name'] ?? '')); ?></option>
+                  <?php endif; ?>
+                </select>
+                <div class="row g-3">
+                  <div class="col-md-4">
+                    <label for="profileSecondaryProvince" class="form-label">Province</label>
+                    <select
+                      class="form-select"
+                      id="profileSecondaryProvince"
+                      name="secondary_province_code"
+                      data-selected="<?= htmlspecialchars((string) $profileSecondaryProvinceCode); ?>"
+                      required
+                    >
+                      <option value="">Select Province</option>
+                      <?php if ($profileSecondaryProvinceCode > 0 && trim((string) ($studentProfile['secondary_province_name'] ?? '')) !== ''): ?>
+                        <option value="<?= htmlspecialchars((string) $profileSecondaryProvinceCode); ?>" selected><?= htmlspecialchars((string) ($studentProfile['secondary_province_name'] ?? '')); ?></option>
+                      <?php endif; ?>
+                    </select>
+                  </div>
+                  <div class="col-md-4">
+                    <label for="profileSecondaryCityMun" class="form-label">City / Municipality</label>
+                    <select
+                      class="form-select"
+                      id="profileSecondaryCityMun"
+                      name="secondary_citymun_code"
+                      data-selected="<?= htmlspecialchars((string) $profileSecondaryCitymunCode); ?>"
+                      required
+                    >
+                      <option value="">Select City / Municipality</option>
+                      <?php if ($profileSecondaryCitymunCode > 0 && trim((string) ($studentProfile['secondary_citymun_name'] ?? '')) !== ''): ?>
+                        <option value="<?= htmlspecialchars((string) $profileSecondaryCitymunCode); ?>" selected><?= htmlspecialchars((string) ($studentProfile['secondary_citymun_name'] ?? '')); ?></option>
+                      <?php endif; ?>
+                    </select>
+                  </div>
+                  <div class="col-md-4">
+                    <label for="profileSecondaryPostalCode" class="form-label">Postal Code</label>
+                    <input
+                      type="text"
+                      class="form-control"
+                      id="profileSecondaryPostalCode"
+                      name="secondary_postal_code"
+                      maxlength="20"
+                      value="<?= htmlspecialchars((string) ($studentProfile['secondary_postal_code'] ?? '')); ?>"
+                      required
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div class="student-profile-panel mt-4">
+                <div class="student-profile-section-title">Address Information</div>
+                <div class="row g-3">
+                  <div class="col-md-12">
+                    <label for="profileAddressLine1" class="form-label">House No. / Street / Purok</label>
+                    <input type="text" class="form-control" id="profileAddressLine1" name="address_line1" maxlength="255" value="<?= htmlspecialchars((string) ($studentProfile['address_line1'] ?? '')); ?>" required />
+                  </div>
+                  <div class="col-md-3">
+                    <label for="profileRegion" class="form-label">Region</label>
+                    <select class="form-select" id="profileRegion" name="region_code" required>
+                      <option value="">Select Region</option>
+                      <?php foreach ($regionOptions as $regionOption): ?>
+                        <option value="<?= htmlspecialchars((string) ($regionOption['code'] ?? 0)); ?>" <?= ((int) ($regionOption['code'] ?? 0) === $profileRegionCode) ? 'selected' : ''; ?>>
+                          <?= htmlspecialchars((string) ($regionOption['label'] ?? '')); ?>
+                        </option>
+                      <?php endforeach; ?>
+                    </select>
+                  </div>
+                  <div class="col-md-3">
+                    <label for="profileProvince" class="form-label">Province</label>
+                    <select
+                      class="form-select"
+                      id="profileProvince"
+                      name="province_code"
+                      data-selected="<?= htmlspecialchars((string) $profileProvinceCode); ?>"
+                      required
+                    >
+                      <option value="">Select Province</option>
+                      <?php if ($profileProvinceCode > 0 && trim((string) ($studentProfile['province_name'] ?? '')) !== ''): ?>
+                        <option value="<?= htmlspecialchars((string) $profileProvinceCode); ?>" selected><?= htmlspecialchars((string) ($studentProfile['province_name'] ?? '')); ?></option>
+                      <?php endif; ?>
+                    </select>
+                  </div>
+                  <div class="col-md-3">
+                    <label for="profileCityMun" class="form-label">City / Municipality</label>
+                    <select
+                      class="form-select"
+                      id="profileCityMun"
+                      name="citymun_code"
+                      data-selected="<?= htmlspecialchars((string) $profileCitymunCode); ?>"
+                      required
+                    >
+                      <option value="">Select City / Municipality</option>
+                      <?php if ($profileCitymunCode > 0 && trim((string) ($studentProfile['citymun_name'] ?? '')) !== ''): ?>
+                        <option value="<?= htmlspecialchars((string) $profileCitymunCode); ?>" selected><?= htmlspecialchars((string) ($studentProfile['citymun_name'] ?? '')); ?></option>
+                      <?php endif; ?>
+                    </select>
+                  </div>
+                  <div class="col-md-3">
+                    <label for="profileBarangay" class="form-label">Barangay</label>
+                    <select
+                      class="form-select"
+                      id="profileBarangay"
+                      name="barangay_code"
+                      data-selected="<?= htmlspecialchars((string) $profileBarangayCode); ?>"
+                      required
+                    >
+                      <option value="">Select Barangay</option>
+                      <?php if ($profileBarangayCode > 0 && trim((string) ($studentProfile['barangay_name'] ?? '')) !== ''): ?>
+                        <option value="<?= htmlspecialchars((string) $profileBarangayCode); ?>" selected><?= htmlspecialchars((string) ($studentProfile['barangay_name'] ?? '')); ?></option>
+                      <?php endif; ?>
+                    </select>
+                  </div>
+                  <div class="col-md-3">
+                    <label for="profilePostalCode" class="form-label">Postal Code</label>
+                    <input type="text" class="form-control" id="profilePostalCode" name="postal_code" maxlength="20" value="<?= htmlspecialchars((string) ($studentProfile['postal_code'] ?? '')); ?>" required />
+                  </div>
+                </div>
+              </div>
+
+              <div class="student-profile-panel mt-4">
+                <div class="student-profile-section-title">Parents / Guardian Information</div>
+                <div class="row g-3">
+                  <div class="col-md-12">
+                    <label for="profileParentGuardianName" class="form-label">Parent / Guardian Name</label>
+                    <input
+                      type="text"
+                      class="form-control"
+                      id="profileParentGuardianName"
+                      name="guardian_name"
+                      maxlength="190"
+                      value="<?= htmlspecialchars((string) ($studentProfile['guardian_name'] ?? '')); ?>"
+                      required
+                    />
+                  </div>
+                  <div class="col-md-12">
+                    <label for="profileParentGuardianAddressLine1" class="form-label">House No. / Street / Purok</label>
+                    <input
+                      type="text"
+                      class="form-control"
+                      id="profileParentGuardianAddressLine1"
+                      name="parent_guardian_address_line1"
+                      maxlength="255"
+                      value="<?= htmlspecialchars((string) ($studentProfile['parent_guardian_address_line1'] ?? '')); ?>"
+                      required
+                    />
+                  </div>
+                  <div class="col-md-3">
+                    <label for="profileParentGuardianRegion" class="form-label">Region</label>
+                    <select class="form-select" id="profileParentGuardianRegion" name="parent_guardian_region_code" required>
+                      <option value="">Select Region</option>
+                      <?php foreach ($regionOptions as $regionOption): ?>
+                        <option value="<?= htmlspecialchars((string) ($regionOption['code'] ?? 0)); ?>" <?= ((int) ($regionOption['code'] ?? 0) === $profileParentGuardianRegionCode) ? 'selected' : ''; ?>>
+                          <?= htmlspecialchars((string) ($regionOption['label'] ?? '')); ?>
+                        </option>
+                      <?php endforeach; ?>
+                    </select>
+                  </div>
+                  <div class="col-md-3">
+                    <label for="profileParentGuardianProvince" class="form-label">Province</label>
+                    <select
+                      class="form-select"
+                      id="profileParentGuardianProvince"
+                      name="parent_guardian_province_code"
+                      data-selected="<?= htmlspecialchars((string) $profileParentGuardianProvinceCode); ?>"
+                      required
+                    >
+                      <option value="">Select Province</option>
+                      <?php if ($profileParentGuardianProvinceCode > 0 && trim((string) ($studentProfile['parent_guardian_province_name'] ?? '')) !== ''): ?>
+                        <option value="<?= htmlspecialchars((string) $profileParentGuardianProvinceCode); ?>" selected><?= htmlspecialchars((string) ($studentProfile['parent_guardian_province_name'] ?? '')); ?></option>
+                      <?php endif; ?>
+                    </select>
+                  </div>
+                  <div class="col-md-3">
+                    <label for="profileParentGuardianCityMun" class="form-label">City / Municipality</label>
+                    <select
+                      class="form-select"
+                      id="profileParentGuardianCityMun"
+                      name="parent_guardian_citymun_code"
+                      data-selected="<?= htmlspecialchars((string) $profileParentGuardianCitymunCode); ?>"
+                      required
+                    >
+                      <option value="">Select City / Municipality</option>
+                      <?php if ($profileParentGuardianCitymunCode > 0 && trim((string) ($studentProfile['parent_guardian_citymun_name'] ?? '')) !== ''): ?>
+                        <option value="<?= htmlspecialchars((string) $profileParentGuardianCitymunCode); ?>" selected><?= htmlspecialchars((string) ($studentProfile['parent_guardian_citymun_name'] ?? '')); ?></option>
+                      <?php endif; ?>
+                    </select>
+                  </div>
+                  <div class="col-md-3">
+                    <label for="profileParentGuardianBarangay" class="form-label">Barangay</label>
+                    <select
+                      class="form-select"
+                      id="profileParentGuardianBarangay"
+                      name="parent_guardian_barangay_code"
+                      data-selected="<?= htmlspecialchars((string) $profileParentGuardianBarangayCode); ?>"
+                      required
+                    >
+                      <option value="">Select Barangay</option>
+                      <?php if ($profileParentGuardianBarangayCode > 0 && trim((string) ($studentProfile['parent_guardian_barangay_name'] ?? '')) !== ''): ?>
+                        <option value="<?= htmlspecialchars((string) $profileParentGuardianBarangayCode); ?>" selected><?= htmlspecialchars((string) ($studentProfile['parent_guardian_barangay_name'] ?? '')); ?></option>
+                      <?php endif; ?>
+                    </select>
+                  </div>
+                  <div class="col-md-3">
+                    <label for="profileParentGuardianPostalCode" class="form-label">Postal Code</label>
+                    <input
+                      type="text"
+                      class="form-control"
+                      id="profileParentGuardianPostalCode"
+                      name="parent_guardian_postal_code"
+                      maxlength="20"
+                      value="<?= htmlspecialchars((string) ($studentProfile['parent_guardian_postal_code'] ?? '')); ?>"
+                      required
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <input type="hidden" name="father_name" value="<?= htmlspecialchars((string) ($studentProfile['father_name'] ?? '')); ?>" />
+              <input type="hidden" name="father_contact_number" value="<?= htmlspecialchars((string) ($studentProfile['father_contact_number'] ?? '')); ?>" />
+              <input type="hidden" name="father_occupation" value="<?= htmlspecialchars((string) ($studentProfile['father_occupation'] ?? '')); ?>" />
+              <input type="hidden" name="mother_name" value="<?= htmlspecialchars((string) ($studentProfile['mother_name'] ?? '')); ?>" />
+              <input type="hidden" name="mother_contact_number" value="<?= htmlspecialchars((string) ($studentProfile['mother_contact_number'] ?? '')); ?>" />
+              <input type="hidden" name="mother_occupation" value="<?= htmlspecialchars((string) ($studentProfile['mother_occupation'] ?? '')); ?>" />
+              <input type="hidden" name="guardian_relationship" value="<?= htmlspecialchars((string) ($studentProfile['guardian_relationship'] ?? '')); ?>" />
+              <input type="hidden" name="guardian_contact_number" value="<?= htmlspecialchars((string) ($studentProfile['guardian_contact_number'] ?? '')); ?>" />
+              <input type="hidden" name="guardian_occupation" value="<?= htmlspecialchars((string) ($studentProfile['guardian_occupation'] ?? '')); ?>" />
+<?php
+$studentProfileFormFieldsHtml = ob_get_clean();
 ?>
 <!DOCTYPE html>
 <html
@@ -2539,6 +3239,7 @@ if ($preRegistrationSubmitted) {
       #layout-menu .sidebar-action-card.is-disabled {
         opacity: 0.66;
         cursor: default;
+        pointer-events: none;
       }
 
       #layout-menu .sidebar-action-card.is-disabled:hover {
@@ -2598,6 +3299,13 @@ if ($preRegistrationSubmitted) {
       .student-program-card.is-first-choice.is-outside {
         border-left-color: #ea4335;
         background: #fdecea;
+      }
+
+      .student-program-card.is-locked-view {
+        border-left-width: 0;
+        border: 1px solid #d7e5d3;
+        background: linear-gradient(180deg, #f7fbf5 0%, #eff7ec 100%);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
       }
 
       .student-program-card-title {
@@ -2697,6 +3405,151 @@ if ($preRegistrationSubmitted) {
         margin-top: 0.7rem;
       }
 
+      .student-locked-pane {
+        padding: 0.35rem 0 0.9rem;
+      }
+
+      .student-locked-pane-kicker {
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #7a8b74;
+        font-weight: 700;
+      }
+
+      .student-locked-pane-title {
+        margin: 0.3rem 0 0.18rem;
+        color: #314155;
+        font-weight: 700;
+      }
+
+      .student-locked-pane-text {
+        margin: 0;
+        color: #6a7b92;
+        font-size: 0.82rem;
+      }
+
+      .student-locked-program-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 0.85rem;
+      }
+
+      .student-locked-program-head .student-rank-lock-pill {
+        margin-left: 0;
+      }
+
+      .student-locked-metric-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.7rem;
+        margin-top: 0.95rem;
+      }
+
+      .student-locked-metric {
+        padding: 0.72rem 0.76rem;
+        border-radius: 0.8rem;
+        border: 1px solid #dce7d8;
+        background: rgba(255, 255, 255, 0.78);
+      }
+
+      .student-locked-metric-label {
+        display: block;
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: #75886f;
+      }
+
+      .student-locked-metric-value {
+        display: block;
+        margin-top: 0.25rem;
+        color: #1f5130;
+        font-size: 1.16rem;
+        font-weight: 700;
+        line-height: 1.1;
+      }
+
+      .student-agreement-summary {
+        border: 1px solid #e4e8f0;
+        border-radius: 1rem;
+        padding: 0.9rem 1rem;
+        background: linear-gradient(180deg, #f7f9ff 0%, #f1f6ff 100%);
+      }
+
+      .student-agreement-summary-title {
+        margin: 0 0 0.25rem;
+        color: #314155;
+        font-size: 0.95rem;
+        font-weight: 700;
+      }
+
+      .student-agreement-summary-copy {
+        margin: 0;
+        color: #62748a;
+        font-size: 0.84rem;
+      }
+
+      .student-agreement-doc {
+        max-height: 22rem;
+        overflow: auto;
+        border: 1px solid #e4e8f0;
+        border-radius: 1rem;
+        padding: 1rem 1.05rem;
+        background: #fff;
+      }
+
+      .student-agreement-doc-title {
+        margin: 0;
+        color: #314155;
+        font-size: 1rem;
+        font-weight: 700;
+      }
+
+      .student-agreement-doc-subtitle {
+        margin: 0.12rem 0 0;
+        color: #6b7a90;
+        font-size: 0.82rem;
+      }
+
+      .student-agreement-doc-body {
+        margin-top: 1rem;
+        color: #445166;
+        font-size: 0.9rem;
+      }
+
+      .student-agreement-doc-body ol {
+        margin-bottom: 0;
+        padding-left: 1.2rem;
+      }
+
+      .student-agreement-doc-body li + li {
+        margin-top: 0.9rem;
+      }
+
+      .student-agreement-doc-body h6 {
+        margin: 0 0 0.3rem;
+        color: #314155;
+        font-size: 0.92rem;
+        font-weight: 700;
+      }
+
+      .student-agreement-doc-body p {
+        margin-bottom: 0.45rem;
+      }
+
+      .student-agreement-doc-body ul {
+        margin: 0;
+        padding-left: 1.1rem;
+      }
+
+      .student-agreement-check {
+        margin-top: 0.9rem;
+        padding-top: 0.95rem;
+        border-top: 1px solid #eef2f7;
+      }
+
       .student-program-list {
         display: flex;
         flex-direction: column;
@@ -2779,6 +3632,64 @@ if ($preRegistrationSubmitted) {
         padding: 0.4rem 0.62rem;
       }
 
+      .student-profile-shell .student-profile-panel {
+        border: 1px solid #e4e9f2;
+        border-radius: 0.75rem;
+        padding: 1rem;
+        background: #fff;
+      }
+
+      .student-profile-shell .student-profile-section-title {
+        margin-top: 0.3rem;
+        margin-bottom: 0.8rem;
+        padding-bottom: 0.38rem;
+        border-bottom: 1px dashed #d7deea;
+        font-size: 0.82rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #5f6f86;
+      }
+
+      .student-inline-profile-card {
+        border: 1px solid #dde4f0;
+      }
+
+      .student-inline-profile-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-bottom: 1rem;
+      }
+
+      .student-inline-profile-kicker {
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #6a7b92;
+        font-weight: 700;
+      }
+
+      .student-inline-profile-copy {
+        color: #6b7280;
+        font-size: 0.9rem;
+        margin-bottom: 0;
+      }
+
+      .student-profile-missing-note {
+        margin-top: 0.45rem;
+        color: #b45309;
+        font-size: 0.82rem;
+        font-weight: 600;
+      }
+
+      .student-inline-profile-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        flex-wrap: wrap;
+      }
+
       #studentProfileModal .modal-content {
         border-radius: 0.88rem;
       }
@@ -2813,6 +3724,22 @@ if ($preRegistrationSubmitted) {
           z-index: 2;
         }
       }
+
+      @media (max-width: 767.98px) {
+        .student-inline-profile-header {
+          flex-direction: column;
+        }
+
+        .student-locked-metric-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 479.98px) {
+        .student-locked-metric-grid {
+          grid-template-columns: 1fr;
+        }
+      }
     </style>
   </head>
 
@@ -2840,12 +3767,16 @@ if ($preRegistrationSubmitted) {
                 <span class="sidebar-action-icon bg-label-primary"><i class="bx bx-user-circle"></i></span>
                 <div>
                   <div class="sidebar-action-title">Profile</div>
-                  <small class="sidebar-action-sub">View your student details</small>
+                  <small class="sidebar-action-sub"><?= htmlspecialchars($profileMenuSubtext); ?></small>
                 </div>
               </a>
             </li>
             <li class="menu-item px-2">
-              <a href="<?= htmlspecialchars($transferActionHref); ?>" class="menu-link sidebar-action-card<?= $transferActionClass; ?>">
+              <a
+                href="<?= htmlspecialchars($transferActionHref); ?>"
+                class="menu-link sidebar-action-card<?= $transferActionClass; ?>"
+                <?= $transferActionEnabled ? '' : 'tabindex="-1" aria-disabled="true"'; ?>
+              >
                 <span class="sidebar-action-icon bg-label-warning"><i class="bx bx-transfer-alt"></i></span>
                 <div>
                   <div class="sidebar-action-title"><?= htmlspecialchars($transferActionTitle); ?></div>
@@ -2854,20 +3785,24 @@ if ($preRegistrationSubmitted) {
               </a>
             </li>
             <li class="menu-item px-2">
-              <a href="change_password.php" class="menu-link sidebar-action-card">
+              <a
+                href="<?= htmlspecialchars($changePasswordActionHref); ?>"
+                class="menu-link sidebar-action-card<?= $changePasswordActionClass; ?>"
+                <?= $studentRankLocked ? 'tabindex="-1" aria-disabled="true"' : ''; ?>
+              >
                 <span class="sidebar-action-icon bg-label-info"><i class="bx bx-lock-open-alt"></i></span>
                 <div>
                   <div class="sidebar-action-title">Change Password</div>
-                  <small class="sidebar-action-sub">Update account security</small>
+                  <small class="sidebar-action-sub"><?= htmlspecialchars($changePasswordActionSub); ?></small>
                 </div>
               </a>
             </li>
             <li class="menu-item px-2">
-              <a href="javascript:void(0);" class="menu-link sidebar-action-card is-disabled">
+              <a href="javascript:void(0);" class="menu-link sidebar-action-card is-disabled" tabindex="-1" aria-disabled="true">
                 <span class="sidebar-action-icon bg-label-secondary"><i class="bx bx-time-five"></i></span>
                 <div>
                   <div class="sidebar-action-title">Logs</div>
-                  <small class="sidebar-action-sub">Feature coming soon</small>
+                  <small class="sidebar-action-sub"><?= htmlspecialchars($logsActionSub); ?></small>
                 </div>
               </a>
             </li>
@@ -2923,7 +3858,11 @@ if ($preRegistrationSubmitted) {
                   </a>
                   <ul class="dropdown-menu dropdown-menu-end">
                     <li><a class="dropdown-item" href="#student-profile"><i class="bx bx-user me-2"></i>My Profile</a></li>
-                    <li><a class="dropdown-item" href="change_password.php"><i class="bx bx-lock-open-alt me-2"></i>Change Password</a></li>
+                    <?php if ($studentRankLocked): ?>
+                      <li><a class="dropdown-item disabled" href="javascript:void(0);" tabindex="-1" aria-disabled="true"><i class="bx bx-lock-open-alt me-2"></i>Change Password</a></li>
+                    <?php else: ?>
+                      <li><a class="dropdown-item" href="change_password.php"><i class="bx bx-lock-open-alt me-2"></i>Change Password</a></li>
+                    <?php endif; ?>
                     <li><div class="dropdown-divider"></div></li>
                     <li><a class="dropdown-item" href="../logout.php"><i class="bx bx-power-off me-2"></i>Log Out</a></li>
                   </ul>
@@ -2968,6 +3907,9 @@ if ($preRegistrationSubmitted) {
                         <div class="card-body">
                           <h5 class="card-title text-primary"><?= htmlspecialchars($preRegistrationCardTitle); ?></h5>
                           <p class="mb-4"><?= htmlspecialchars($preRegistrationCardMessage); ?></p>
+                          <?php if (!$isProfileComplete && $studentProfileMissingSummary !== ''): ?>
+                            <div class="student-profile-missing-note mb-3"><?= htmlspecialchars($studentProfileMissingSummary); ?></div>
+                          <?php endif; ?>
                           <div class="d-flex flex-wrap gap-2 mb-4">
                             <span class="badge <?= $hasScoredInterview ? 'bg-label-success' : 'bg-label-warning'; ?>">Interview: <?= $hasScoredInterview ? 'Scored' : 'Pending'; ?></span>
                             <span class="badge <?= htmlspecialchars($preRegistrationStatusBadgeClass); ?>"><?= htmlspecialchars($preRegistrationStatusBadgeText); ?></span>
@@ -2976,28 +3918,38 @@ if ($preRegistrationSubmitted) {
                             <?php endif; ?>
                           </div>
                           <div class="d-flex flex-wrap align-items-center gap-2">
-                            <form method="post" class="d-inline">
+                            <form method="post" class="d-inline" id="studentPreRegistrationForm" autocomplete="off">
                               <input type="hidden" name="action" value="student_preregistration_submit" />
                               <input type="hidden" name="csrf_token" value="<?= htmlspecialchars((string) ($_SESSION['student_prereg_csrf'] ?? ''), ENT_QUOTES); ?>" />
                               <button
-                                type="submit"
+                                type="button"
+                                id="openPreRegistrationAgreementBtn"
                                 class="btn btn-sm <?= htmlspecialchars($preRegistrationButtonClass); ?>"
                                 <?= $canSubmitPreRegistration ? '' : 'disabled'; ?>
+                                <?= $canSubmitPreRegistration ? 'data-bs-toggle="modal" data-bs-target="#studentPreRegistrationAgreementModal"' : ''; ?>
                                 title="<?= htmlspecialchars($preRegistrationButtonTitle); ?>"
                               >
                                 <?= htmlspecialchars($preRegistrationButtonLabel); ?>
                               </button>
                             </form>
-                            <button
-                              type="button"
-                              class="btn btn-sm btn-outline-primary"
-                              data-bs-toggle="modal"
-                              data-bs-target="#studentProfileModal"
-                              <?= $canUpdateProfile ? '' : 'disabled'; ?>
-                              title="<?= htmlspecialchars($updateProfileButtonTitle); ?>"
-                            >
-                              Update My Profile
-                            </button>
+                            <?php if ($studentRankLocked): ?>
+                              <a
+                                href="#student-profile"
+                                class="btn btn-sm btn-outline-primary"
+                                title="<?= htmlspecialchars($updateProfileButtonTitle); ?>"
+                              >
+                                <?= htmlspecialchars($updateProfileButtonLabel); ?>
+                              </a>
+                            <?php else: ?>
+                              <button
+                                type="button"
+                                class="btn btn-sm btn-outline-primary"
+                                <?= $canUpdateProfile ? '' : 'disabled'; ?>
+                                title="<?= htmlspecialchars($updateProfileButtonTitle); ?>"
+                              >
+                                <?= htmlspecialchars($updateProfileButtonLabel); ?>
+                              </button>
+                            <?php endif; ?>
                             <span class="badge bg-label-info student-profile-progress-chip"><?= htmlspecialchars($profileCompletionBadge); ?></span>
                           </div>
                         </div>
@@ -3010,33 +3962,119 @@ if ($preRegistrationSubmitted) {
                     </div>
                   </div>
 
-                  <div id="student-profile" class="card mb-4">
-                    <div class="card-body">
-                      <h5 class="card-title mb-3">Student Details</h5>
-                      <div class="table-responsive">
-                        <table class="table table-sm mb-0">
-                          <tbody>
-                            <tr><th class="w-50">Full Name</th><td><?= htmlspecialchars($studentName); ?></td></tr>
-                            <tr><th>Examinee Number</th><td><?= htmlspecialchars((string) ($student['examinee_number'] ?? 'N/A')); ?></td></tr>
-                            <tr><th>Campus</th><td><?= htmlspecialchars((string) ($student['campus_name'] ?? 'N/A')); ?></td></tr>
-                            <tr><th>Classification</th><td><?= htmlspecialchars((string) ($student['classification'] ?? 'N/A')); ?></td></tr>
-                            <tr><th>ETG Class</th><td><?= htmlspecialchars((string) ($student['etg_class_name'] ?? 'N/A')); ?></td></tr>
-                            <tr><th>Mobile Number</th><td><?= htmlspecialchars((string) ($student['mobile_number'] ?? 'N/A')); ?></td></tr>
-                            <tr><th>SHS Track</th><td><?= htmlspecialchars((string) ($student['shs_track_name'] ?? 'N/A')); ?></td></tr>
-                            <tr><th>Interview Date/Time</th><td><?= htmlspecialchars((string) ($student['interview_datetime'] ?? 'N/A')); ?></td></tr>
-                            <tr class="student-final-score-row"><th>Final Interview Score</th><td class="fw-semibold"><?= htmlspecialchars($finalScoreDisplay); ?></td></tr>
-                            <tr><th>SAT Score</th><td><?= htmlspecialchars((string) ($student['sat_score'] ?? 'N/A')); ?></td></tr>
-                            <tr><th>Placement Result</th><td><?= htmlspecialchars((string) ($student['qualitative_text'] ?? 'N/A')); ?></td></tr>
-                          </tbody>
-                        </table>
+                  <?php if ($studentRankLocked): ?>
+                    <div id="student-profile" class="card mb-4 student-inline-profile-card">
+                      <form method="post" id="studentProfileForm" autocomplete="off">
+                        <input type="hidden" name="action" value="student_profile_save" />
+                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars((string) ($_SESSION['student_profile_csrf'] ?? ''), ENT_QUOTES); ?>" />
+                        <div class="card-body student-profile-shell">
+                          <div class="student-inline-profile-header">
+                            <div>
+                              <div class="student-inline-profile-kicker">Profile Completion</div>
+                              <h5 class="card-title mb-1">Complete Your Profile Details</h5>
+                              <p class="student-inline-profile-copy">Fill in the missing information here before final pre-registration submission.</p>
+                              <?php if (!$isProfileComplete && $studentProfileMissingSummary !== ''): ?>
+                                <div class="student-profile-missing-note"><?= htmlspecialchars($studentProfileMissingSummary); ?></div>
+                              <?php endif; ?>
+                            </div>
+                            <div class="student-inline-profile-actions">
+                              <?php if ($studentLockedRank > 0): ?>
+                                <span class="badge bg-label-warning"><i class="bx bx-lock-alt me-1"></i>Locked Rank #<?= htmlspecialchars(number_format($studentLockedRank)); ?></span>
+                              <?php endif; ?>
+                              <span class="badge bg-label-info student-profile-progress-chip"><?= htmlspecialchars($profileCompletionBadge); ?></span>
+                              <button type="submit" class="btn btn-primary btn-sm">Save Profile</button>
+                            </div>
+                          </div>
+                          <?php echo $studentProfileFormFieldsHtml; ?>
+                          <div class="d-flex justify-content-end mt-4">
+                            <button type="submit" class="btn btn-primary">Save Profile</button>
+                          </div>
+                        </div>
+                      </form>
+                    </div>
+                  <?php else: ?>
+                    <div id="student-profile" class="card mb-4">
+                      <div class="card-body">
+                        <h5 class="card-title mb-3">Student Details</h5>
+                        <div class="table-responsive">
+                          <table class="table table-sm mb-0">
+                            <tbody>
+                              <tr><th class="w-50">Full Name</th><td><?= htmlspecialchars($studentName); ?></td></tr>
+                              <tr><th>Examinee Number</th><td><?= htmlspecialchars((string) ($student['examinee_number'] ?? 'N/A')); ?></td></tr>
+                              <tr><th>Campus</th><td><?= htmlspecialchars((string) ($student['campus_name'] ?? 'N/A')); ?></td></tr>
+                              <tr><th>Classification</th><td><?= htmlspecialchars((string) ($student['classification'] ?? 'N/A')); ?></td></tr>
+                              <tr><th>ETG Class</th><td><?= htmlspecialchars((string) ($student['etg_class_name'] ?? 'N/A')); ?></td></tr>
+                              <tr><th>Mobile Number</th><td><?= htmlspecialchars((string) ($student['mobile_number'] ?? 'N/A')); ?></td></tr>
+                              <tr><th>SHS Track</th><td><?= htmlspecialchars((string) ($student['shs_track_name'] ?? 'N/A')); ?></td></tr>
+                              <tr><th>Interview Date/Time</th><td><?= htmlspecialchars((string) ($student['interview_datetime'] ?? 'N/A')); ?></td></tr>
+                              <tr class="student-final-score-row"><th>Final Interview Score</th><td class="fw-semibold"><?= htmlspecialchars($finalScoreDisplay); ?></td></tr>
+                              <tr><th>SAT Score</th><td><?= htmlspecialchars((string) ($student['sat_score'] ?? 'N/A')); ?></td></tr>
+                              <tr><th>Placement Result</th><td><?= htmlspecialchars((string) ($student['qualitative_text'] ?? 'N/A')); ?></td></tr>
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  <?php endif; ?>
                 </div>
 
                 <div class="col-lg-4 col-12">
                   <div class="student-pinned-wrap">
                     <div class="card mb-4">
+                      <?php if ($studentRankLocked): ?>
+                        <div class="card-body">
+                          <div class="student-locked-pane">
+                            <div class="student-locked-pane-kicker">Locked Program</div>
+                            <h6 class="student-locked-pane-title">Pre-Registration Placement</h6>
+                            <p class="student-locked-pane-text">Only your locked program is shown here while pre-registration is active.</p>
+                          </div>
+                          <div class="d-flex flex-column gap-3">
+                            <?php foreach ($programChoiceCards as $index => $choiceCard): ?>
+                              <?php
+                                $choiceCardClass = 'is-first-choice is-locked-view';
+                                if ($firstChoiceWithinCapacity) {
+                                    $choiceCardClass .= ' is-qualified';
+                                } elseif ($firstChoiceOutsideCapacity) {
+                                    $choiceCardClass .= ' is-outside';
+                                }
+                              ?>
+                              <div class="student-program-card <?= trim($choiceCardClass); ?>">
+                                <div class="student-locked-program-head">
+                                  <div>
+                                    <div class="student-program-card-title"><?= htmlspecialchars($choiceCard['title']); ?></div>
+                                    <div class="student-program-card-name"><?= htmlspecialchars($choiceCard['program']); ?></div>
+                                    <?php if (!empty($choiceCard['program_code'])): ?>
+                                      <div class="student-program-code"><?= htmlspecialchars((string) $choiceCard['program_code']); ?></div>
+                                    <?php endif; ?>
+                                  </div>
+                                  <span class="student-rank-lock-pill" title="Locked rank" aria-label="Locked rank">
+                                    <i class="bx bx-lock-alt"></i>
+                                    <span>Locked</span>
+                                  </span>
+                                </div>
+                                <div class="student-locked-metric-grid">
+                                  <div class="student-locked-metric">
+                                    <span class="student-locked-metric-label">Rank</span>
+                                    <?php $lockedRankMetricValue = (string) ($choiceCard['stat_value'] ?? 'N/A'); ?>
+                                    <strong class="student-locked-metric-value <?= !empty($choiceCard['stat_primary_outside']) ? 'student-rank-number-outside' : ''; ?>"><?= htmlspecialchars($lockedRankMetricValue !== 'N/A' ? ('#' . $lockedRankMetricValue) : 'N/A'); ?></strong>
+                                  </div>
+                                  <?php foreach (($choiceCard['meta_rows'] ?? []) as $metaRow): ?>
+                                    <div class="student-locked-metric">
+                                      <span class="student-locked-metric-label"><?= htmlspecialchars((string) ($metaRow['label'] ?? '')); ?></span>
+                                      <strong class="student-locked-metric-value"><?= htmlspecialchars((string) ($metaRow['value'] ?? 'N/A')); ?></strong>
+                                    </div>
+                                  <?php endforeach; ?>
+                                </div>
+                                <?php if (!empty($choiceCard['status_text'])): ?>
+                                  <div class="student-program-status <?= htmlspecialchars((string) ($choiceCard['status_class'] ?? 'status-pending')); ?>">
+                                    <?= htmlspecialchars((string) $choiceCard['status_text']); ?>
+                                  </div>
+                                <?php endif; ?>
+                              </div>
+                            <?php endforeach; ?>
+                          </div>
+                        </div>
+                      <?php else: ?>
                       <div class="card-body pb-2">
                         <ul class="nav nav-tabs nav-fill student-right-tabs" id="studentRightTabs" role="tablist">
                           <li class="nav-item" role="presentation">
@@ -3055,7 +4093,7 @@ if ($preRegistrationSubmitted) {
                           </li>
                           <li class="nav-item" role="presentation">
                             <button
-                              class="nav-link<?= $studentRankLocked ? ' d-none' : ''; ?>"
+                              class="nav-link"
                               id="program-slot-availability-tab"
                               data-bs-toggle="tab"
                               data-bs-target="#program-slot-availability-pane"
@@ -3209,6 +4247,7 @@ if ($preRegistrationSubmitted) {
                           </div>
                         </div>
                       </div>
+                      <?php endif; ?>
                     </div>
                   </div>
                 </div>
@@ -3223,341 +4262,31 @@ if ($preRegistrationSubmitted) {
       <div class="layout-overlay layout-menu-toggle"></div>
     </div>
 
-    <div class="modal fade" id="studentProfileModal" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog modal-xl modal-dialog-scrollable">
-        <div class="modal-content">
-          <form method="post" id="studentProfileForm" autocomplete="off">
-            <input type="hidden" name="action" value="student_profile_save" />
-            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars((string) ($_SESSION['student_profile_csrf'] ?? ''), ENT_QUOTES); ?>" />
+    <?php if (!$studentRankLocked): ?>
+      <div class="modal fade" id="studentProfileModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+          <div class="modal-content">
+            <form method="post" id="studentProfileForm" autocomplete="off">
+              <input type="hidden" name="action" value="student_profile_save" />
+              <input type="hidden" name="csrf_token" value="<?= htmlspecialchars((string) ($_SESSION['student_profile_csrf'] ?? ''), ENT_QUOTES); ?>" />
 
-            <div class="modal-header">
-              <h5 class="modal-title">Update My Profile</h5>
-              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-            </div>
-            <div class="modal-body">
-              <div class="small text-muted mb-3">Current completion: <strong><?= htmlspecialchars($profileCompletionBadge); ?></strong></div>
-
-              <div class="student-profile-panel">
-                <div class="student-profile-section-title">Basic Information</div>
-              <div class="row g-3">
-                <div class="col-md-4">
-                  <label class="form-label">Full Name</label>
-                  <input type="text" class="form-control" value="<?= htmlspecialchars($studentName); ?>" readonly />
-                </div>
-                <div class="col-md-4">
-                  <label class="form-label">Examinee Number</label>
-                  <input type="text" class="form-control" value="<?= htmlspecialchars((string) ($student['examinee_number'] ?? '')); ?>" readonly />
-                </div>
-                <div class="col-md-4">
-                  <label class="form-label">Current Mobile Number</label>
-                  <input type="text" class="form-control" value="<?= htmlspecialchars((string) ($student['mobile_number'] ?? '')); ?>" readonly />
-                </div>
-
-                <div class="col-md-4">
-                  <label for="profileBirthDate" class="form-label">Birth Date</label>
-                  <input type="date" class="form-control" id="profileBirthDate" name="birth_date" value="<?= htmlspecialchars((string) ($studentProfile['birth_date'] ?? '')); ?>" />
-                </div>
-                <div class="col-md-4">
-                  <label for="profileSex" class="form-label">Sex</label>
-                  <select class="form-select" id="profileSex" name="sex">
-                    <option value="">Select Sex</option>
-                    <option value="Male" <?= ((string) ($studentProfile['sex'] ?? '') === 'Male') ? 'selected' : ''; ?>>Male</option>
-                    <option value="Female" <?= ((string) ($studentProfile['sex'] ?? '') === 'Female') ? 'selected' : ''; ?>>Female</option>
-                    <option value="Other" <?= ((string) ($studentProfile['sex'] ?? '') === 'Other') ? 'selected' : ''; ?>>Other</option>
-                  </select>
-                </div>
-                <div class="col-md-4">
-                  <label for="profileCivilStatus" class="form-label">Civil Status</label>
-                  <select class="form-select" id="profileCivilStatus" name="civil_status">
-                    <option value="">Select Civil Status</option>
-                    <option value="Single" <?= ((string) ($studentProfile['civil_status'] ?? '') === 'Single') ? 'selected' : ''; ?>>Single</option>
-                    <option value="Married" <?= ((string) ($studentProfile['civil_status'] ?? '') === 'Married') ? 'selected' : ''; ?>>Married</option>
-                    <option value="Separated" <?= ((string) ($studentProfile['civil_status'] ?? '') === 'Separated') ? 'selected' : ''; ?>>Separated</option>
-                    <option value="Widowed" <?= ((string) ($studentProfile['civil_status'] ?? '') === 'Widowed') ? 'selected' : ''; ?>>Widowed</option>
-                    <option value="Other" <?= ((string) ($studentProfile['civil_status'] ?? '') === 'Other') ? 'selected' : ''; ?>>Other</option>
-                  </select>
-                </div>
-                <div class="col-md-6">
-                  <label for="profileNationality" class="form-label">Nationality</label>
-                  <input type="text" class="form-control" id="profileNationality" name="nationality" maxlength="100" value="<?= htmlspecialchars((string) ($studentProfile['nationality'] ?? '')); ?>" />
-                </div>
-                <div class="col-md-6">
-                  <label for="profileReligion" class="form-label">Religion</label>
-                  <input type="text" class="form-control" id="profileReligion" name="religion" maxlength="120" value="<?= htmlspecialchars((string) ($studentProfile['religion'] ?? '')); ?>" />
-                </div>
+              <div class="modal-header">
+                <h5 class="modal-title">Update My Profile</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
               </div>
+              <div class="modal-body student-profile-shell">
+                <div class="small text-muted mb-3">Current completion: <strong><?= htmlspecialchars($profileCompletionBadge); ?></strong></div>
+                <?php echo $studentProfileFormFieldsHtml; ?>
               </div>
-
-              <div class="student-profile-panel mt-4">
-                <div class="student-profile-section-title">Secondary School Information</div>
-                <div class="row g-3 mb-3">
-                  <div class="col-md-8">
-                    <label for="profileSecondarySchool" class="form-label">Secondary School</label>
-                    <input
-                      type="text"
-                      class="form-control"
-                      id="profileSecondarySchool"
-                      name="secondary_school_name"
-                      maxlength="190"
-                      value="<?= htmlspecialchars((string) ($studentProfile['secondary_school_name'] ?? '')); ?>"
-                    />
-                  </div>
-                  <div class="col-md-4">
-                    <label for="profileSchoolType" class="form-label">School Type</label>
-                    <select class="form-select" id="profileSchoolType" name="secondary_school_type">
-                      <option value="">Select School Type</option>
-                      <option value="Private" <?= ((string) ($studentProfile['secondary_school_type'] ?? '') === 'Private') ? 'selected' : ''; ?>>Private</option>
-                      <option value="Public" <?= ((string) ($studentProfile['secondary_school_type'] ?? '') === 'Public') ? 'selected' : ''; ?>>Public</option>
-                    </select>
-                  </div>
-                </div>
-                <div class="student-profile-section-title">Secondary School Address</div>
-                <input
-                  type="hidden"
-                  id="profileSecondaryAddressLine1"
-                  name="secondary_address_line1"
-                  value="<?= htmlspecialchars((string) ($studentProfile['secondary_address_line1'] ?? '')); ?>"
-                />
-                <select class="d-none" id="profileSecondaryRegion" name="secondary_region_code">
-                  <option value="">Select Region</option>
-                  <?php foreach ($regionOptions as $regionOption): ?>
-                    <option value="<?= htmlspecialchars((string) ($regionOption['code'] ?? 0)); ?>" <?= ((int) ($regionOption['code'] ?? 0) === $profileSecondaryRegionCode) ? 'selected' : ''; ?>>
-                      <?= htmlspecialchars((string) ($regionOption['label'] ?? '')); ?>
-                    </option>
-                  <?php endforeach; ?>
-                </select>
-                <select
-                  class="d-none"
-                  id="profileSecondaryBarangay"
-                  name="secondary_barangay_code"
-                  data-selected="<?= htmlspecialchars((string) $profileSecondaryBarangayCode); ?>"
-                >
-                  <option value="">Select Barangay</option>
-                  <?php if ($profileSecondaryBarangayCode > 0 && trim((string) ($studentProfile['secondary_barangay_name'] ?? '')) !== ''): ?>
-                    <option value="<?= htmlspecialchars((string) $profileSecondaryBarangayCode); ?>" selected><?= htmlspecialchars((string) ($studentProfile['secondary_barangay_name'] ?? '')); ?></option>
-                  <?php endif; ?>
-                </select>
-                <div class="row g-3">
-                  <div class="col-md-4">
-                    <label for="profileSecondaryProvince" class="form-label">Province</label>
-                    <select
-                      class="form-select"
-                      id="profileSecondaryProvince"
-                      name="secondary_province_code"
-                      data-selected="<?= htmlspecialchars((string) $profileSecondaryProvinceCode); ?>"
-                    >
-                      <option value="">Select Province</option>
-                      <?php if ($profileSecondaryProvinceCode > 0 && trim((string) ($studentProfile['secondary_province_name'] ?? '')) !== ''): ?>
-                        <option value="<?= htmlspecialchars((string) $profileSecondaryProvinceCode); ?>" selected><?= htmlspecialchars((string) ($studentProfile['secondary_province_name'] ?? '')); ?></option>
-                      <?php endif; ?>
-                    </select>
-                  </div>
-                  <div class="col-md-4">
-                    <label for="profileSecondaryCityMun" class="form-label">City / Municipality</label>
-                    <select
-                      class="form-select"
-                      id="profileSecondaryCityMun"
-                      name="secondary_citymun_code"
-                      data-selected="<?= htmlspecialchars((string) $profileSecondaryCitymunCode); ?>"
-                    >
-                      <option value="">Select City / Municipality</option>
-                      <?php if ($profileSecondaryCitymunCode > 0 && trim((string) ($studentProfile['secondary_citymun_name'] ?? '')) !== ''): ?>
-                        <option value="<?= htmlspecialchars((string) $profileSecondaryCitymunCode); ?>" selected><?= htmlspecialchars((string) ($studentProfile['secondary_citymun_name'] ?? '')); ?></option>
-                      <?php endif; ?>
-                    </select>
-                  </div>
-                  <div class="col-md-4">
-                    <label for="profileSecondaryPostalCode" class="form-label">Postal Code</label>
-                    <input
-                      type="text"
-                      class="form-control"
-                      id="profileSecondaryPostalCode"
-                      name="secondary_postal_code"
-                      maxlength="20"
-                      value="<?= htmlspecialchars((string) ($studentProfile['secondary_postal_code'] ?? '')); ?>"
-                    />
-                  </div>
-                </div>
+              <div class="modal-footer">
+                <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="submit" class="btn btn-primary">Save Profile</button>
               </div>
-
-              <div class="student-profile-panel mt-4">
-                <div class="student-profile-section-title">Address Information</div>
-              <div class="row g-3">
-                <div class="col-md-12">
-                  <label for="profileAddressLine1" class="form-label">House No. / Street / Purok</label>
-                  <input type="text" class="form-control" id="profileAddressLine1" name="address_line1" maxlength="255" value="<?= htmlspecialchars((string) ($studentProfile['address_line1'] ?? '')); ?>" />
-                </div>
-                <div class="col-md-3">
-                  <label for="profileRegion" class="form-label">Region</label>
-                  <select class="form-select" id="profileRegion" name="region_code">
-                    <option value="">Select Region</option>
-                    <?php foreach ($regionOptions as $regionOption): ?>
-                      <option value="<?= htmlspecialchars((string) ($regionOption['code'] ?? 0)); ?>" <?= ((int) ($regionOption['code'] ?? 0) === $profileRegionCode) ? 'selected' : ''; ?>>
-                        <?= htmlspecialchars((string) ($regionOption['label'] ?? '')); ?>
-                      </option>
-                    <?php endforeach; ?>
-                  </select>
-                </div>
-                <div class="col-md-3">
-                  <label for="profileProvince" class="form-label">Province</label>
-                  <select
-                    class="form-select"
-                    id="profileProvince"
-                    name="province_code"
-                    data-selected="<?= htmlspecialchars((string) $profileProvinceCode); ?>"
-                  >
-                    <option value="">Select Province</option>
-                    <?php if ($profileProvinceCode > 0 && trim((string) ($studentProfile['province_name'] ?? '')) !== ''): ?>
-                      <option value="<?= htmlspecialchars((string) $profileProvinceCode); ?>" selected><?= htmlspecialchars((string) ($studentProfile['province_name'] ?? '')); ?></option>
-                    <?php endif; ?>
-                  </select>
-                </div>
-                <div class="col-md-3">
-                  <label for="profileCityMun" class="form-label">City / Municipality</label>
-                  <select
-                    class="form-select"
-                    id="profileCityMun"
-                    name="citymun_code"
-                    data-selected="<?= htmlspecialchars((string) $profileCitymunCode); ?>"
-                  >
-                    <option value="">Select City / Municipality</option>
-                    <?php if ($profileCitymunCode > 0 && trim((string) ($studentProfile['citymun_name'] ?? '')) !== ''): ?>
-                      <option value="<?= htmlspecialchars((string) $profileCitymunCode); ?>" selected><?= htmlspecialchars((string) ($studentProfile['citymun_name'] ?? '')); ?></option>
-                    <?php endif; ?>
-                  </select>
-                </div>
-                <div class="col-md-3">
-                  <label for="profileBarangay" class="form-label">Barangay</label>
-                  <select
-                    class="form-select"
-                    id="profileBarangay"
-                    name="barangay_code"
-                    data-selected="<?= htmlspecialchars((string) $profileBarangayCode); ?>"
-                  >
-                    <option value="">Select Barangay</option>
-                    <?php if ($profileBarangayCode > 0 && trim((string) ($studentProfile['barangay_name'] ?? '')) !== ''): ?>
-                      <option value="<?= htmlspecialchars((string) $profileBarangayCode); ?>" selected><?= htmlspecialchars((string) ($studentProfile['barangay_name'] ?? '')); ?></option>
-                    <?php endif; ?>
-                  </select>
-                </div>
-                <div class="col-md-3">
-                  <label for="profilePostalCode" class="form-label">Postal Code</label>
-                  <input type="text" class="form-control" id="profilePostalCode" name="postal_code" maxlength="20" value="<?= htmlspecialchars((string) ($studentProfile['postal_code'] ?? '')); ?>" />
-                </div>
-              </div>
-
-              </div>
-
-              <div class="student-profile-panel mt-4">
-                <div class="student-profile-section-title">Parents / Guardian Information</div>
-                <div class="row g-3">
-                  <div class="col-md-12">
-                    <label for="profileParentGuardianName" class="form-label">Parent / Guardian Name</label>
-                    <input
-                      type="text"
-                      class="form-control"
-                      id="profileParentGuardianName"
-                      name="guardian_name"
-                      maxlength="190"
-                      value="<?= htmlspecialchars((string) ($studentProfile['guardian_name'] ?? '')); ?>"
-                    />
-                  </div>
-                  <div class="col-md-12">
-                    <label for="profileParentGuardianAddressLine1" class="form-label">House No. / Street / Purok</label>
-                    <input
-                      type="text"
-                      class="form-control"
-                      id="profileParentGuardianAddressLine1"
-                      name="parent_guardian_address_line1"
-                      maxlength="255"
-                      value="<?= htmlspecialchars((string) ($studentProfile['parent_guardian_address_line1'] ?? '')); ?>"
-                    />
-                  </div>
-                  <div class="col-md-3">
-                    <label for="profileParentGuardianRegion" class="form-label">Region</label>
-                    <select class="form-select" id="profileParentGuardianRegion" name="parent_guardian_region_code">
-                      <option value="">Select Region</option>
-                      <?php foreach ($regionOptions as $regionOption): ?>
-                        <option value="<?= htmlspecialchars((string) ($regionOption['code'] ?? 0)); ?>" <?= ((int) ($regionOption['code'] ?? 0) === $profileParentGuardianRegionCode) ? 'selected' : ''; ?>>
-                          <?= htmlspecialchars((string) ($regionOption['label'] ?? '')); ?>
-                        </option>
-                      <?php endforeach; ?>
-                    </select>
-                  </div>
-                  <div class="col-md-3">
-                    <label for="profileParentGuardianProvince" class="form-label">Province</label>
-                    <select
-                      class="form-select"
-                      id="profileParentGuardianProvince"
-                      name="parent_guardian_province_code"
-                      data-selected="<?= htmlspecialchars((string) $profileParentGuardianProvinceCode); ?>"
-                    >
-                      <option value="">Select Province</option>
-                      <?php if ($profileParentGuardianProvinceCode > 0 && trim((string) ($studentProfile['parent_guardian_province_name'] ?? '')) !== ''): ?>
-                        <option value="<?= htmlspecialchars((string) $profileParentGuardianProvinceCode); ?>" selected><?= htmlspecialchars((string) ($studentProfile['parent_guardian_province_name'] ?? '')); ?></option>
-                      <?php endif; ?>
-                    </select>
-                  </div>
-                  <div class="col-md-3">
-                    <label for="profileParentGuardianCityMun" class="form-label">City / Municipality</label>
-                    <select
-                      class="form-select"
-                      id="profileParentGuardianCityMun"
-                      name="parent_guardian_citymun_code"
-                      data-selected="<?= htmlspecialchars((string) $profileParentGuardianCitymunCode); ?>"
-                    >
-                      <option value="">Select City / Municipality</option>
-                      <?php if ($profileParentGuardianCitymunCode > 0 && trim((string) ($studentProfile['parent_guardian_citymun_name'] ?? '')) !== ''): ?>
-                        <option value="<?= htmlspecialchars((string) $profileParentGuardianCitymunCode); ?>" selected><?= htmlspecialchars((string) ($studentProfile['parent_guardian_citymun_name'] ?? '')); ?></option>
-                      <?php endif; ?>
-                    </select>
-                  </div>
-                  <div class="col-md-3">
-                    <label for="profileParentGuardianBarangay" class="form-label">Barangay</label>
-                    <select
-                      class="form-select"
-                      id="profileParentGuardianBarangay"
-                      name="parent_guardian_barangay_code"
-                      data-selected="<?= htmlspecialchars((string) $profileParentGuardianBarangayCode); ?>"
-                    >
-                      <option value="">Select Barangay</option>
-                      <?php if ($profileParentGuardianBarangayCode > 0 && trim((string) ($studentProfile['parent_guardian_barangay_name'] ?? '')) !== ''): ?>
-                        <option value="<?= htmlspecialchars((string) $profileParentGuardianBarangayCode); ?>" selected><?= htmlspecialchars((string) ($studentProfile['parent_guardian_barangay_name'] ?? '')); ?></option>
-                      <?php endif; ?>
-                    </select>
-                  </div>
-                  <div class="col-md-3">
-                    <label for="profileParentGuardianPostalCode" class="form-label">Postal Code</label>
-                    <input
-                      type="text"
-                      class="form-control"
-                      id="profileParentGuardianPostalCode"
-                      name="parent_guardian_postal_code"
-                      maxlength="20"
-                      value="<?= htmlspecialchars((string) ($studentProfile['parent_guardian_postal_code'] ?? '')); ?>"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <input type="hidden" name="father_name" value="<?= htmlspecialchars((string) ($studentProfile['father_name'] ?? '')); ?>" />
-              <input type="hidden" name="father_contact_number" value="<?= htmlspecialchars((string) ($studentProfile['father_contact_number'] ?? '')); ?>" />
-              <input type="hidden" name="father_occupation" value="<?= htmlspecialchars((string) ($studentProfile['father_occupation'] ?? '')); ?>" />
-              <input type="hidden" name="mother_name" value="<?= htmlspecialchars((string) ($studentProfile['mother_name'] ?? '')); ?>" />
-              <input type="hidden" name="mother_contact_number" value="<?= htmlspecialchars((string) ($studentProfile['mother_contact_number'] ?? '')); ?>" />
-              <input type="hidden" name="mother_occupation" value="<?= htmlspecialchars((string) ($studentProfile['mother_occupation'] ?? '')); ?>" />
-              <input type="hidden" name="guardian_relationship" value="<?= htmlspecialchars((string) ($studentProfile['guardian_relationship'] ?? '')); ?>" />
-              <input type="hidden" name="guardian_contact_number" value="<?= htmlspecialchars((string) ($studentProfile['guardian_contact_number'] ?? '')); ?>" />
-              <input type="hidden" name="guardian_occupation" value="<?= htmlspecialchars((string) ($studentProfile['guardian_occupation'] ?? '')); ?>" />
-            </div>
-            <div class="modal-footer">
-              <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">Close</button>
-              <button type="submit" class="btn btn-primary">Save Profile</button>
-            </div>
-          </form>
+            </form>
+          </div>
         </div>
       </div>
-    </div>
+    <?php endif; ?>
 
     <div class="modal fade" id="studentProgramSearchModal" tabindex="-1" aria-hidden="true">
       <div class="modal-dialog modal-xl modal-dialog-scrollable modal-dialog-centered">
@@ -3630,6 +4359,92 @@ if ($preRegistrationSubmitted) {
               <button type="submit" class="btn btn-warning" id="transferModalSubmitBtn" disabled>Transfer Here</button>
             </div>
           </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal fade" id="studentPreRegistrationAgreementModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+          <div class="modal-header">
+            <div>
+              <h5 class="modal-title">SKSU Pre-Registration End-User / Enrollee Agreement</h5>
+              <small class="text-muted">Review and accept this agreement before final pre-registration submission.</small>
+            </div>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div class="student-agreement-summary">
+              <p class="student-agreement-summary-title">Student Pre-Registration Agreement</p>
+              <p class="student-agreement-summary-copy">This step confirms your intent to enroll, the accuracy of your information, and your consent to SKSU data handling for admission and enrollment processing.</p>
+            </div>
+
+            <div class="student-agreement-doc mt-3">
+              <h6 class="student-agreement-doc-title">Sultan Kudarat State University</h6>
+              <p class="student-agreement-doc-subtitle">Student Pre-Registration Agreement</p>
+
+              <div class="student-agreement-doc-body">
+                <p>By completing and submitting this online pre-registration form, I hereby acknowledge and agree to the following terms and conditions set by Sultan Kudarat State University (SKSU):</p>
+                <ol>
+                  <li>
+                    <h6>Intent to Enroll</h6>
+                    <p>I confirm that my submission of this pre-registration form signifies my genuine intention to enroll at Sultan Kudarat State University for the upcoming academic term, subject to the admission requirements, evaluation, and approval of the University.</p>
+                  </li>
+                  <li>
+                    <h6>Accuracy of Information</h6>
+                    <p>I declare that all information provided in this system, including my personal information, educational background, and contact details, are true, complete, and accurate to the best of my knowledge.</p>
+                    <p>I understand that providing false, misleading, or incomplete information may result in the cancellation of my pre-registration or disqualification from admission.</p>
+                  </li>
+                  <li>
+                    <h6>Compliance with University Policies</h6>
+                    <p>I understand that my application and eventual enrollment shall be governed by the policies, rules, and regulations of Sultan Kudarat State University, including admission policies, academic regulations, and student conduct guidelines.</p>
+                  </li>
+                  <li>
+                    <h6>Submission of Required Documents</h6>
+                    <p>I agree to submit all required admission documents within the prescribed schedule of the University. Failure to comply with the document requirements may result in denial or cancellation of my enrollment.</p>
+                  </li>
+                  <li>
+                    <h6>Data Privacy Consent</h6>
+                    <p>In accordance with the Data Privacy Act of 2012 (RA 10173), I authorize Sultan Kudarat State University to collect, process, and store my personal data for the purposes of admission processing, enrollment management, academic records, and other legitimate academic and administrative functions of the University.</p>
+                  </li>
+                  <li>
+                    <h6>System Usage</h6>
+                    <p>I understand that this online system is intended solely for legitimate pre-registration and admission purposes. Any misuse of the system, including falsification of records or unauthorized access, may lead to administrative action and cancellation of my registration.</p>
+                  </li>
+                  <li>
+                    <h6>Confirmation of Agreement</h6>
+                    <p>By clicking "Save Profile" or "Submit Registration", I confirm that:</p>
+                    <ul>
+                      <li>I have read and understood the terms of this agreement.</li>
+                      <li>I voluntarily agree to comply with the policies and procedures of Sultan Kudarat State University.</li>
+                      <li>I confirm my intent to proceed with enrollment if accepted by the University.</li>
+                    </ul>
+                  </li>
+                </ol>
+              </div>
+            </div>
+
+            <div class="student-agreement-check">
+              <div class="form-check mb-0">
+                <input
+                  class="form-check-input"
+                  type="checkbox"
+                  id="studentPreregAgreementCheckbox"
+                  name="prereg_agreement_accept"
+                  value="1"
+                  form="studentPreRegistrationForm"
+                  required
+                />
+                <label class="form-check-label" for="studentPreregAgreementCheckbox">
+                  I have read and agree to the SKSU Pre-Registration End-User / Enrollee Agreement.
+                </label>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">Close</button>
+            <button type="submit" class="btn btn-primary" id="studentPreregAgreementSubmitBtn" form="studentPreRegistrationForm">Agree and Submit</button>
+          </div>
         </div>
       </div>
     </div>
@@ -3745,7 +4560,8 @@ if ($preRegistrationSubmitted) {
 
       (function () {
         const profileModalEl = document.getElementById('studentProfileModal');
-        if (!profileModalEl) return;
+        const profileFormEl = document.getElementById('studentProfileForm');
+        if (!profileFormEl) return;
 
         const toPositiveInt = (value) => {
           const parsed = Number(value);
@@ -3948,14 +4764,21 @@ if ($preRegistrationSubmitted) {
           }),
         ].filter(Boolean);
 
-        profileModalEl.addEventListener('shown.bs.modal', async function () {
+        const initializeProfileAddressBindings = async function () {
           for (const binding of addressBindings) {
             if (!binding || typeof binding.initialize !== 'function') {
               continue;
             }
             await binding.initialize();
           }
-        });
+        };
+
+        if (profileModalEl) {
+          profileModalEl.addEventListener('shown.bs.modal', initializeProfileAddressBindings);
+          return;
+        }
+
+        initializeProfileAddressBindings();
       })();
 
       (function () {
@@ -4044,6 +4867,27 @@ if ($preRegistrationSubmitted) {
             transferModal.show();
           });
         });
+      })();
+
+      (function () {
+        if (typeof bootstrap === 'undefined') return;
+
+        const agreementModalEl = document.getElementById('studentPreRegistrationAgreementModal');
+        const agreementCheckboxEl = document.getElementById('studentPreregAgreementCheckbox');
+        const agreementSubmitBtnEl = document.getElementById('studentPreregAgreementSubmitBtn');
+        if (!agreementModalEl || !agreementCheckboxEl || !agreementSubmitBtnEl) return;
+
+        const syncAgreementState = () => {
+          agreementSubmitBtnEl.disabled = !agreementCheckboxEl.checked;
+        };
+
+        agreementModalEl.addEventListener('show.bs.modal', function () {
+          agreementCheckboxEl.checked = false;
+          syncAgreementState();
+        });
+
+        agreementCheckboxEl.addEventListener('change', syncAgreementState);
+        syncAgreementState();
       })();
     </script>
   </body>
