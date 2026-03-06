@@ -1,11 +1,11 @@
 <?php
 /**
  * Monitoring ranking endpoint.
- * Uses shared ranking lock helper so monitoring/progchair stay identical.
+ * Uses shared academic rank data with monitoring-only display ordering.
  */
 
 require_once '../config/db.php';
-require_once '../config/program_ranking_lock.php';
+require_once 'program_ranking_monitoring_helper.php';
 session_start();
 
 header('Content-Type: application/json; charset=utf-8');
@@ -32,7 +32,7 @@ if ($programId <= 0) {
     exit;
 }
 
-$payload = program_ranking_fetch_payload($conn, $programId, null);
+$payload = monitoring_program_ranking_fetch_payload($conn, $programId);
 if (!($payload['success'] ?? false)) {
     $statusCode = (int) ($payload['http_status'] ?? 400);
     if ($statusCode > 0) {

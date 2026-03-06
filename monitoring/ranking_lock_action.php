@@ -4,7 +4,7 @@
  */
 
 require_once '../config/db.php';
-require_once '../config/program_ranking_lock.php';
+require_once 'program_ranking_monitoring_helper.php';
 session_start();
 
 header('Content-Type: application/json; charset=utf-8');
@@ -42,7 +42,7 @@ if ($action === 'lock_range') {
     if ($startRank <= 0 || $endRank <= 0) {
         echo json_encode([
             'success' => false,
-            'message' => 'Start rank and end rank are required.'
+            'message' => 'Start number and end number are required.'
         ]);
         exit;
     }
@@ -50,7 +50,7 @@ if ($action === 'lock_range') {
     $fromRank = min($startRank, $endRank);
     $toRank = max($startRank, $endRank);
 
-    $payload = program_ranking_fetch_payload($conn, $programId, null);
+    $payload = monitoring_program_ranking_fetch_payload($conn, $programId);
     if (!($payload['success'] ?? false)) {
         echo json_encode([
             'success' => false,
@@ -60,11 +60,11 @@ if ($action === 'lock_range') {
     }
 
     $rows = is_array($payload['rows'] ?? null) ? $payload['rows'] : [];
-    $rowsByRank = [];
+    $rowsBySequence = [];
     foreach ($rows as $row) {
-        $rank = (int) ($row['rank'] ?? 0);
-        if ($rank > 0) {
-            $rowsByRank[$rank] = $row;
+        $sequenceNo = (int) ($row['sequence_no'] ?? 0);
+        if ($sequenceNo > 0) {
+            $rowsBySequence[$sequenceNo] = $row;
         }
     }
 
@@ -109,20 +109,21 @@ if ($action === 'lock_range') {
 
     $conn->begin_transaction();
     try {
-        for ($rank = $fromRank; $rank <= $toRank; $rank++) {
-            if (!isset($rowsByRank[$rank])) {
+        for ($sequenceNo = $fromRank; $sequenceNo <= $toRank; $sequenceNo++) {
+            if (!isset($rowsBySequence[$sequenceNo])) {
                 $missingRows++;
                 continue;
             }
 
-            $row = $rowsByRank[$rank];
+            $row = $rowsBySequence[$sequenceNo];
             if ((bool) ($row['is_locked'] ?? false)) {
                 $alreadyLocked++;
                 continue;
             }
 
             $interviewId = (int) ($row['interview_id'] ?? 0);
-            if ($interviewId <= 0) {
+            $actualRank = (int) ($row['rank'] ?? 0);
+            if ($interviewId <= 0 || $actualRank <= 0) {
                 $missingRows++;
                 continue;
             }
@@ -143,7 +144,7 @@ if ($action === 'lock_range') {
                 "iiiisssidissssi",
                 $programId,
                 $interviewId,
-                $rank,
+                $actualRank,
                 $accountId,
                 $examineeNumber,
                 $fullName,
@@ -181,7 +182,7 @@ if ($action === 'lock_range') {
 
     $stmtInsert->close();
 
-    $updated = program_ranking_fetch_payload($conn, $programId, null);
+    $updated = monitoring_program_ranking_fetch_payload($conn, $programId);
     $updatedLocks = is_array($updated['locks'] ?? null) ? $updated['locks'] : ['active_count' => 0, 'ranges' => []];
 
     echo json_encode([
@@ -199,7 +200,7 @@ if ($action === 'unlock_range') {
     if ($startRank <= 0 || $endRank <= 0) {
         echo json_encode([
             'success' => false,
-            'message' => 'Start rank and end rank are required.'
+            'message' => 'Start number and end number are required.'
         ]);
         exit;
     }
@@ -207,25 +208,58 @@ if ($action === 'unlock_range') {
     $fromRank = min($startRank, $endRank);
     $toRank = max($startRank, $endRank);
 
-    $stmt = $conn->prepare("
-        DELETE FROM tbl_program_ranking_locks
-        WHERE program_id = ?
-          AND locked_rank BETWEEN ? AND ?
-    ");
-    if (!$stmt) {
-        http_response_code(500);
+    $payload = monitoring_program_ranking_fetch_payload($conn, $programId);
+    if (!($payload['success'] ?? false)) {
         echo json_encode([
             'success' => false,
-            'message' => 'Server error (unlock range).'
+            'message' => (string) ($payload['message'] ?? 'Failed to load ranking.')
         ]);
         exit;
     }
-    $stmt->bind_param("iii", $programId, $fromRank, $toRank);
-    $stmt->execute();
-    $unlockedCount = (int) $stmt->affected_rows;
-    $stmt->close();
 
-    $updated = program_ranking_fetch_payload($conn, $programId, null);
+    $rows = is_array($payload['rows'] ?? null) ? $payload['rows'] : [];
+    $interviewIds = [];
+    foreach ($rows as $row) {
+        $sequenceNo = (int) ($row['sequence_no'] ?? 0);
+        if ($sequenceNo < $fromRank || $sequenceNo > $toRank) {
+            continue;
+        }
+        if (!((bool) ($row['is_locked'] ?? false))) {
+            continue;
+        }
+        $interviewId = (int) ($row['interview_id'] ?? 0);
+        if ($interviewId > 0) {
+            $interviewIds[$interviewId] = $interviewId;
+        }
+    }
+
+    $unlockedCount = 0;
+    if (!empty($interviewIds)) {
+        $placeholders = implode(',', array_fill(0, count($interviewIds), '?'));
+        $sql = "
+            DELETE FROM tbl_program_ranking_locks
+            WHERE program_id = ?
+              AND interview_id IN ({$placeholders})
+        ";
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            http_response_code(500);
+            echo json_encode([
+                'success' => false,
+                'message' => 'Server error (unlock range).'
+            ]);
+            exit;
+        }
+
+        $params = array_merge([$programId], array_values($interviewIds));
+        $types = str_repeat('i', count($params));
+        $stmt->bind_param($types, ...$params);
+        $stmt->execute();
+        $unlockedCount = (int) $stmt->affected_rows;
+        $stmt->close();
+    }
+
+    $updated = monitoring_program_ranking_fetch_payload($conn, $programId);
     $updatedLocks = is_array($updated['locks'] ?? null) ? $updated['locks'] : ['active_count' => 0, 'ranges' => []];
 
     echo json_encode([

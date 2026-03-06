@@ -847,7 +847,7 @@ if ($isProgramCardsRequest) {
       .ranking-list-header,
       .ranking-list-row {
         display: grid;
-        grid-template-columns: 70px 110px minmax(260px, 1fr) 80px 80px 100px;
+        grid-template-columns: 58px 70px 110px minmax(240px, 1fr) 80px 80px 100px;
         gap: 0;
         align-items: center;
       }
@@ -1096,11 +1096,11 @@ if ($isProgramCardsRequest) {
                     </div>
                     <div class="row g-2 align-items-end mb-2">
                       <div class="col-6 col-md-2">
-                        <label class="form-label form-label-sm mb-1 small text-muted">Rank From</label>
+                        <label class="form-label form-label-sm mb-1 small text-muted">No. From</label>
                         <input type="number" min="1" class="form-control form-control-sm" id="monitoringLockFrom" placeholder="1">
                       </div>
                       <div class="col-6 col-md-2">
-                        <label class="form-label form-label-sm mb-1 small text-muted">Rank To</label>
+                        <label class="form-label form-label-sm mb-1 small text-muted">No. To</label>
                         <input type="number" min="1" class="form-control form-control-sm" id="monitoringLockTo" placeholder="50">
                       </div>
                       <div class="col-12 col-md-auto d-grid">
@@ -1146,6 +1146,9 @@ if ($isProgramCardsRequest) {
                     </div>
 
                     <div class="d-none" id="monitoringRankingTableWrap">
+                      <div class="small text-muted mb-2">
+                        <span class="fw-semibold">No.</span> follows Monitoring lock order. <span class="fw-semibold">Rank</span> keeps the academic rank order.
+                      </div>
                       <div class="small text-muted mb-2">
                         <span class="fw-semibold text-danger">Red rows</span> are outside capacity but still shown in the ranking list.
                       </div>
@@ -1320,11 +1323,11 @@ if ($isProgramCardsRequest) {
           const count = Number(currentLocks?.active_count ?? 0);
           const ranges = Array.isArray(currentLocks?.ranges) ? currentLocks.ranges : [];
           if (count <= 0) {
-            lockSummaryEl.textContent = 'No locked ranks.';
+            lockSummaryEl.textContent = 'No locked numbers.';
             return;
           }
-          const label = ranges.length ? ranges.join(', ') : `${count} rank(s)`;
-          lockSummaryEl.textContent = `Locked Ranks: ${label}`;
+          const label = ranges.length ? ranges.join(', ') : `${count} number(s)`;
+          lockSummaryEl.textContent = `Locked No.: ${label}`;
         }
 
         function escapeHtml(value) {
@@ -1343,7 +1346,7 @@ if ($isProgramCardsRequest) {
           return String(row?.classification || '').toUpperCase() === 'REGULAR' ? 'regular' : 'etg';
         }
 
-        function buildRankingRowHtml(row, rankDisplay, options = {}) {
+        function buildRankingRowHtml(row, sequenceDisplay, rankDisplay, options = {}) {
           const showLockPill = options.showLockPill !== false;
           const section = getRowSection(row);
           const isOutsideCapacity = Boolean(row?.is_outside_capacity);
@@ -1371,7 +1374,8 @@ if ($isProgramCardsRequest) {
 
           return `
             <div class="ranking-list-row ${rowClass}">
-              <div class="ranking-col-rank"><span class="fw-semibold">${rankDisplay}</span>${lockPill}</div>
+              <div class="ranking-col-no"><span class="fw-semibold">${sequenceDisplay}</span>${lockPill}</div>
+              <div class="ranking-col-rank"><span class="fw-semibold">${rankDisplay}</span></div>
               <div class="ranking-col-examinee">${escapeHtml(row.examinee_number || '')}</div>
               <div class="ranking-col-name">${escapeHtml(row.full_name || '')}</div>
               <div class="ranking-col-class">${escapeHtml(classificationText)}</div>
@@ -1384,6 +1388,7 @@ if ($isProgramCardsRequest) {
         function buildRankingListHeaderHtml() {
           return `
             <div class="ranking-list-header">
+              <div>No.</div>
               <div>Rank</div>
               <div>Examinee #</div>
               <div>Student Name</div>
@@ -1413,8 +1418,9 @@ if ($isProgramCardsRequest) {
             else if (section === 'etg') grouped.etgCount++;
             else grouped.regularCount++;
 
+            const sequenceDisplay = Number(row?.sequence_no ?? 0) > 0 ? Number(row.sequence_no) : (index + 1);
             const rankDisplay = Number(row?.rank ?? 0) > 0 ? Number(row.rank) : (index + 1);
-            html += buildRankingRowHtml(row, rankDisplay);
+            html += buildRankingRowHtml(row, sequenceDisplay, rankDisplay);
           });
 
           listEl.innerHTML = html;
@@ -1506,7 +1512,7 @@ if ($isProgramCardsRequest) {
             const startRank = Number(lockFromEl?.value || 0);
             const endRank = Number(lockToEl?.value || 0);
             if (startRank <= 0 || endRank <= 0) {
-              setLockStatus('Enter both rank values first.', true);
+              setLockStatus('Enter both number values first.', true);
               return;
             }
             params.set('start_rank', String(startRank));
@@ -1553,8 +1559,9 @@ if ($isProgramCardsRequest) {
           }
           let html = buildRankingListHeaderHtml();
           rows.forEach((row, index) => {
+            const sequenceDisplay = Number(row?.sequence_no ?? 0) > 0 ? Number(row.sequence_no) : (index + 1);
             const rankDisplay = Number(row?.rank ?? 0) > 0 ? Number(row.rank) : (index + 1);
-            html += buildRankingRowHtml(row, rankDisplay, { showLockPill: false });
+            html += buildRankingRowHtml(row, sequenceDisplay, rankDisplay, { showLockPill: false });
           });
           return html;
         }
@@ -1585,7 +1592,7 @@ if ($isProgramCardsRequest) {
     .ranking-list { border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }
     .ranking-list-header, .ranking-list-row {
       display: grid;
-      grid-template-columns: 70px 110px minmax(280px, 1fr) 80px 80px 100px;
+      grid-template-columns: 58px 70px 110px minmax(260px, 1fr) 80px 80px 100px;
       align-items: center;
     }
     .ranking-list-header {
