@@ -2572,6 +2572,13 @@ $profileMenuSubtext = $isAdminStudentPreview
 $studentPreviewAdministratorName = trim((string) ($adminStudentPreviewContext['fullname'] ?? 'Administrator'));
 $studentReadOnlyButtonAttr = $isAdminStudentPreview ? 'disabled' : '';
 $studentReadOnlyButtonTitle = $isAdminStudentPreview ? 'Administrator preview is read-only.' : '';
+$lockedWelcomeNotice = ($studentRankLocked && !$preRegistrationSubmitted)
+    ? 'Congratulations! You have secured a slot for your priority program. You can proceed now to pre-registration.'
+    : '';
+$lockedWelcomeNoticeSubtext = ($lockedWelcomeNotice !== '' && !$isProfileComplete)
+    ? 'Complete your profile details to finish your submission.'
+    : '';
+$studentPageBodyClass = $isAdminStudentPreview ? 'student-admin-preview-active' : '';
 
 $preRegistrationCardTitle = 'Pre-Registration';
 $preRegistrationCardMessage = 'Pre-registration opens after your rank is locked.';
@@ -3669,6 +3676,42 @@ $studentProfileFormFieldsHtml = ob_get_clean();
         padding: 0.4rem 0.62rem;
       }
 
+      @keyframes studentSoftBlink {
+        0%, 100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.58;
+        }
+      }
+
+      .student-locked-congrats {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        padding: 0.62rem 0.82rem;
+        margin-bottom: 0.85rem;
+        border: 1px solid #b7e3c0;
+        border-radius: 0.88rem;
+        background: linear-gradient(135deg, #edfdf1 0%, #f8fff8 100%);
+        color: #166534;
+        font-size: 0.86rem;
+        font-weight: 700;
+        line-height: 1.4;
+        animation: studentSoftBlink 1.8s ease-in-out infinite;
+      }
+
+      .student-locked-congrats i {
+        font-size: 1rem;
+        color: #16a34a;
+      }
+
+      .student-locked-congrats-note {
+        margin-bottom: 0.95rem;
+        color: #5f6b7a;
+        font-size: 0.82rem;
+      }
+
       .student-profile-shell .student-profile-panel {
         border: 1px solid #e4e9f2;
         border-radius: 0.75rem;
@@ -3727,6 +3770,35 @@ $studentProfileFormFieldsHtml = ob_get_clean();
         flex-wrap: wrap;
       }
 
+      .student-admin-preview-banner {
+        border: 1px solid #f1c27d;
+        border-left: 5px solid #d97706;
+        border-radius: 1rem;
+        background: linear-gradient(135deg, #fff7e6 0%, #fffdf8 100%);
+        box-shadow: 0 14px 28px rgba(217, 119, 6, 0.08);
+      }
+
+      .student-admin-preview-banner .student-admin-preview-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.32rem 0.65rem;
+        margin-bottom: 0.45rem;
+        border-radius: 999px;
+        background: #fff1d6;
+        color: #a16207;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+
+      .student-admin-preview-active #program-slot-availability,
+      .student-admin-preview-active .student-inline-profile-card {
+        border: 2px solid #f3d19d;
+        box-shadow: 0 10px 26px rgba(217, 119, 6, 0.08);
+      }
+
       #studentProfileModal .modal-content {
         border-radius: 0.88rem;
       }
@@ -3780,7 +3852,7 @@ $studentProfileFormFieldsHtml = ob_get_clean();
     </style>
   </head>
 
-  <body>
+  <body class="<?= htmlspecialchars($studentPageBodyClass); ?>">
     <div class="layout-wrapper layout-content-navbar">
       <div class="layout-container">
         <aside id="layout-menu" class="layout-menu menu-vertical menu bg-menu-theme">
@@ -3954,8 +4026,9 @@ $studentProfileFormFieldsHtml = ob_get_clean();
               <?php endif; ?>
 
               <?php if ($isAdminStudentPreview): ?>
-                <div class="alert alert-warning d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-3">
+                <div class="alert student-admin-preview-banner d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-3">
                   <div>
+                    <div class="student-admin-preview-badge"><i class="bx bx-show-alt"></i>Administrator Mirror View</div>
                     <div class="fw-semibold mb-1">Administrator Preview Mode</div>
                     <div class="small">
                       You are viewing this student portal as <?= htmlspecialchars($studentPreviewAdministratorName !== '' ? $studentPreviewAdministratorName : 'Administrator'); ?>.
@@ -3975,6 +4048,15 @@ $studentProfileFormFieldsHtml = ob_get_clean();
                     <div class="d-flex align-items-end row">
                       <div class="col-sm-7">
                         <div class="card-body">
+                          <?php if ($lockedWelcomeNotice !== ''): ?>
+                            <div class="student-locked-congrats">
+                              <i class="bx bxs-badge-check"></i>
+                              <span><?= htmlspecialchars($lockedWelcomeNotice); ?></span>
+                            </div>
+                            <?php if ($lockedWelcomeNoticeSubtext !== ''): ?>
+                              <div class="student-locked-congrats-note"><?= htmlspecialchars($lockedWelcomeNoticeSubtext); ?></div>
+                            <?php endif; ?>
+                          <?php endif; ?>
                           <h5 class="card-title text-primary"><?= htmlspecialchars($preRegistrationCardTitle); ?></h5>
                           <p class="mb-4"><?= htmlspecialchars($preRegistrationCardMessage); ?></p>
                           <?php if (!$isProfileComplete && $studentProfileMissingSummary !== ''): ?>
