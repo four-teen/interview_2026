@@ -3,7 +3,11 @@ require_once '../config/db.php';
 require_once '../config/student_credentials.php';
 require_once '../config/mailer.php';
 require_once '../config/session_security.php';
+require_once '../config/admin_student_impersonation.php';
 secure_session_start();
+
+$isAdminStudentPreview = admin_student_impersonation_is_active();
+$adminStudentPreviewCsrf = $isAdminStudentPreview ? admin_student_impersonation_get_csrf_token() : '';
 
 if (!isset($_SESSION['logged_in']) || (($_SESSION['role'] ?? '') !== 'student')) {
     header('Location: ../index.php');
@@ -55,9 +59,15 @@ if (empty($_SESSION['student_change_password_csrf'])) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if ($isAdminStudentPreview) {
+        $errorMsg = 'Administrator preview is read-only. Password changes are disabled.';
+    }
+
     $postedCsrf = (string) ($_POST['csrf_token'] ?? '');
     $sessionCsrf = (string) ($_SESSION['student_change_password_csrf'] ?? '');
-    if ($postedCsrf === '' || $sessionCsrf === '' || !hash_equals($sessionCsrf, $postedCsrf)) {
+    if ($errorMsg !== '') {
+        // Administrator preview blocks password updates.
+    } elseif ($postedCsrf === '' || $sessionCsrf === '' || !hash_equals($sessionCsrf, $postedCsrf)) {
         $errorMsg = 'Invalid security token. Refresh and try again.';
     }
 
@@ -166,7 +176,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <div class="card-body p-4 p-md-5">
               <h4 class="mb-2 text-center">Change Student Password</h4>
               <p class="mb-3 text-center text-muted">
-                Please set a new password before accessing your dashboard.
+                <?= $isAdminStudentPreview ? 'Administrator preview is read-only. Password changes are unavailable here.' : 'Please set a new password before accessing your dashboard.'; ?>
               </p>
 
               <?php if ($errorMsg !== ''): ?>
@@ -175,6 +185,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
               <?php if ($successMsg !== ''): ?>
                 <div class="alert alert-success small"><?= htmlspecialchars($successMsg); ?></div>
+              <?php endif; ?>
+
+              <?php if ($isAdminStudentPreview): ?>
+                <form method="post" action="stop_impersonation.php" class="d-grid gap-2 mb-3">
+                  <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($adminStudentPreviewCsrf, ENT_QUOTES); ?>" />
+                  <button type="submit" class="btn btn-warning btn-sm">Return to Administrator</button>
+                </form>
               <?php endif; ?>
 
               <form method="post">
@@ -204,6 +221,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     class="form-control"
                     value="<?= htmlspecialchars($activeEmail); ?>"
                     autocomplete="email"
+                    <?= $isAdminStudentPreview ? 'disabled' : ''; ?>
                     required
                   />
                 </div>
@@ -216,6 +234,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     class="form-control"
                     minlength="8"
                     autocomplete="new-password"
+                    <?= $isAdminStudentPreview ? 'disabled' : ''; ?>
                     required
                   />
                 </div>
@@ -228,6 +247,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     class="form-control"
                     minlength="8"
                     autocomplete="new-password"
+                    <?= $isAdminStudentPreview ? 'disabled' : ''; ?>
                     required
                   />
                 </div>
@@ -237,16 +257,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 </div>
 
                 <div class="d-flex flex-wrap gap-2 mb-2">
-                  <button type="button" id="togglePasswordBtn" class="btn btn-outline-secondary btn-sm">
+                  <button type="button" id="togglePasswordBtn" class="btn btn-outline-secondary btn-sm" <?= $isAdminStudentPreview ? 'disabled' : ''; ?>>
                     Show Passwords
                   </button>
-                  <button type="button" id="copyPasswordBtn" class="btn btn-outline-primary btn-sm">
+                  <button type="button" id="copyPasswordBtn" class="btn btn-outline-primary btn-sm" <?= $isAdminStudentPreview ? 'disabled' : ''; ?>>
                     Copy New Password
                   </button>
                 </div>
                 <div id="passwordHelperMessage" class="small text-muted mb-3"></div>
 
-                <button type="submit" class="btn btn-primary d-grid w-100">Update Password</button>
+                <button type="submit" class="btn btn-primary d-grid w-100" <?= $isAdminStudentPreview ? 'disabled title="Administrator preview is read-only."' : ''; ?>>Update Password</button>
               </form>
 
               <div class="text-center mt-3">

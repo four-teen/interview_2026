@@ -3,14 +3,19 @@ require_once '../config/db.php';
 require_once '../config/student_credentials.php';
 require_once '../config/program_ranking_lock.php';
 require_once '../config/session_security.php';
+require_once '../config/admin_student_impersonation.php';
 secure_session_start();
+
+$isAdminStudentPreview = admin_student_impersonation_is_active();
+$adminStudentPreviewContext = $isAdminStudentPreview ? admin_student_impersonation_get_context() : [];
+$adminStudentPreviewCsrf = $isAdminStudentPreview ? admin_student_impersonation_get_csrf_token() : '';
 
 if (!isset($_SESSION['logged_in']) || (($_SESSION['role'] ?? '') !== 'student')) {
     header('Location: ../index.php');
     exit;
 }
 
-if (!empty($_SESSION['student_must_change_password'])) {
+if (!empty($_SESSION['student_must_change_password']) && !$isAdminStudentPreview) {
     header('Location: change_password.php');
     exit;
 }
@@ -103,7 +108,7 @@ if (!$student) {
     exit;
 }
 
-if ((int) ($student['must_change_password'] ?? 0) === 1) {
+if ((int) ($student['must_change_password'] ?? 0) === 1 && !$isAdminStudentPreview) {
     $_SESSION['student_must_change_password'] = true;
     header('Location: change_password.php');
     exit;
@@ -125,6 +130,12 @@ $preRegistrationFlash = null;
 if (isset($_SESSION['student_prereg_flash']) && is_array($_SESSION['student_prereg_flash'])) {
     $preRegistrationFlash = $_SESSION['student_prereg_flash'];
     unset($_SESSION['student_prereg_flash']);
+}
+
+$studentAdminPreviewFlash = null;
+if (isset($_SESSION['student_admin_preview_flash']) && is_array($_SESSION['student_admin_preview_flash'])) {
+    $studentAdminPreviewFlash = $_SESSION['student_admin_preview_flash'];
+    unset($_SESSION['student_admin_preview_flash']);
 }
 
 if (empty($_SESSION['student_transfer_csrf'])) {
@@ -149,6 +160,20 @@ if (empty($_SESSION['student_prereg_csrf'])) {
     } catch (Exception $e) {
         $_SESSION['student_prereg_csrf'] = sha1(uniqid('student_prereg_csrf_', true));
     }
+}
+
+$studentPostedAction = (string) ($_POST['action'] ?? '');
+if (
+    $isAdminStudentPreview &&
+    $_SERVER['REQUEST_METHOD'] === 'POST' &&
+    in_array($studentPostedAction, ['student_profile_save', 'student_preregistration_submit', 'student_transfer_submit'], true)
+) {
+    $_SESSION['student_admin_preview_flash'] = [
+        'type' => 'danger',
+        'message' => 'Administrator preview is read-only. Return to Administrator to make changes.',
+    ];
+    header('Location: index.php');
+    exit;
 }
 
 function ensure_student_transfer_history_table($conn)
@@ -2012,23 +2037,25 @@ if ($firstChoiceId > 0 && $hasScoredInterview) {
     }
 }
 
-$transferActionEnabled = (!$studentRankLocked && $firstChoiceOutsideCapacity);
+$transferActionEnabled = (!$studentRankLocked && $firstChoiceOutsideCapacity && !$isAdminStudentPreview);
 $transferActionHref = $transferActionEnabled ? '#program-slot-availability-tab' : 'javascript:void(0);';
 $transferActionClass = $transferActionEnabled ? '' : ' is-disabled';
 $transferActionTitle = $studentRankLocked ? 'Transfer Closed' : 'Transfer';
 $transferActionSub = $studentRankLocked
     ? 'Unavailable while your program rank is locked'
-    : ($transferActionEnabled
-        ? 'Outside capacity: explore open programs'
-        : 'Available when rank is outside capacity');
-$changePasswordActionHref = $studentRankLocked ? 'javascript:void(0);' : 'change_password.php';
-$changePasswordActionClass = $studentRankLocked ? ' is-disabled' : '';
+    : ($isAdminStudentPreview
+        ? 'Disabled during administrator preview'
+        : ($transferActionEnabled
+            ? 'Outside capacity: explore open programs'
+            : 'Available when rank is outside capacity'));
+$changePasswordActionHref = ($studentRankLocked || $isAdminStudentPreview) ? 'javascript:void(0);' : 'change_password.php';
+$changePasswordActionClass = ($studentRankLocked || $isAdminStudentPreview) ? ' is-disabled' : '';
 $changePasswordActionSub = $studentRankLocked
     ? 'Unavailable while pre-registration is active'
-    : 'Update account security';
+    : ($isAdminStudentPreview ? 'Disabled during administrator preview' : 'Update account security');
 $logsActionSub = $studentRankLocked
     ? 'Unavailable while pre-registration is active'
-    : 'Feature coming soon';
+    : ($isAdminStudentPreview ? 'Disabled during administrator preview' : 'Feature coming soon');
 
 $studentSatScore = null;
 if (isset($student['sat_score']) && $student['sat_score'] !== '' && $student['sat_score'] !== null) {
@@ -2510,15 +2537,18 @@ if ($preRegistrationSubmitted) {
         : $submittedAt;
 }
 
-$canUpdateProfile = $studentRankLocked;
-$canSubmitPreRegistration = ($studentRankLocked && $isProfileComplete && !$preRegistrationSubmitted);
+$canUpdateProfile = ($studentRankLocked && !$isAdminStudentPreview);
+$canSubmitPreRegistration = ($studentRankLocked && $isProfileComplete && !$preRegistrationSubmitted && !$isAdminStudentPreview);
 $preRegistrationButtonLabel = $preRegistrationSubmitted
     ? 'Pre-Registration Submitted'
     : ($canSubmitPreRegistration ? 'Review Agreement & Submit' : 'Submit Pre-Registration');
-$preRegistrationButtonClass = $preRegistrationSubmitted ? 'btn-success' : 'btn-primary';
+$preRegistrationButtonClass = $preRegistrationSubmitted ? 'btn-success' : ($isAdminStudentPreview ? 'btn-secondary' : 'btn-primary');
 $preRegistrationButtonTitle = 'Pre-registration has already been submitted.';
 if (!$preRegistrationSubmitted) {
-    if (!$studentRankLocked) {
+    if ($isAdminStudentPreview) {
+        $preRegistrationButtonLabel = 'Admin Preview Only';
+        $preRegistrationButtonTitle = 'Administrator preview is read-only.';
+    } elseif (!$studentRankLocked) {
         $preRegistrationButtonTitle = 'Available once your rank is locked.';
     } elseif (!$isProfileComplete) {
         $preRegistrationButtonTitle = 'Complete your profile to 100% first.';
@@ -2528,13 +2558,20 @@ if (!$preRegistrationSubmitted) {
 }
 $updateProfileButtonTitle = $canUpdateProfile
     ? 'Update your profile details.'
-    : 'Profile updates open once your rank is locked.';
-$updateProfileButtonLabel = $canUpdateProfile
-    ? ($isProfileComplete ? 'Review Profile Details' : 'Complete Profile Details')
-    : 'Update My Profile';
-$profileMenuSubtext = $studentRankLocked
-    ? 'Complete your pre-registration details'
-    : 'View your student details';
+    : ($isAdminStudentPreview ? 'Administrator preview is read-only.' : 'Profile updates open once your rank is locked.');
+$updateProfileButtonLabel = $isAdminStudentPreview
+    ? 'View Profile Details'
+    : ($canUpdateProfile
+        ? ($isProfileComplete ? 'Review Profile Details' : 'Complete Profile Details')
+        : 'Update My Profile');
+$profileMenuSubtext = $isAdminStudentPreview
+    ? 'Viewing this student as administrator'
+    : ($studentRankLocked
+        ? 'Complete your pre-registration details'
+        : 'View your student details');
+$studentPreviewAdministratorName = trim((string) ($adminStudentPreviewContext['fullname'] ?? 'Administrator'));
+$studentReadOnlyButtonAttr = $isAdminStudentPreview ? 'disabled' : '';
+$studentReadOnlyButtonTitle = $isAdminStudentPreview ? 'Administrator preview is read-only.' : '';
 
 $preRegistrationCardTitle = 'Pre-Registration';
 $preRegistrationCardMessage = 'Pre-registration opens after your rank is locked.';
@@ -3788,7 +3825,7 @@ $studentProfileFormFieldsHtml = ob_get_clean();
               <a
                 href="<?= htmlspecialchars($changePasswordActionHref); ?>"
                 class="menu-link sidebar-action-card<?= $changePasswordActionClass; ?>"
-                <?= $studentRankLocked ? 'tabindex="-1" aria-disabled="true"' : ''; ?>
+                <?= ($studentRankLocked || $isAdminStudentPreview) ? 'tabindex="-1" aria-disabled="true"' : ''; ?>
               >
                 <span class="sidebar-action-icon bg-label-info"><i class="bx bx-lock-open-alt"></i></span>
                 <div>
@@ -3826,7 +3863,7 @@ $studentProfileFormFieldsHtml = ob_get_clean();
 
             <div class="navbar-nav-right d-flex align-items-center w-100" id="navbar-collapse">
               <div class="navbar-nav align-items-center flex-grow-1 me-3">
-                <?php if (!$studentRankLocked): ?>
+                <?php if (!$studentRankLocked && !$isAdminStudentPreview): ?>
                   <form id="studentProgramSearchForm" class="nav-item d-flex align-items-center w-100" autocomplete="off">
                     <i class="bx bx-search fs-4 lh-0"></i>
                     <input
@@ -3838,6 +3875,8 @@ $studentProfileFormFieldsHtml = ob_get_clean();
                       aria-label="Search programs"
                     />
                   </form>
+                <?php elseif ($isAdminStudentPreview): ?>
+                  <div class="small text-muted">Administrator preview mode is read-only. Program transfer actions are disabled.</div>
                 <?php else: ?>
                   <div class="small text-muted">Program transfers are closed because your rank is already locked.</div>
                 <?php endif; ?>
@@ -3858,10 +3897,20 @@ $studentProfileFormFieldsHtml = ob_get_clean();
                   </a>
                   <ul class="dropdown-menu dropdown-menu-end">
                     <li><a class="dropdown-item" href="#student-profile"><i class="bx bx-user me-2"></i>My Profile</a></li>
-                    <?php if ($studentRankLocked): ?>
+                    <?php if ($isAdminStudentPreview): ?>
+                      <li><a class="dropdown-item disabled" href="javascript:void(0);" tabindex="-1" aria-disabled="true"><i class="bx bx-lock-open-alt me-2"></i>Change Password</a></li>
+                    <?php elseif ($studentRankLocked): ?>
                       <li><a class="dropdown-item disabled" href="javascript:void(0);" tabindex="-1" aria-disabled="true"><i class="bx bx-lock-open-alt me-2"></i>Change Password</a></li>
                     <?php else: ?>
                       <li><a class="dropdown-item" href="change_password.php"><i class="bx bx-lock-open-alt me-2"></i>Change Password</a></li>
+                    <?php endif; ?>
+                    <?php if ($isAdminStudentPreview): ?>
+                      <li>
+                        <form method="post" action="stop_impersonation.php" class="m-0">
+                          <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($adminStudentPreviewCsrf, ENT_QUOTES); ?>" />
+                          <button type="submit" class="dropdown-item"><i class="bx bx-revision me-2"></i>Return to Administrator</button>
+                        </form>
+                      </li>
                     <?php endif; ?>
                     <li><div class="dropdown-divider"></div></li>
                     <li><a class="dropdown-item" href="../logout.php"><i class="bx bx-power-off me-2"></i>Log Out</a></li>
@@ -3888,6 +3937,11 @@ $studentProfileFormFieldsHtml = ob_get_clean();
                 <div class="alert alert-<?= htmlspecialchars($preRegistrationAlertType); ?>"><?= htmlspecialchars((string) $preRegistrationFlash['message']); ?></div>
               <?php endif; ?>
 
+              <?php if (is_array($studentAdminPreviewFlash) && !empty($studentAdminPreviewFlash['message'])): ?>
+                <?php $studentAdminPreviewAlertType = ((string) ($studentAdminPreviewFlash['type'] ?? '') === 'success') ? 'success' : 'danger'; ?>
+                <div class="alert alert-<?= htmlspecialchars($studentAdminPreviewAlertType); ?>"><?= htmlspecialchars((string) $studentAdminPreviewFlash['message']); ?></div>
+              <?php endif; ?>
+
               <?php if (isset($_GET['password_changed']) && $_GET['password_changed'] === '1'): ?>
                 <?php $emailNotice = (string) ($_GET['email_notice'] ?? ''); ?>
                 <?php if ($emailNotice === 'sent'): ?>
@@ -3897,6 +3951,22 @@ $studentProfileFormFieldsHtml = ob_get_clean();
                 <?php else: ?>
                   <div class="alert alert-success">Password changed successfully.</div>
                 <?php endif; ?>
+              <?php endif; ?>
+
+              <?php if ($isAdminStudentPreview): ?>
+                <div class="alert alert-warning d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-3">
+                  <div>
+                    <div class="fw-semibold mb-1">Administrator Preview Mode</div>
+                    <div class="small">
+                      You are viewing this student portal as <?= htmlspecialchars($studentPreviewAdministratorName !== '' ? $studentPreviewAdministratorName : 'Administrator'); ?>.
+                      Ranking, profile, and locked-program details match the student view. Changes are disabled.
+                    </div>
+                  </div>
+                  <form method="post" action="stop_impersonation.php" class="d-inline-flex">
+                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($adminStudentPreviewCsrf, ENT_QUOTES); ?>" />
+                    <button type="submit" class="btn btn-warning btn-sm">Return to Administrator</button>
+                  </form>
+                </div>
               <?php endif; ?>
 
               <div class="row">
@@ -3982,12 +4052,12 @@ $studentProfileFormFieldsHtml = ob_get_clean();
                                 <span class="badge bg-label-warning"><i class="bx bx-lock-alt me-1"></i>Locked Rank #<?= htmlspecialchars(number_format($studentLockedRank)); ?></span>
                               <?php endif; ?>
                               <span class="badge bg-label-info student-profile-progress-chip"><?= htmlspecialchars($profileCompletionBadge); ?></span>
-                              <button type="submit" class="btn btn-primary btn-sm">Save Profile</button>
+                              <button type="submit" class="btn btn-primary btn-sm" <?= $studentReadOnlyButtonAttr; ?> title="<?= htmlspecialchars($studentReadOnlyButtonTitle); ?>">Save Profile</button>
                             </div>
                           </div>
                           <?php echo $studentProfileFormFieldsHtml; ?>
                           <div class="d-flex justify-content-end mt-4">
-                            <button type="submit" class="btn btn-primary">Save Profile</button>
+                            <button type="submit" class="btn btn-primary" <?= $studentReadOnlyButtonAttr; ?> title="<?= htmlspecialchars($studentReadOnlyButtonTitle); ?>">Save Profile</button>
                           </div>
                         </div>
                       </form>
@@ -4223,7 +4293,7 @@ $studentProfileFormFieldsHtml = ob_get_clean();
                                     <small class="fw-semibold">Available Slots: <?= htmlspecialchars($availableDisplay); ?></small>
                                     <span class="badge <?= $statusBadgeClass; ?>"><?= htmlspecialchars((string) ($program['slot_status'] ?? 'N/A')); ?></span>
                                   </div>
-                                  <?php if (!empty($program['transfer_open'])): ?>
+                                  <?php if (!empty($program['transfer_open']) && !$isAdminStudentPreview): ?>
                                     <button
                                       type="button"
                                       class="btn btn-sm btn-outline-warning student-transfer-btn js-open-transfer-modal"
@@ -4280,7 +4350,7 @@ $studentProfileFormFieldsHtml = ob_get_clean();
               </div>
               <div class="modal-footer">
                 <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">Close</button>
-                <button type="submit" class="btn btn-primary">Save Profile</button>
+                <button type="submit" class="btn btn-primary" <?= $studentReadOnlyButtonAttr; ?> title="<?= htmlspecialchars($studentReadOnlyButtonTitle); ?>">Save Profile</button>
               </div>
             </form>
           </div>

@@ -1,13 +1,18 @@
 <?php
 require_once '../config/db.php';
 require_once '../config/student_preregistration.php';
-session_start();
+require_once '../config/admin_student_impersonation.php';
+
+secure_session_start();
 
 if (!isset($_SESSION['logged_in']) || (($_SESSION['role'] ?? '') !== 'administrator')) {
     header('Location: ../index.php');
     exit;
 }
 
+$adminStudentPreviewCsrf = admin_student_impersonation_get_csrf_token();
+$adminStudentPreviewFlash = admin_student_impersonation_pop_flash();
+$adminStudentPreviewReturnTo = admin_student_impersonation_normalize_return_to((string) ($_SERVER['REQUEST_URI'] ?? ''));
 $search = trim((string) ($_GET['q'] ?? ''));
 $programFilter = (int) ($_GET['program_id'] ?? 0);
 $storageReady = ensure_student_preregistration_storage($conn);
@@ -264,6 +269,12 @@ function format_administrator_prereg_datetime($value): string
               <p class="text-muted mb-4">
                 Review students who have already submitted pre-registration and narrow the list by program.
               </p>
+              <?php if (is_array($adminStudentPreviewFlash) && !empty($adminStudentPreviewFlash['message'])): ?>
+                <?php $studentPreviewAlertType = ((string) ($adminStudentPreviewFlash['type'] ?? '') === 'success') ? 'success' : 'danger'; ?>
+                <div class="alert alert-<?= htmlspecialchars($studentPreviewAlertType); ?> py-2 mb-3">
+                  <?= htmlspecialchars((string) $adminStudentPreviewFlash['message']); ?>
+                </div>
+              <?php endif; ?>
 
               <div class="prg-toolbar">
                 <button type="button" class="btn btn-outline-secondary prg-print-button" onclick="window.print();">
@@ -360,12 +371,13 @@ function format_administrator_prereg_datetime($value): string
                           <th class="text-center">Agreement</th>
                           <th>Submitted</th>
                           <th class="text-center">Credential</th>
+                          <th class="text-center">Action</th>
                         </tr>
                       </thead>
                       <tbody>
                         <?php if (empty($rows)): ?>
                           <tr>
-                            <td colspan="8" class="text-center text-muted py-4">
+                            <td colspan="9" class="text-center text-muted py-4">
                               No pre-registered students found for the selected filter.
                             </td>
                           </tr>
@@ -429,6 +441,22 @@ function format_administrator_prereg_datetime($value): string
                                   <span class="badge bg-label-success">Active</span>
                                 <?php else: ?>
                                   <span class="badge bg-label-danger"><?= htmlspecialchars(ucfirst($credentialStatus)); ?></span>
+                                <?php endif; ?>
+                              </td>
+                              <td class="text-center">
+                                <?php if ((int) ($row['credential_id'] ?? 0) > 0 && $credentialStatus === 'active'): ?>
+                                  <form method="post" action="impersonate_student.php" class="d-inline">
+                                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($adminStudentPreviewCsrf); ?>" />
+                                    <input type="hidden" name="credential_id" value="<?= (int) ($row['credential_id'] ?? 0); ?>" />
+                                    <input type="hidden" name="return_to" value="<?= htmlspecialchars($adminStudentPreviewReturnTo); ?>" />
+                                    <button type="submit" class="btn btn-sm btn-outline-warning">
+                                      View as Student
+                                    </button>
+                                  </form>
+                                <?php else: ?>
+                                  <button type="button" class="btn btn-sm btn-outline-secondary" disabled title="Active student credential required.">
+                                    View as Student
+                                  </button>
                                 <?php endif; ?>
                               </td>
                             </tr>

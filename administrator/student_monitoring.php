@@ -1,12 +1,19 @@
 <?php
 require_once '../config/db.php';
 require_once '../config/system_controls.php';
-session_start();
+require_once '../config/admin_student_impersonation.php';
+require_once '../config/program_ranking_lock.php';
+
+secure_session_start();
 
 if (!isset($_SESSION['logged_in']) || (($_SESSION['role'] ?? '') !== 'administrator')) {
     header('Location: ../index.php');
     exit;
 }
+
+$adminStudentPreviewCsrf = admin_student_impersonation_get_csrf_token();
+$adminStudentPreviewFlash = admin_student_impersonation_pop_flash();
+$adminStudentPreviewReturnTo = admin_student_impersonation_normalize_return_to((string) ($_SERVER['REQUEST_URI'] ?? ''));
 
 $search = trim((string) ($_GET['q'] ?? ''));
 $campusFilter = (int) ($_GET['campus_id'] ?? 0);
@@ -33,6 +40,44 @@ if ($campusOptionResult) {
     while ($campusRow = $campusOptionResult->fetch_assoc()) {
         $campusOptions[] = $campusRow;
     }
+}
+
+function administrator_student_monitoring_build_rank_lookup(mysqli $conn, array $programIds): array
+{
+    $lookup = [];
+    $errors = [];
+    $uniqueProgramIds = array_values(array_unique(array_filter(array_map('intval', $programIds), static function (int $programId): bool {
+        return $programId > 0;
+    })));
+
+    foreach ($uniqueProgramIds as $programId) {
+        $payload = program_ranking_fetch_payload($conn, $programId, null);
+        if (!($payload['success'] ?? false)) {
+            $errors[$programId] = (string) ($payload['message'] ?? 'Failed to validate program ranking.');
+            continue;
+        }
+
+        foreach ((array) ($payload['rows'] ?? []) as $rankingRow) {
+            $interviewId = (int) ($rankingRow['interview_id'] ?? 0);
+            if ($interviewId <= 0) {
+                continue;
+            }
+
+            $lookup[$programId][$interviewId] = [
+                'rank' => (int) ($rankingRow['rank'] ?? 0),
+                'locked_rank' => (int) ($rankingRow['locked_rank'] ?? 0),
+                'is_locked' => !empty($rankingRow['is_locked']),
+                'is_outside_capacity' => !empty($rankingRow['is_outside_capacity']),
+                'is_endorsement' => !empty($rankingRow['is_endorsement']),
+                'row_section' => (string) ($rankingRow['row_section'] ?? 'regular'),
+            ];
+        }
+    }
+
+    return [
+        'lookup' => $lookup,
+        'errors' => $errors,
+    ];
 }
 
 $where = ['1=1'];
@@ -90,6 +135,7 @@ $sql = "
         si.classification,
         si.final_score,
         si.status AS interview_status,
+        COALESCE(NULLIF(si.program_id, 0), NULLIF(si.first_choice, 0)) AS ranking_program_id,
         pr.full_name,
         pr.sat_score,
         c.campus_name,
@@ -113,7 +159,7 @@ $sql = "
     LEFT JOIN tbl_campus c
       ON c.campus_id = si.campus_id
     LEFT JOIN tbl_program p
-      ON p.program_id = si.first_choice
+      ON p.program_id = COALESCE(NULLIF(si.program_id, 0), NULLIF(si.first_choice, 0))
     LEFT JOIN tbl_student_credentials sc
       ON sc.examinee_number = si.examinee_number
     LEFT JOIN tbl_student_profile sp
@@ -136,6 +182,71 @@ if ($stmt) {
     }
     $stmt->close();
 }
+
+$rankLookupResult = administrator_student_monitoring_build_rank_lookup(
+    $conn,
+    array_column($rows, 'ranking_program_id')
+);
+$sharedRankLookup = (array) ($rankLookupResult['lookup'] ?? []);
+$sharedRankErrors = (array) ($rankLookupResult['errors'] ?? []);
+
+foreach ($rows as &$row) {
+    $rankingProgramId = (int) ($row['ranking_program_id'] ?? 0);
+    $interviewId = (int) ($row['interview_id'] ?? 0);
+    $row['shared_rank_display'] = 'N/A';
+    $row['shared_rank_badge_class'] = 'bg-label-secondary';
+    $row['shared_rank_note'] = 'No ranking validation';
+
+    if ($rankingProgramId <= 0) {
+        $row['shared_rank_note'] = 'No ranking program';
+        continue;
+    }
+
+    if ($row['final_score'] === null) {
+        $row['shared_rank_note'] = 'Unscored';
+        continue;
+    }
+
+    if (isset($sharedRankErrors[$rankingProgramId])) {
+        $row['shared_rank_note'] = 'Validation unavailable';
+        continue;
+    }
+
+    $rankingEntry = $sharedRankLookup[$rankingProgramId][$interviewId] ?? null;
+    if (!$rankingEntry) {
+        $row['shared_rank_note'] = 'Not in shared ranking list';
+        continue;
+    }
+
+    $sharedRank = max(
+        (int) ($rankingEntry['locked_rank'] ?? 0),
+        (int) ($rankingEntry['rank'] ?? 0)
+    );
+    if ($sharedRank <= 0) {
+        $row['shared_rank_note'] = 'Not ranked';
+        continue;
+    }
+
+    $row['shared_rank_display'] = '#' . number_format($sharedRank);
+
+    if (!empty($rankingEntry['is_locked'])) {
+        $row['shared_rank_badge_class'] = 'bg-label-warning';
+        $row['shared_rank_note'] = 'Locked shared rank';
+    } elseif (!empty($rankingEntry['is_outside_capacity'])) {
+        $row['shared_rank_badge_class'] = 'bg-label-danger';
+        $row['shared_rank_note'] = 'Shared rank outside capacity';
+    } elseif (!empty($rankingEntry['is_endorsement']) || (string) ($rankingEntry['row_section'] ?? '') === 'scc') {
+        $row['shared_rank_badge_class'] = 'bg-label-success';
+        $row['shared_rank_note'] = 'SCC shared rank';
+    } elseif ((string) ($rankingEntry['row_section'] ?? '') === 'etg') {
+        $row['shared_rank_badge_class'] = 'bg-label-info';
+        $row['shared_rank_note'] = 'ETG shared rank';
+    } else {
+        $row['shared_rank_badge_class'] = 'bg-label-primary';
+        $row['shared_rank_note'] = 'Shared academic rank';
+    }
+}
+unset($row);
 
 $summary = [
     'total' => count($rows),
@@ -219,24 +330,6 @@ foreach ($rows as $row) {
       .st-table td, .st-table th {
         vertical-align: middle;
       }
-
-      .rank-detail-row {
-        margin-bottom: 0.45rem;
-      }
-
-      .rank-detail-label {
-        font-size: 0.74rem;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        color: #7d8aa3;
-      }
-
-      .rank-detail-value {
-        font-size: 1rem;
-        font-weight: 600;
-        color: #2f3f59;
-      }
     </style>
   </head>
   <body>
@@ -255,6 +348,20 @@ foreach ($rows as $row) {
               <p class="text-muted mb-4">
                 Read-only visibility of student interview status, credentials, profile progress, and transfer queue.
               </p>
+              <div class="alert alert-light border py-2 mb-3">
+                <span class="fw-semibold">Program Rank</span> uses the same shared academic ranking payload used by Program Chair, Monitoring, and Student views.
+              </div>
+              <?php if (is_array($adminStudentPreviewFlash) && !empty($adminStudentPreviewFlash['message'])): ?>
+                <?php $studentPreviewAlertType = ((string) ($adminStudentPreviewFlash['type'] ?? '') === 'success') ? 'success' : 'danger'; ?>
+                <div class="alert alert-<?= htmlspecialchars($studentPreviewAlertType); ?> py-2 mb-3">
+                  <?= htmlspecialchars((string) $adminStudentPreviewFlash['message']); ?>
+                </div>
+              <?php endif; ?>
+              <?php if (!empty($sharedRankErrors)): ?>
+                <div class="alert alert-warning py-2 mb-3">
+                  Shared rank validation is unavailable for <?= number_format(count($sharedRankErrors)); ?> program(s). Affected students show <span class="fw-semibold">Validation unavailable</span>.
+                </div>
+              <?php endif; ?>
               <?php if ($globalSatCutoffActive): ?>
                 <div class="alert alert-info py-2 mb-3">
                   Global SAT cutoff is active: showing students with SAT >= <?= number_format((int) $globalSatCutoffValue); ?>.
@@ -356,16 +463,17 @@ foreach ($rows as $row) {
                           <th class="text-center">SAT</th>
                           <th class="text-center">Interview</th>
                           <th class="text-center">Final Score</th>
+                          <th class="text-center">Program Rank</th>
                           <th class="text-center">Profile</th>
                           <th class="text-center">Credential</th>
                           <th class="text-center">Transfer</th>
-                          <th class="text-center">Action</th>
+                          <th class="text-center">Preview</th>
                         </tr>
                       </thead>
                       <tbody>
                         <?php if (empty($rows)): ?>
                           <tr>
-                            <td colspan="9" class="text-center text-muted py-4">
+                            <td colspan="10" class="text-center text-muted py-4">
                               No student records found.
                             </td>
                           </tr>
@@ -406,6 +514,12 @@ foreach ($rows as $row) {
                                 <?php endif; ?>
                               </td>
                               <td class="text-center">
+                                <span class="badge <?= htmlspecialchars((string) ($row['shared_rank_badge_class'] ?? 'bg-label-secondary')); ?>">
+                                  <?= htmlspecialchars((string) ($row['shared_rank_display'] ?? 'N/A')); ?>
+                                </span>
+                                <small class="text-muted d-block mt-1"><?= htmlspecialchars((string) ($row['shared_rank_note'] ?? '')); ?></small>
+                              </td>
+                              <td class="text-center">
                                 <?php if ($profilePercent === null): ?>
                                   <span class="badge bg-label-secondary">No Profile</span>
                                 <?php elseif ($profilePercent >= 100): ?>
@@ -433,66 +547,26 @@ foreach ($rows as $row) {
                                 <?php endif; ?>
                               </td>
                               <td class="text-center">
-                                <button
-                                  type="button"
-                                  class="btn btn-sm btn-outline-primary js-view-rank"
-                                  data-interview-id="<?= (int) ($row['interview_id'] ?? 0); ?>"
-                                >
-                                  View Rank
-                                </button>
+                                <?php if (!empty($row['credential_id']) && ($row['credential_status'] ?? '') === 'active'): ?>
+                                  <form method="post" action="impersonate_student.php" class="d-inline">
+                                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($adminStudentPreviewCsrf); ?>" />
+                                    <input type="hidden" name="credential_id" value="<?= (int) ($row['credential_id'] ?? 0); ?>" />
+                                    <input type="hidden" name="return_to" value="<?= htmlspecialchars($adminStudentPreviewReturnTo); ?>" />
+                                    <button type="submit" class="btn btn-sm btn-outline-warning">
+                                      View as Student
+                                    </button>
+                                  </form>
+                                <?php else: ?>
+                                  <button type="button" class="btn btn-sm btn-outline-secondary" disabled title="Active student credential required.">
+                                    View as Student
+                                  </button>
+                                <?php endif; ?>
                               </td>
                             </tr>
                           <?php endforeach; ?>
                         <?php endif; ?>
                       </tbody>
                     </table>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="modal fade" id="studentRankModal" tabindex="-1" aria-hidden="true">
-              <div class="modal-dialog modal-dialog-centered">
-                <div class="modal-content">
-                  <div class="modal-header">
-                    <h5 class="modal-title">Student Current Rank</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                  </div>
-                  <div class="modal-body">
-                    <div id="studentRankLoading" class="text-center py-4 d-none">
-                      <div class="spinner-border text-primary" role="status"></div>
-                      <div class="small text-muted mt-2">Loading rank details...</div>
-                    </div>
-                    <div id="studentRankError" class="alert alert-danger d-none mb-0"></div>
-                    <div id="studentRankBody" class="d-none">
-                      <div class="rank-detail-row">
-                        <div class="rank-detail-label">Student</div>
-                        <div class="rank-detail-value" id="rankStudentName">--</div>
-                      </div>
-                      <div class="rank-detail-row">
-                        <div class="rank-detail-label">Examinee #</div>
-                        <div class="rank-detail-value" id="rankExaminee">--</div>
-                      </div>
-                      <div class="rank-detail-row">
-                        <div class="rank-detail-label">Program</div>
-                        <div class="rank-detail-value" id="rankProgram">--</div>
-                      </div>
-                      <div class="rank-detail-row">
-                        <div class="rank-detail-label">List</div>
-                        <div class="rank-detail-value" id="rankPool">--</div>
-                      </div>
-                      <div class="rank-detail-row">
-                        <div class="rank-detail-label">Current Rank</div>
-                        <div class="rank-detail-value" id="rankValue">--</div>
-                      </div>
-                      <div class="rank-detail-row">
-                        <div class="rank-detail-label">Capacity Status</div>
-                        <div class="rank-detail-value" id="rankCapacityLabel">--</div>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
                   </div>
                 </div>
               </div>
@@ -513,86 +587,5 @@ foreach ($rows as $row) {
     <script src="../assets/vendor/libs/perfect-scrollbar/perfect-scrollbar.js"></script>
     <script src="../assets/vendor/js/menu.js"></script>
     <script src="../assets/js/main.js"></script>
-    <script>
-      (function () {
-        const modalEl = document.getElementById('studentRankModal');
-        if (!modalEl) return;
-
-        const rankModal = new bootstrap.Modal(modalEl);
-        const loadingEl = document.getElementById('studentRankLoading');
-        const errorEl = document.getElementById('studentRankError');
-        const bodyEl = document.getElementById('studentRankBody');
-
-        const fieldStudent = document.getElementById('rankStudentName');
-        const fieldExaminee = document.getElementById('rankExaminee');
-        const fieldProgram = document.getElementById('rankProgram');
-        const fieldPool = document.getElementById('rankPool');
-        const fieldRank = document.getElementById('rankValue');
-        const fieldCapacity = document.getElementById('rankCapacityLabel');
-
-        function setState(state) {
-          if (loadingEl) loadingEl.classList.toggle('d-none', state !== 'loading');
-          if (errorEl) errorEl.classList.toggle('d-none', state !== 'error');
-          if (bodyEl) bodyEl.classList.toggle('d-none', state !== 'ready');
-        }
-
-        function setError(message) {
-          if (errorEl) {
-            errorEl.textContent = message || 'Failed to load rank details.';
-          }
-          setState('error');
-        }
-
-        function fillRankData(payload) {
-          const student = payload && payload.student ? payload.student : {};
-          const ranking = payload && payload.ranking ? payload.ranking : {};
-
-          if (fieldStudent) fieldStudent.textContent = student.full_name || '--';
-          if (fieldExaminee) fieldExaminee.textContent = student.examinee_number || '--';
-          if (fieldProgram) fieldProgram.textContent = student.program_display || '--';
-          if (fieldPool) fieldPool.textContent = ranking.pool_label || '--';
-          if (fieldRank) fieldRank.textContent = ranking.rank_display || (ranking.message || '--');
-          if (fieldCapacity) {
-            if (ranking.outside_capacity === true) {
-              fieldCapacity.innerHTML = '<span class="badge bg-label-danger">Outside Capacity</span>';
-            } else if (ranking.outside_capacity === false) {
-              fieldCapacity.innerHTML = '<span class="badge bg-label-success">Within Capacity</span>';
-            } else {
-              fieldCapacity.textContent = 'Not Available';
-            }
-          }
-        }
-
-        async function loadRank(interviewId) {
-          setState('loading');
-          rankModal.show();
-
-          try {
-            const response = await fetch('get_student_program_rank.php?interview_id=' + encodeURIComponent(String(interviewId || 0)), {
-              headers: { Accept: 'application/json' }
-            });
-            const data = await response.json();
-            if (!data || !data.success) {
-              throw new Error((data && data.message) || 'Unable to load rank.');
-            }
-
-            fillRankData(data);
-            setState('ready');
-          } catch (error) {
-            setError((error && error.message) ? error.message : 'Unable to load rank.');
-          }
-        }
-
-        document.querySelectorAll('.js-view-rank').forEach((btn) => {
-          btn.addEventListener('click', () => {
-            const interviewId = Number(btn.getAttribute('data-interview-id') || 0);
-            if (interviewId <= 0) {
-              return;
-            }
-            loadRank(interviewId);
-          });
-        });
-      })();
-    </script>
   </body>
 </html>
