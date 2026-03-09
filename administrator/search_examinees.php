@@ -49,6 +49,69 @@ function build_admin_search_esm_preferred_program_condition_sql(string $columnEx
     return '(' . implode(' OR ', $conditions) . ')';
 }
 
+function tokenize_admin_search_query(string $query): array
+{
+    $parts = preg_split('/[^[:alnum:]]+/u', strtoupper($query), -1, PREG_SPLIT_NO_EMPTY);
+    if (!is_array($parts)) {
+        return [];
+    }
+
+    $tokens = [];
+    foreach ($parts as $part) {
+        $token = trim((string) $part);
+        if ($token === '') {
+            continue;
+        }
+
+        if (strlen($token) === 1 && !ctype_digit($token)) {
+            continue;
+        }
+
+        $tokens[$token] = true;
+        if (count($tokens) >= 8) {
+            break;
+        }
+    }
+
+    return array_keys($tokens);
+}
+
+function build_admin_search_where_clause(string $query, array &$params, string &$types): string
+{
+    $conditions = [];
+    $like = '%' . $query . '%';
+
+    $conditions[] = 'pr.examinee_number LIKE ?';
+    $params[] = $like;
+    $types .= 's';
+
+    $conditions[] = 'pr.full_name LIKE ?';
+    $params[] = $like;
+    $types .= 's';
+
+    $conditions[] = 'pr.preferred_program LIKE ?';
+    $params[] = $like;
+    $types .= 's';
+
+    $tokens = tokenize_admin_search_query($query);
+    if (count($tokens) > 1) {
+        foreach (['pr.full_name', 'pr.preferred_program'] as $columnExpression) {
+            $tokenConditions = [];
+            foreach ($tokens as $token) {
+                $tokenConditions[] = "{$columnExpression} LIKE ?";
+                $params[] = '%' . $token . '%';
+                $types .= 's';
+            }
+
+            if (!empty($tokenConditions)) {
+                $conditions[] = '(' . implode(' AND ', $tokenConditions) . ')';
+            }
+        }
+    }
+
+    return "(\n            " . implode("\n         OR ", $conditions) . "\n    )";
+}
+
 $query = trim((string) ($_GET['q'] ?? ''));
 if (strlen($query) > 100) {
     $query = substr($query, 0, 100);
@@ -78,22 +141,20 @@ if ($query === '') {
     exit;
 }
 
-$like = '%' . $query . '%';
 $esmConditionSql = build_admin_search_esm_preferred_program_condition_sql('pr.preferred_program');
+$countParams = [];
+$countTypes = '';
+$whereClauseSql = build_admin_search_where_clause($query, $countParams, $countTypes);
 
 $filteredRecords = 0;
 $countSql = "
     SELECT COUNT(*) AS filtered_records
     FROM tbl_placement_results pr
-    WHERE (
-            pr.examinee_number LIKE ?
-         OR pr.full_name LIKE ?
-         OR pr.preferred_program LIKE ?
-    )
+    WHERE {$whereClauseSql}
 ";
 $countStmt = $conn->prepare($countSql);
 if ($countStmt) {
-    $countStmt->bind_param('sss', $like, $like, $like);
+    $countStmt->bind_param($countTypes, ...$countParams);
     $countStmt->execute();
     $countResult = $countStmt->get_result();
     if ($countResult) {
@@ -233,11 +294,7 @@ $sql = "
         ON p2.program_id = ixd.second_choice
     LEFT JOIN tbl_program p3
         ON p3.program_id = ixd.third_choice
-    WHERE (
-            pr.examinee_number LIKE ?
-         OR pr.full_name LIKE ?
-         OR pr.preferred_program LIKE ?
-    )
+    WHERE {$whereClauseSql}
     ORDER BY pr.created_at DESC, pr.id DESC
     LIMIT 50
 ";
@@ -252,7 +309,7 @@ if (!$stmt) {
     exit;
 }
 
-$stmt->bind_param('sss', $like, $like, $like);
+$stmt->bind_param($countTypes, ...$countParams);
 $stmt->execute();
 $result = $stmt->get_result();
 

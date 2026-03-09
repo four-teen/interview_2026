@@ -3318,6 +3318,33 @@ $studentProfileFormFieldsHtml = ob_get_clean();
         line-height: 0.92rem;
       }
 
+      .student-important-notice {
+        padding: 0.9rem 1rem 0.95rem;
+        border: 1px solid #f1d38a;
+        border-left: 4px solid #d9a441;
+        border-radius: 0.95rem;
+        background: linear-gradient(180deg, #fff7e5 0%, #fffdf8 100%);
+        box-shadow: 0 10px 20px rgba(169, 123, 24, 0.08);
+      }
+
+      .student-important-notice-title {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+        color: #9a6700;
+        font-size: 0.78rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .student-important-notice-copy {
+        margin: 0.55rem 0 0;
+        color: #6f5a2a;
+        font-size: 0.78rem;
+        line-height: 1.45;
+      }
+
       #studentProgramSearchForm .form-control:focus {
         border: 1px solid #d9a441;
         box-shadow: 0 0 0 0.2rem rgba(217, 164, 65, 0.18);
@@ -4113,6 +4140,16 @@ $studentProfileFormFieldsHtml = ob_get_clean();
                       </div>
                     </div>
                   </div>
+
+                  <?php if (!$studentRankLocked): ?>
+                    <div class="student-important-notice mb-4" role="note" aria-label="Important Notice">
+                      <div class="student-important-notice-title">
+                        <i class="bx bx-error-circle"></i>
+                        <span>Important Notice</span>
+                      </div>
+                      <p class="student-important-notice-copy">Your current rank is provisional and may move up or down depending on the final scores of all applicants. Please wait for the final result. Once your status shows "Congratulations", you may proceed with pre-registration.</p>
+                    </div>
+                  <?php endif; ?>
 
                   <?php if ($studentRankLocked): ?>
                     <div id="student-profile" class="card mb-4 student-inline-profile-card">
