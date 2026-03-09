@@ -13,6 +13,85 @@ $search = trim((string) ($_GET['q'] ?? ''));
 $programFilter = (int) ($_GET['program_id'] ?? 0);
 $storageReady = ensure_student_preregistration_storage($conn);
 $programOptions = $storageReady ? student_preregistration_fetch_program_options($conn) : [];
+$deleteableProgramOptions = [];
+foreach ($programOptions as $programOption) {
+    if ((int) ($programOption['prereg_count'] ?? 0) > 0) {
+        $deleteableProgramOptions[] = $programOption;
+    }
+}
+$flashMessage = null;
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') === 'remove_by_programs') {
+    $deleteProgramIds = (array) ($_POST['program_ids'] ?? []);
+    $deleteSearch = trim((string) ($_POST['search'] ?? ''));
+    $preserveProgramFilter = (int) ($_POST['preserve_program_filter'] ?? 0);
+    $allowedDeleteProgramIds = [];
+    $allowedDeleteProgramNames = [];
+
+    foreach ($deleteableProgramOptions as $option) {
+        $optionProgramId = (int) ($option['program_id'] ?? 0);
+        if ($optionProgramId > 0) {
+            $allowedDeleteProgramIds[] = $optionProgramId;
+            $allowedDeleteProgramNames[$optionProgramId] = (string) ($option['label'] ?? ('Program #' . $optionProgramId));
+        }
+    }
+
+    $normalizedDeleteProgramIds = [];
+    foreach ($deleteProgramIds as $deleteProgramId) {
+        $programId = (int) $deleteProgramId;
+        if ($programId > 0) {
+            $normalizedDeleteProgramIds[] = $programId;
+        }
+    }
+    $normalizedDeleteProgramIds = array_values(array_unique($normalizedDeleteProgramIds));
+    $deletableProgramIds = array_values(array_intersect($normalizedDeleteProgramIds, $allowedDeleteProgramIds));
+
+    if (!$storageReady) {
+        $_SESSION['monitoring_prereg_flash'] = [
+            'type' => 'danger',
+            'message' => 'Pre-registration storage is not ready. Please refresh and try again.',
+        ];
+    } elseif (empty($deletableProgramIds)) {
+        $_SESSION['monitoring_prereg_flash'] = [
+            'type' => 'danger',
+            'message' => 'Select at least one program with pre-registrations before removing.',
+        ];
+    } else {
+        $deleteResult = student_preregistration_delete_by_programs($conn, $deletableProgramIds);
+        $selectedProgramNames = array_values(array_filter(array_map(function (int $programId): string {
+            return (string) ($allowedDeleteProgramNames[$programId] ?? ('Program #' . $programId));
+        }, $deletableProgramIds)));
+
+        if ((bool) ($deleteResult['success'] ?? false)) {
+            $deletedCount = (int) ($deleteResult['deleted'] ?? 0);
+            $programNamesText = implode(', ', $selectedProgramNames);
+            $deleteMessage = $deletedCount > 0
+                ? "{$deletedCount} preregistration(s) removed from: {$programNamesText}."
+                : "No pre-registrations found for selected program(s).";
+            $_SESSION['monitoring_prereg_flash'] = [
+                'type' => 'success',
+                'message' => $deleteMessage,
+            ];
+        } else {
+            $_SESSION['monitoring_prereg_flash'] = [
+                'type' => 'danger',
+                'message' => (string) ($deleteResult['message'] ?? 'Unable to remove pre-registrations.'),
+            ];
+        }
+    }
+
+    $redirectParams = [];
+    if ($preserveProgramFilter > 0) {
+        $redirectParams['program_id'] = $preserveProgramFilter;
+    }
+    if ($deleteSearch !== '') {
+        $redirectParams['q'] = $deleteSearch;
+    }
+    $nextUrl = 'preregistrations.php' . (empty($redirectParams) ? '' : '?' . http_build_query($redirectParams));
+    header('Location: ' . $nextUrl);
+    exit;
+}
+
 $report = $storageReady
     ? student_preregistration_fetch_report($conn, [
         'search' => $search,
@@ -25,13 +104,14 @@ $rows = $report['rows'];
 $summary = $report['summary'];
 $printHeader = student_preregistration_get_print_header();
 $printSections = student_preregistration_build_print_sections($rows);
-$selectedProgramLabel = 'All Programs';
-foreach ($programOptions as $programOption) {
-    if ((int) ($programOption['program_id'] ?? 0) === $programFilter) {
-        $selectedProgramLabel = (string) ($programOption['label'] ?? 'All Programs');
-        break;
-    }
+$monitoringPreregFlash = $_SESSION['monitoring_prereg_flash'] ?? null;
+if (is_array($monitoringPreregFlash) && isset($monitoringPreregFlash['message'])) {
+    $flashMessage = [
+        'type' => ((string) ($monitoringPreregFlash['type'] ?? 'success') === 'danger') ? 'danger' : 'success',
+        'message' => (string) $monitoringPreregFlash['message'],
+    ];
 }
+unset($_SESSION['monitoring_prereg_flash']);
 $printGeneratedAt = date('F j, Y g:i A');
 
 function format_monitoring_prereg_datetime($value): string
@@ -73,6 +153,7 @@ function format_monitoring_prereg_datetime($value): string
     <link rel="stylesheet" href="../assets/vendor/css/core.css" />
     <link rel="stylesheet" href="../assets/vendor/css/theme-default.css" />
     <link rel="stylesheet" href="../assets/css/demo.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" />
     <link rel="stylesheet" href="../assets/vendor/libs/perfect-scrollbar/perfect-scrollbar.css" />
     <script src="../assets/vendor/js/helpers.js"></script>
     <script src="../assets/js/config.js"></script>
@@ -129,38 +210,65 @@ function format_monitoring_prereg_datetime($value): string
         margin-bottom: 1rem;
       }
 
+      .mpr-delete-form {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        margin-bottom: 0;
+      }
+
+      .mpr-delete-select {
+        width: 360px;
+        max-width: 100%;
+      }
+
+      .mpr-delete-select .mpr-delete-select-option {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+      }
+
+      .mpr-delete-select .mpr-delete-select-option input[type='checkbox'] {
+        cursor: default;
+        pointer-events: none;
+      }
+
       .mpr-print-sheet {
         display: none;
       }
 
       .mpr-print-header {
         text-align: center;
-        margin-bottom: 1.2rem;
+        margin-bottom: 0.45rem;
       }
 
       .mpr-print-school {
-        font-size: 1.25rem;
+        font-size: 1.1rem;
         font-weight: 700;
         color: #1f2937;
+        margin-bottom: 0;
       }
 
       .mpr-print-address {
-        margin-top: 0.2rem;
-        font-size: 0.86rem;
+        margin-top: 0.05rem;
+        margin-bottom: 0.05rem;
+        font-size: 0.78rem;
         color: #4b5563;
       }
 
       .mpr-print-title {
-        margin-top: 0.55rem;
-        font-size: 1rem;
+        margin-top: 0.15rem;
+        margin-bottom: 0.1rem;
+        font-size: 0.95rem;
         font-weight: 700;
         text-transform: uppercase;
-        letter-spacing: 0.06em;
+        letter-spacing: 0.04em;
         color: #1f2937;
       }
 
       .mpr-print-generated {
-        margin-top: 0.3rem;
+        margin-top: 0;
+        margin-bottom: 0;
         font-size: 0.78rem;
         color: #6b7280;
       }
@@ -215,6 +323,8 @@ function format_monitoring_prereg_datetime($value): string
         .mpr-stat-row,
         .mpr-filter-card,
         .mpr-screen-table,
+        .mpr-page-title,
+        .mpr-page-subtitle,
         footer {
           display: none !important;
         }
@@ -259,10 +369,10 @@ function format_monitoring_prereg_datetime($value): string
 
           <div class="content-wrapper">
             <div class="container-xxl flex-grow-1 container-p-y">
-              <h4 class="fw-bold mb-1">
+              <h4 class="fw-bold mb-1 mpr-page-title">
                 <span class="text-muted fw-light">Monitoring /</span> Pre-Registrations
               </h4>
-              <p class="text-muted mb-4">
+              <p class="text-muted mb-4 mpr-page-subtitle">
                 Read-only list of submitted pre-registrations with program-based filtering.
               </p>
 
@@ -270,6 +380,35 @@ function format_monitoring_prereg_datetime($value): string
                 <button type="button" class="btn btn-outline-secondary mpr-print-button" onclick="window.print();">
                   <i class="bx bx-printer me-1"></i>Print
                 </button>
+                <form
+                  id="mprDeleteProgramForm"
+                  class="mpr-delete-form"
+                  method="post"
+                  data-program-count="<?= (int) count($deleteableProgramOptions); ?>"
+                >
+                  <input type="hidden" name="action" value="remove_by_programs" />
+                  <input type="hidden" name="preserve_program_filter" value="<?= (int) $programFilter; ?>" />
+                  <input type="hidden" name="search" value="<?= htmlspecialchars($search); ?>" />
+                  <select
+                    id="mprProgramDeleteSelect"
+                    name="program_ids[]"
+                    class="mpr-delete-select form-select"
+                    multiple
+                    data-placeholder="Select programs to remove"
+                  >
+                    <?php foreach ($deleteableProgramOptions as $deleteableProgramOption): ?>
+                      <?php $deleteableProgramId = (int) ($deleteableProgramOption['program_id'] ?? 0); ?>
+                      <?php if ($deleteableProgramId <= 0) continue; ?>
+                      <option value="<?= $deleteableProgramId; ?>">
+                        <?= htmlspecialchars((string) ($deleteableProgramOption['label'] ?? ('Program #' . $deleteableProgramId))); ?>
+                        (<?= number_format((int) ($deleteableProgramOption['prereg_count'] ?? 0)); ?>)
+                      </option>
+                    <?php endforeach; ?>
+                  </select>
+                  <button type="submit" class="btn btn-outline-danger" id="mprDeleteProgramBtn" disabled>
+                    <i class="bx bx-trash me-1"></i>Remove Selected
+                  </button>
+                </form>
               </div>
 
               <?php if (!$storageReady): ?>
@@ -324,9 +463,10 @@ function format_monitoring_prereg_datetime($value): string
                         <option value="0">All Programs</option>
                         <?php foreach ($programOptions as $programOption): ?>
                           <?php $optionProgramId = (int) ($programOption['program_id'] ?? 0); ?>
+                          <?php $optionCount = (int) ($programOption['prereg_count'] ?? 0); ?>
+                          <?php if ($optionCount <= 0) continue; ?>
                           <option value="<?= $optionProgramId; ?>"<?= $programFilter === $optionProgramId ? ' selected' : ''; ?>>
                             <?= htmlspecialchars((string) ($programOption['label'] ?? '')); ?>
-                            <?php $optionCount = (int) ($programOption['prereg_count'] ?? 0); ?>
                             <?= $optionCount > 0 ? ' (' . number_format($optionCount) . ')' : ''; ?>
                           </option>
                         <?php endforeach; ?>
@@ -481,5 +621,146 @@ function format_monitoring_prereg_datetime($value): string
     <script src="../assets/vendor/libs/perfect-scrollbar/perfect-scrollbar.js"></script>
     <script src="../assets/vendor/js/menu.js"></script>
     <script src="../assets/js/main.js"></script>
-  </body>
-</html>
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script>
+      (function () {
+        const deleteForm = document.getElementById('mprDeleteProgramForm');
+        const deleteSelect = document.getElementById('mprProgramDeleteSelect');
+        const deleteBtn = document.getElementById('mprDeleteProgramBtn');
+        if (!deleteForm) return;
+        const hasFlashMessage = <?= $flashMessage ? 'true' : 'false'; ?>;
+        const flashPayload = <?= json_encode($flashMessage, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>;
+        const isSwalAvailable = typeof Swal !== 'undefined';
+
+        function showSwalAlert(config) {
+          if (!isSwalAvailable) {
+            return Promise.resolve({
+              isConfirmed: confirm(config.text || 'Confirm action')
+            });
+          }
+
+          return Swal.fire(config);
+        }
+
+        function showSwalWarning(title, text, buttonLabel) {
+          return showSwalAlert({
+            icon: 'warning',
+            title: title,
+            text: text,
+            confirmButtonText: buttonLabel || 'OK',
+            confirmButtonColor: '#696cff'
+          });
+        }
+
+        function updateDeleteButtonState() {
+          if (!deleteSelect || !deleteBtn) {
+            return;
+          }
+
+          const selectedCount = (deleteSelect && deleteSelect.selectedOptions)
+            ? deleteSelect.selectedOptions.length
+            : 0;
+          deleteBtn.disabled = selectedCount <= 0;
+        }
+
+        function formatSelectOption(option) {
+          if (option.element === undefined) {
+            return option.text;
+          }
+
+          const isChecked = (option.selected || option.element && option.element.selected) ? 'checked' : '';
+          const container = document.createElement('span');
+          const check = document.createElement('input');
+          const label = document.createElement('span');
+
+          container.className = 'mpr-delete-select-option';
+          check.type = 'checkbox';
+          check.disabled = true;
+          if (isChecked === 'checked') {
+            check.checked = true;
+          }
+          label.textContent = option.text;
+
+          container.appendChild(check);
+          container.appendChild(label);
+          return container;
+        }
+
+        if (typeof $ !== 'undefined' && $.fn && $.fn.select2) {
+          const $deleteSelect = $('#mprProgramDeleteSelect');
+          if ($deleteSelect.length) {
+            $deleteSelect.select2({
+              width: '100%',
+              placeholder: $deleteSelect.data('placeholder') || 'Select programs to remove',
+              closeOnSelect: false,
+              templateResult: formatSelectOption
+            });
+
+            $deleteSelect.on('change', function () {
+              updateDeleteButtonState();
+            });
+
+            $deleteSelect.on('select2:select select2:unselect', function () {
+              updateDeleteButtonState();
+            });
+
+            updateDeleteButtonState();
+          }
+        }
+
+        deleteForm.addEventListener('submit', function (event) {
+          event.preventDefault();
+          const selectedProgramIds = Array.from((deleteSelect && deleteSelect.selectedOptions) || [])
+            .map((option) => option.value)
+            .filter((value) => String(value).trim() !== '');
+
+          if (selectedProgramIds.length <= 0) {
+            showSwalWarning('No program selected', 'Select at least one program with pre-registrations first.');
+            return;
+          }
+
+          const programCount = Number(deleteForm.dataset.programCount || 0);
+          if (programCount <= 0) {
+            showSwalWarning('Nothing to remove', 'No programs with pre-registrations are available for deletion.');
+            return;
+          }
+
+          showSwalAlert({
+            icon: 'warning',
+            title: 'Confirm removal',
+            html: `${selectedProgramIds.length} program(s) selected. This action cannot be undone.`,
+            showCancelButton: true,
+            confirmButtonText: 'Delete',
+            cancelButtonText: 'Cancel',
+            confirmButtonColor: '#ff3e1d',
+            cancelButtonColor: '#6c757d',
+            reverseButtons: true
+          }).then((result) => {
+            if (result.isConfirmed) {
+              deleteForm.submit();
+            }
+          });
+        });
+
+        if (hasFlashMessage && flashPayload) {
+          if (!isSwalAvailable) {
+            if (flashPayload.type === 'danger') {
+              alert(flashPayload.message || 'Error');
+            } else {
+              alert(flashPayload.message || 'Done');
+            }
+            return;
+          }
+
+          Swal.fire({
+            icon: flashPayload.type === 'danger' ? 'error' : 'success',
+            title: flashPayload.type === 'danger' ? 'Error' : 'Done',
+            text: String(flashPayload.message || ''),
+            confirmButtonColor: flashPayload.type === 'danger' ? '#ff3e1d' : '#696cff'
+          });
+        }
+      })();
+    </script>
+    </body>
+  </html>
