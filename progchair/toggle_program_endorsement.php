@@ -92,29 +92,20 @@ $globalCutoffEnabled = (bool) ($globalCutoffState['enabled'] ?? false);
 $globalCutoffValue = isset($globalCutoffState['value']) ? (int) $globalCutoffState['value'] : null;
 $effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalCutoffEnabled, $globalCutoffValue);
 
-$quotaEnabled = false;
-$regularSlots = null;
-if (
-    $program['absorptive_capacity'] !== null &&
-    $program['regular_percentage'] !== null &&
-    $program['etg_percentage'] !== null
-) {
-    $absorptiveCapacity = max(0, (int) $program['absorptive_capacity']);
-    $regularPercentage = round((float) $program['regular_percentage'], 2);
-    $etgPercentage = round((float) $program['etg_percentage'], 2);
-    $baseCapacity = max(0, $absorptiveCapacity - $endorsementCapacity);
-
-    if (
-        $regularPercentage >= 0 &&
-        $regularPercentage <= 100 &&
-        $etgPercentage >= 0 &&
-        $etgPercentage <= 100 &&
-        abs(($regularPercentage + $etgPercentage) - 100) <= 0.01
-    ) {
-        $quotaEnabled = true;
-        $regularSlots = max(0, (int) round($baseCapacity * ($regularPercentage / 100)));
-    }
+$rankingPayload = program_ranking_fetch_payload($conn, $programId, $campusId);
+if (!($rankingPayload['success'] ?? false)) {
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'message' => (string) ($rankingPayload['message'] ?? 'Failed to load ranking state.')
+    ]);
+    exit;
 }
+
+$quota = is_array($rankingPayload['quota'] ?? null) ? $rankingPayload['quota'] : [];
+$quotaEnabled = (($quota['enabled'] ?? false) === true);
+$regularSlots = isset($quota['regular_slots']) ? max(0, (int) $quota['regular_slots']) : null;
+$currentEndorsed = max(0, (int) ($quota['endorsement_selected'] ?? 0));
 
 // Validate interview row belongs to selected program ranking pool and is scored.
 $studentSql = "
@@ -185,26 +176,6 @@ if ($action === 'ADD') {
         exit;
     }
     $satScore = (int) ($student['sat_score'] ?? 0);
-
-    $countSql = "
-        SELECT COUNT(*) AS total
-        FROM tbl_program_endorsements
-        WHERE program_id = ?
-    ";
-    $stmtCount = $conn->prepare($countSql);
-    if (!$stmtCount) {
-        http_response_code(500);
-        echo json_encode([
-            'success' => false,
-            'message' => 'Server error (endorsement count).'
-        ]);
-        exit;
-    }
-
-    $stmtCount->bind_param("i", $programId);
-    $stmtCount->execute();
-    $currentEndorsed = (int) (($stmtCount->get_result()->fetch_assoc()['total'] ?? 0));
-    $stmtCount->close();
 
     // If already endorsed, keep idempotent success.
     $existsSql = "

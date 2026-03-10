@@ -9,6 +9,7 @@
 
 require_once '../config/db.php';
 require_once '../config/system_controls.php';
+require_once '../config/program_ranking_lock.php';
 require_once 'endorsement_helpers.php';
 session_start();
 
@@ -94,45 +95,21 @@ $globalCutoffEnabled = (bool) ($globalCutoffState['enabled'] ?? false);
 $globalCutoffValue = isset($globalCutoffState['value']) ? (int) $globalCutoffState['value'] : null;
 $effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalCutoffEnabled, $globalCutoffValue);
 
-$endorsementCapacity = max(0, (int) ($program['endorsement_capacity'] ?? 0));
-$quotaEnabled = false;
-$regularSlots = null;
-$currentEndorsedCount = 0;
-
-$countSql = "
-    SELECT COUNT(*) AS total
-    FROM tbl_program_endorsements
-    WHERE program_id = ?
-";
-$stmtCount = $conn->prepare($countSql);
-if ($stmtCount) {
-    $stmtCount->bind_param('i', $programId);
-    $stmtCount->execute();
-    $currentEndorsedCount = (int) (($stmtCount->get_result()->fetch_assoc()['total'] ?? 0));
-    $stmtCount->close();
+$rankingPayload = program_ranking_fetch_payload($conn, $programId, $campusId);
+if (!($rankingPayload['success'] ?? false)) {
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'message' => (string) ($rankingPayload['message'] ?? 'Failed to load ranking state.')
+    ]);
+    exit;
 }
 
-if (
-    $program['absorptive_capacity'] !== null &&
-    $program['regular_percentage'] !== null &&
-    $program['etg_percentage'] !== null
-) {
-    $absorptiveCapacity = max(0, (int) $program['absorptive_capacity']);
-    $regularPercentage = round((float) $program['regular_percentage'], 2);
-    $etgPercentage = round((float) $program['etg_percentage'], 2);
-    $baseCapacity = max(0, $absorptiveCapacity - $endorsementCapacity);
-
-    if (
-        $regularPercentage >= 0 &&
-        $regularPercentage <= 100 &&
-        $etgPercentage >= 0 &&
-        $etgPercentage <= 100 &&
-        abs(($regularPercentage + $etgPercentage) - 100) <= 0.01
-    ) {
-        $quotaEnabled = true;
-        $regularSlots = max(0, (int) round($baseCapacity * ($regularPercentage / 100)));
-    }
-}
+$quota = is_array($rankingPayload['quota'] ?? null) ? $rankingPayload['quota'] : [];
+$endorsementCapacity = max(0, (int) ($quota['endorsement_capacity'] ?? 0));
+$quotaEnabled = (($quota['enabled'] ?? false) === true);
+$regularSlots = isset($quota['regular_slots']) ? max(0, (int) $quota['regular_slots']) : null;
+$currentEndorsedCount = max(0, (int) ($quota['endorsement_selected'] ?? 0));
 
 $excludeInterviewIds = [];
 

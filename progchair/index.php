@@ -489,11 +489,11 @@ if ($activeBatchId) {
 .ranking-list-header,
 .ranking-list-row {
   display: grid;
-  grid-template-columns: 52px 96px minmax(220px, 2.2fr) 72px 62px 74px;
+  grid-template-columns: 58px 70px 110px minmax(260px, 1fr) 80px 80px 100px;
   gap: 0.65rem;
   align-items: center;
   padding: 0.18rem 0;
-  min-width: 620px;
+  min-width: 760px;
 }
 
 .ranking-list-header {
@@ -650,11 +650,11 @@ if ($activeBatchId) {
 
   .ranking-list-header,
   .ranking-list-row {
-    grid-template-columns: 42px 78px minmax(120px, 1.6fr) 64px 52px 62px;
+    grid-template-columns: 52px 64px 92px minmax(160px, 1.4fr) 72px 60px 72px;
     gap: 0.45rem;
     padding: 0.14rem 0;
     font-size: 0.8rem;
-    min-width: 560px;
+    min-width: 720px;
   }
 
   .program-ranking-right-col {
@@ -924,11 +924,11 @@ if ($activeBatchId) {
         </div>
 
         <div class="d-none" id="programRankingTableWrap">
-          <div class="small text-muted mb-3">
-            <span class="fw-semibold text-danger">Red rows</span> are outside capacity but still shown in the list.
+          <div class="small text-muted mb-2">
+            <span class="fw-semibold">No.</span> follows Monitoring lock order. <span class="fw-semibold">Rank</span> keeps the academic rank order.
           </div>
-          <div class="d-flex justify-content-between align-items-center mb-2">
-            <h6 class="mb-0 text-uppercase fw-bold text-primary">Ranking List</h6>
+          <div class="small text-muted mb-2">
+            <span class="fw-semibold text-danger">Red rows</span> are outside capacity but still shown in the list.
           </div>
           <div id="programRankingRegularList" class="ranking-list"></div>
         </div>
@@ -1823,6 +1823,31 @@ function escapeHtml(value) {
     .replace(/'/g, '&#039;');
 }
 
+function getProgramRankingSwalOptions(options = {}) {
+  const mergedOptions = { ...(options || {}) };
+  const originalDidOpen = mergedOptions.didOpen;
+
+  if (!mergedOptions.target) {
+    mergedOptions.target = programRankingModalEl || document.body;
+  }
+
+  mergedOptions.didOpen = (...args) => {
+    const swalContainer = Swal.getContainer();
+    if (swalContainer) {
+      swalContainer.style.zIndex = '20000';
+    }
+    if (typeof originalDidOpen === 'function') {
+      originalDidOpen(...args);
+    }
+  };
+
+  return mergedOptions;
+}
+
+function fireProgramRankingSwal(title, text, icon) {
+  return Swal.fire(getProgramRankingSwalOptions({ title, text, icon }));
+}
+
 function getRowSection(row) {
   const raw = String(row?.row_section || '').toLowerCase();
   if (raw === 'scc' || raw === 'etg' || raw === 'regular') {
@@ -1834,7 +1859,8 @@ function getRowSection(row) {
   return String(row?.classification || '').toUpperCase() === 'REGULAR' ? 'regular' : 'etg';
 }
 
-function buildRankingRowHtml(row, rankDisplay) {
+function buildRankingRowHtml(row, sequenceDisplay, rankDisplay, options = {}) {
+  const showLockPill = options.showLockPill !== false;
   const section = getRowSection(row);
   const isOutsideCapacity = Boolean(row?.is_outside_capacity);
   const sectionClass = section === 'scc'
@@ -1850,7 +1876,7 @@ function buildRankingRowHtml(row, rankDisplay) {
   const classificationText = section === 'scc'
     ? 'SCC'
     : (section === 'etg' ? 'ETG' : 'R');
-  const lockPill = Boolean(row?.is_locked)
+  const lockPill = showLockPill && Boolean(row?.is_locked)
     ? `
         <span class="ranking-lock-pill" title="Locked" aria-label="Locked">
           <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -1862,7 +1888,8 @@ function buildRankingRowHtml(row, rankDisplay) {
 
   return `
     <div class="ranking-list-row ${rowClass}">
-      <div class="ranking-col-rank"><span class="fw-semibold">${rankDisplay}</span>${lockPill}</div>
+      <div class="ranking-col-no"><span class="fw-semibold">${sequenceDisplay}</span>${lockPill}</div>
+      <div class="ranking-col-rank"><span class="fw-semibold">${rankDisplay}</span></div>
       <div class="ranking-col-examinee">${escapeHtml(row.examinee_number || '')}</div>
       <div class="ranking-col-name">${escapeHtml(row.full_name || '')}</div>
       <div class="ranking-col-class">${escapeHtml(classificationText)}</div>
@@ -1875,6 +1902,7 @@ function buildRankingRowHtml(row, rankDisplay) {
 function buildRankingListHeaderHtml() {
   return `
     <div class="ranking-list-header">
+      <div>No.</div>
       <div>Rank</div>
       <div>Examinee #</div>
       <div>Student Name</div>
@@ -1928,8 +1956,9 @@ function renderRankingRows(rows) {
       grouped.regularCount++;
     }
 
+    const sequenceDisplay = Number(row?.sequence_no ?? 0) > 0 ? Number(row.sequence_no) : (index + 1);
     const rankDisplay = Number(row?.rank ?? 0) > 0 ? Number(row.rank) : (index + 1);
-    html += buildRankingRowHtml(row, rankDisplay);
+    html += buildRankingRowHtml(row, sequenceDisplay, rankDisplay);
   });
 
   programRankingRegularList.innerHTML = html;
@@ -1990,7 +2019,7 @@ function toggleEndorsement(interviewId, action) {
 function openAddEcPicker(sourceType) {
   const targetType = String(sourceType || '').toUpperCase();
   if (targetType !== 'REGULAR') {
-    Swal.fire('Unavailable', 'Only Regular students can be added to SCC from this action.', 'info');
+    fireProgramRankingSwal('Unavailable', 'Only Regular students can be added to SCC from this action.', 'info');
     return;
   }
 
@@ -1999,18 +2028,18 @@ function openAddEcPicker(sourceType) {
   const ecRemaining = Math.max(0, ecCapacity - ecSelected);
 
   if (ecCapacity <= 0) {
-    Swal.fire('SCC Capacity', 'SCC capacity is 0. Configure SCC capacity first.', 'info');
+    fireProgramRankingSwal('SCC Capacity', 'SCC capacity is 0. Configure SCC capacity first.', 'info');
     return;
   }
 
   if (ecRemaining <= 0) {
-    Swal.fire('SCC Full', 'SCC capacity is full.', 'info');
+    fireProgramRankingSwal('SCC Full', 'SCC capacity is full.', 'info');
     return;
   }
 
   let pickerSelect = null;
 
-  Swal.fire({
+  Swal.fire(getProgramRankingSwalOptions({
     title: 'Add SCC (Regular)',
     html: `
       <div class="scc-picker-wrap">
@@ -2025,13 +2054,7 @@ function openAddEcPicker(sourceType) {
     confirmButtonText: 'Add SCC',
     cancelButtonText: 'Cancel',
     focusConfirm: false,
-    target: programRankingModalEl || document.body,
     didOpen: () => {
-      const swalContainer = Swal.getContainer();
-      if (swalContainer) {
-        swalContainer.style.zIndex = '20000';
-      }
-
       const selectEl = document.getElementById('sccRegularPicker');
       if (!selectEl || typeof $ === 'undefined' || !$.fn || !$.fn.select2) {
         return;
@@ -2091,7 +2114,7 @@ function openAddEcPicker(sourceType) {
       }
       return interviewId;
     }
-  }).then((result) => {
+  })).then((result) => {
     if (!result.isConfirmed || !result.value) return;
 
     const interviewId = Number(result.value || 0);
@@ -2099,11 +2122,11 @@ function openAddEcPicker(sourceType) {
 
     toggleEndorsement(interviewId, 'ADD')
       .then((data) => {
-        Swal.fire('Added', data.message || 'Student added to SCC list.', 'success');
+        fireProgramRankingSwal('Added', data.message || 'Student added to SCC list.', 'success');
         loadProgramRanking(currentRankingProgramId, currentRankingProgramName);
       })
       .catch((err) => {
-        Swal.fire('Error', err.message || 'Failed to add SCC.', 'error');
+        fireProgramRankingSwal('Error', err.message || 'Failed to add SCC.', 'error');
       });
   });
 }
@@ -2208,13 +2231,13 @@ if (printRankingBtn) {
     }
 
     if (!currentRankingRows.length) {
-      Swal.fire('No Data', 'No ranked students to print.', 'info');
+      fireProgramRankingSwal('No Data', 'No ranked students to print.', 'info');
       return;
     }
 
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
-      Swal.fire('Blocked', 'Please allow pop-ups to print ranking.', 'warning');
+      fireProgramRankingSwal('Blocked', 'Please allow pop-ups to print ranking.', 'warning');
       return;
     }
 
@@ -2240,7 +2263,7 @@ if (printRankingBtn) {
           .ranking-list { border: none; background: transparent; }
           .ranking-list-header, .ranking-list-row {
             display: grid;
-            grid-template-columns: 52px 96px minmax(220px, 2.2fr) 72px 62px 74px;
+            grid-template-columns: 58px 70px 110px minmax(260px, 1fr) 80px 80px 100px;
             gap: 10px;
             align-items: center;
             padding: 3px 0;
