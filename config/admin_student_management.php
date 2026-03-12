@@ -2,6 +2,7 @@
 require_once __DIR__ . '/env.php';
 require_once __DIR__ . '/program_assignments.php';
 require_once __DIR__ . '/program_ranking_lock.php';
+require_once __DIR__ . '/student_preregistration.php';
 require_once __DIR__ . '/student_credentials.php';
 
 if (!defined('BASE_URL')) {
@@ -552,6 +553,13 @@ if (!function_exists('admin_student_management_execute_direct_transfer')) {
             ];
         }
 
+        if (student_preregistration_has_submitted_interview($conn, $interviewId) === true) {
+            return [
+                'success' => false,
+                'message' => 'This student already submitted pre-registration and cannot be transferred.',
+            ];
+        }
+
         $fromProgramId = (int) ($student['current_program_id'] ?? 0);
         if ($fromProgramId <= 0) {
             return [
@@ -589,23 +597,6 @@ if (!function_exists('admin_student_management_execute_direct_transfer')) {
             return [
                 'success' => false,
                 'message' => 'Destination program campus is invalid.',
-            ];
-        }
-
-        $programCutoff = $targetProgram['cutoff_score'] !== null
-            ? (int) $targetProgram['cutoff_score']
-            : null;
-        $globalSatCutoffState = get_global_sat_cutoff_state($conn);
-        $effectiveCutoff = get_effective_sat_cutoff(
-            $programCutoff,
-            (bool) ($globalSatCutoffState['enabled'] ?? false),
-            isset($globalSatCutoffState['value']) ? (int) ($globalSatCutoffState['value']) : null
-        );
-        $studentSatScore = (int) ($student['sat_score'] ?? 0);
-        if ($effectiveCutoff !== null && $studentSatScore < $effectiveCutoff) {
-            return [
-                'success' => false,
-                'message' => 'Student SAT score is below the effective cutoff for the destination program.',
             ];
         }
 

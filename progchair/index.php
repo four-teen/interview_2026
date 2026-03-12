@@ -1384,6 +1384,10 @@ document.addEventListener("DOMContentLoaded", function () {
     Swal.fire('Rank Locked', 'Selected interview is locked in ranking and cannot be modified.', 'warning');
   }
 
+  if (statusMsg === 'prereg_locked') {
+    Swal.fire('Pre-Registration Submitted', 'Selected interview already has submitted pre-registration and cannot be modified.', 'warning');
+  }
+
   if (navbarSearchInput) {
     navbarSearchInput.placeholder = 'Search by name or examinee number...';
     navbarSearchInput.setAttribute('aria-label', 'Search by name or examinee number...');

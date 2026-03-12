@@ -1,6 +1,7 @@
 <?php
 require_once '../config/db.php';
 require_once '../config/program_ranking_lock.php';
+require_once '../config/student_preregistration.php';
 session_start();
 
 if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'progchair') {
@@ -42,6 +43,11 @@ if (!$transfer) {
 
 if (program_ranking_is_interview_locked($conn, (int) ($transfer['interview_id'] ?? 0))) {
     header('Location: pending_transfers.php?msg=rank_locked');
+    exit;
+}
+
+if (student_preregistration_has_submitted_interview($conn, (int) ($transfer['interview_id'] ?? 0)) === true) {
+    header('Location: pending_transfers.php?msg=prereg_locked');
     exit;
 }
 

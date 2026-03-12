@@ -114,6 +114,12 @@ $result = $stmt->get_result();
     </div>
 <?php endif; ?>
 
+<?php if (isset($_GET['msg']) && $_GET['msg'] === 'prereg_locked'): ?>
+    <div class="alert alert-warning">
+        This transfer cannot be processed because the student already submitted pre-registration.
+    </div>
+<?php endif; ?>
+
 <?php if ($result->num_rows === 0): ?>
     <div class="alert alert-success">
         No pending transfers for your program.

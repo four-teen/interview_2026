@@ -25,11 +25,17 @@ $workspaceUrl = admin_student_management_normalize_return_url(
     ]),
     rtrim(BASE_URL, '/') . '/administrator/student_workspace.php'
 );
+$manageUrl = '';
+if ((int) ($student['placement_result_id'] ?? 0) > 0) {
+    $manageUrl = 'manage_student.php?' . http_build_query([
+        'placement_result_id' => (int) ($student['placement_result_id'] ?? 0),
+        'return_to' => $workspaceUrl,
+    ]);
+}
 $ratingUrl = '';
 if ((int) ($student['interview_id'] ?? 0) > 0) {
-    $ratingUrl = rtrim(BASE_URL, '/') . '/progchair/interview_scores.php?' . http_build_query([
+    $ratingUrl = rtrim(BASE_URL, '/') . '/administrator/interview_scores.php?' . http_build_query([
         'interview_id' => (int) ($student['interview_id'] ?? 0),
-        'admin_override' => '1',
         'return_to' => $workspaceUrl,
     ]);
 }
@@ -180,7 +186,7 @@ $transferButtonDisabled = ((int) ($student['interview_id'] ?? 0) <= 0);
                     <span class="text-muted fw-light">Administrator /</span> Student Workspace
                   </h4>
                   <p class="text-muted mb-0">
-                    Review the full student context, then transfer or score without changing the existing program-chair workflows.
+                    Review the full student context, then manage details, transfer, and score entirely inside the administrator module.
                   </p>
                 </div>
                 <a href="index.php" class="btn btn-outline-secondary btn-sm">
@@ -201,7 +207,7 @@ $transferButtonDisabled = ((int) ($student['interview_id'] ?? 0) <= 0);
                         value="<?= htmlspecialchars($lookupQuery); ?>"
                         placeholder="Enter examinee number"
                       />
-                      <small class="text-muted">Use this page to pull the student record, then transfer or create ratings.</small>
+                      <small class="text-muted">Use this page to pull the student record, then manage details, transfer, or give scores.</small>
                     </div>
                     <div class="col-lg-4 d-flex gap-2">
                       <button type="submit" class="btn btn-primary">
@@ -241,6 +247,12 @@ $transferButtonDisabled = ((int) ($student['interview_id'] ?? 0) <= 0);
                           Examinee #: <?= htmlspecialchars((string) ($student['examinee_number'] ?? 'N/A')); ?>
                         </div>
                         <div class="aws-action-stack">
+                          <?php if ($manageUrl !== ''): ?>
+                            <a href="<?= htmlspecialchars($manageUrl); ?>" class="btn btn-outline-primary">
+                              <i class="bx bx-slider-alt me-1"></i>Manage Details
+                            </a>
+                          <?php endif; ?>
+
                           <?php if (!$transferButtonDisabled): ?>
                             <a href="<?= htmlspecialchars($transferUrl); ?>" class="btn btn-warning">
                               <i class="bx bx-transfer-alt me-1"></i>Transfer Student
@@ -253,11 +265,11 @@ $transferButtonDisabled = ((int) ($student['interview_id'] ?? 0) <= 0);
 
                           <?php if (!$ratingButtonDisabled): ?>
                             <a href="<?= htmlspecialchars($ratingUrl); ?>" class="btn btn-primary">
-                              <i class="bx bx-edit-alt me-1"></i>Create / Edit Ratings
+                              <i class="bx bx-edit-alt me-1"></i>Give Scores
                             </a>
                           <?php else: ?>
                             <button type="button" class="btn btn-outline-secondary" disabled>
-                              <i class="bx bx-edit-alt me-1"></i>Create / Edit Ratings
+                              <i class="bx bx-edit-alt me-1"></i>Give Scores
                             </button>
                           <?php endif; ?>
                         </div>

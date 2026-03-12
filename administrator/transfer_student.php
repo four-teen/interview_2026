@@ -24,13 +24,14 @@ $flash = admin_student_management_pop_transfer_flash();
 $csrfToken = admin_student_management_get_transfer_csrf();
 $programOptions = $student ? admin_student_management_fetch_program_options($conn, (int) ($student['current_program_id'] ?? 0)) : [];
 $isRankLocked = $student ? program_ranking_is_interview_locked($conn, (int) ($student['interview_id'] ?? 0)) : false;
+$hasSubmittedPreRegistration = $student
+    ? (student_preregistration_has_submitted_interview($conn, (int) ($student['interview_id'] ?? 0)) === true)
+    : false;
 $hasPendingTransfer = ((int) ($student['pending_transfer_count'] ?? 0) > 0);
 $canTransfer = $student
     && (int) ($student['interview_id'] ?? 0) > 0
-    && !$isRankLocked;
-$globalSatCutoffState = get_global_sat_cutoff_state($conn);
-$globalSatCutoffActive = (bool) ($globalSatCutoffState['enabled'] ?? false) && isset($globalSatCutoffState['value']);
-$globalSatCutoffValue = isset($globalSatCutoffState['value']) ? (int) ($globalSatCutoffState['value']) : null;
+    && !$isRankLocked
+    && !$hasSubmittedPreRegistration;
 $flashType = is_array($flash) ? (string) ($flash['type'] ?? '') : '';
 $flashMessage = is_array($flash) ? trim((string) ($flash['message'] ?? '')) : '';
 ?>
@@ -128,7 +129,7 @@ $flashMessage = is_array($flash) ? trim((string) ($flash['message'] ?? '')) : ''
                     <span class="text-muted fw-light">Administrator /</span> Transfer Student
                   </h4>
                   <p class="text-muted mb-0">
-                    Direct administrator transfer is applied immediately. Existing pending requests are bypassed, and if the destination has no assigned chair the record stays temporarily unassigned.
+                    Direct administrator transfer is applied immediately. Existing pending requests are bypassed, and cutoff rules are ignored in this administrator-only transaction.
                   </p>
                 </div>
                 <a href="<?= htmlspecialchars($returnTo); ?>" class="btn btn-outline-secondary btn-sm">
@@ -167,6 +168,9 @@ $flashMessage = is_array($flash) ? trim((string) ($flash['message'] ?? '')) : ''
                         <?php if ($isRankLocked): ?>
                           <span class="badge bg-label-danger">Rank Locked</span>
                         <?php endif; ?>
+                        <?php if ($hasSubmittedPreRegistration): ?>
+                          <span class="badge bg-label-success">Pre-Registered</span>
+                        <?php endif; ?>
                         <?php if ($hasPendingTransfer): ?>
                           <span class="badge bg-label-info">Pending Requests Will Be Bypassed</span>
                         <?php endif; ?>
@@ -175,11 +179,9 @@ $flashMessage = is_array($flash) ? trim((string) ($flash['message'] ?? '')) : ''
                   </div>
                 </div>
 
-                <?php if ($globalSatCutoffActive && $globalSatCutoffValue !== null): ?>
-                  <div class="alert alert-info py-2 mb-3">
-                    Global SAT cutoff override is active at <?= number_format($globalSatCutoffValue); ?>.
-                  </div>
-                <?php endif; ?>
+                <div class="alert alert-info py-2 mb-3">
+                  Administrator transfer allows all cutoff values. Program and global SAT cutoffs are not enforced on this page.
+                </div>
 
                 <?php if (!$canTransfer): ?>
                   <div class="alert alert-warning mb-4">
@@ -187,6 +189,8 @@ $flashMessage = is_array($flash) ? trim((string) ($flash['message'] ?? '')) : ''
                       Transfer is unavailable because this student does not have an active interview record.
                     <?php elseif ($isRankLocked): ?>
                       Transfer is unavailable because the student rank is already locked.
+                    <?php elseif ($hasSubmittedPreRegistration): ?>
+                      Transfer is unavailable because the student already submitted pre-registration.
                     <?php else: ?>
                       Transfer is currently unavailable for this record.
                     <?php endif; ?>
@@ -209,7 +213,7 @@ $flashMessage = is_array($flash) ? trim((string) ($flash['message'] ?? '')) : ''
                         </div>
                         <div class="col-lg-4">
                           <div class="small text-muted">
-                            All active programs can be selected for direct transfer, even if no program chair is assigned yet.
+                            All active programs can be selected for direct transfer, even if no program chair is assigned yet or the student is below the usual cutoff.
                           </div>
                         </div>
                       </div>

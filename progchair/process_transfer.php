@@ -9,6 +9,7 @@
 require_once '../config/db.php';
 require_once '../config/system_controls.php';
 require_once '../config/program_ranking_lock.php';
+require_once '../config/student_preregistration.php';
 session_start();
 
 /* ======================================================
@@ -64,6 +65,11 @@ if (!$ownerRow || (int)$ownerRow['program_chair_id'] !== $accountId) {
 
 if (program_ranking_is_interview_locked($conn, $interviewId)) {
     header('Location: index.php?msg=rank_locked');
+    exit;
+}
+
+if (student_preregistration_has_submitted_interview($conn, $interviewId) === true) {
+    header('Location: index.php?msg=prereg_locked');
     exit;
 }
 

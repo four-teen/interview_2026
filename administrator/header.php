@@ -461,8 +461,9 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
     const resultBodyEl = document.getElementById('adminExamineeSearchResults');
     const endpointUrl = <?= json_encode(rtrim(BASE_URL, '/') . '/administrator/search_examinees.php'); ?>;
     const workspaceBaseUrl = <?= json_encode(rtrim(BASE_URL, '/') . '/administrator/student_workspace.php'); ?>;
+    const manageBaseUrl = <?= json_encode(rtrim(BASE_URL, '/') . '/administrator/manage_student.php'); ?>;
     const transferBaseUrl = <?= json_encode(rtrim(BASE_URL, '/') . '/administrator/transfer_student.php'); ?>;
-    const ratingBaseUrl = <?= json_encode(rtrim(BASE_URL, '/') . '/progchair/interview_scores.php'); ?>;
+    const ratingBaseUrl = <?= json_encode(rtrim(BASE_URL, '/') . '/administrator/interview_scores.php'); ?>;
     const currentAdminUrlOverride = <?= json_encode(isset($adminCurrentPageReturnUrlOverride) ? (string) $adminCurrentPageReturnUrlOverride : ''); ?>;
     const countFormatter = new Intl.NumberFormat();
     let lastKnownTotalRecords = null;
@@ -674,11 +675,14 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
         const workspaceUrl = placementResultId > 0
           ? `${workspaceBaseUrl}?placement_result_id=${encodeURIComponent(String(placementResultId))}`
           : '';
+        const manageUrl = placementResultId > 0
+          ? `${manageBaseUrl}?placement_result_id=${encodeURIComponent(String(placementResultId))}&return_to=${encodeURIComponent(currentAdminUrl)}`
+          : '';
         const transferUrl = placementResultId > 0
           ? `${transferBaseUrl}?placement_result_id=${encodeURIComponent(String(placementResultId))}&return_to=${encodeURIComponent(currentAdminUrl)}`
           : '';
         const ratingUrl = interviewId > 0
-          ? `${ratingBaseUrl}?interview_id=${encodeURIComponent(String(interviewId))}&admin_override=1&return_to=${encodeURIComponent(currentAdminUrl)}`
+          ? `${ratingBaseUrl}?interview_id=${encodeURIComponent(String(interviewId))}&return_to=${encodeURIComponent(currentAdminUrl)}`
           : '';
 
         const detailsHtml = [
@@ -716,12 +720,15 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
         const workspaceActionHtml = workspaceUrl !== ''
           ? `<a href="${escapeHtml(workspaceUrl)}" class="btn btn-sm btn-outline-secondary">Workspace</a>`
           : `<button type="button" class="btn btn-sm btn-outline-secondary" disabled>Workspace</button>`;
+        const manageActionHtml = manageUrl !== ''
+          ? `<a href="${escapeHtml(manageUrl)}" class="btn btn-sm btn-outline-info">Manage</a>`
+          : `<button type="button" class="btn btn-sm btn-outline-info" disabled>Manage</button>`;
         const transferActionHtml = transferUrl !== ''
           ? `<a href="${escapeHtml(transferUrl)}" class="btn btn-sm btn-outline-warning">Transfer</a>`
           : `<button type="button" class="btn btn-sm btn-outline-warning" disabled>Transfer</button>`;
         const ratingActionHtml = ratingUrl !== ''
-          ? `<a href="${escapeHtml(ratingUrl)}" class="btn btn-sm btn-outline-primary">Ratings</a>`
-          : `<button type="button" class="btn btn-sm btn-outline-primary" disabled>Ratings</button>`;
+          ? `<a href="${escapeHtml(ratingUrl)}" class="btn btn-sm btn-outline-primary">Scores</a>`
+          : `<button type="button" class="btn btn-sm btn-outline-primary" disabled>Scores</button>`;
 
         return `
           <article class="admin-search-card">
@@ -734,6 +741,7 @@ $adminRole = ucwords(str_replace(['_', '-'], ' ', strtolower($adminRoleRaw)));
                 <span class="admin-search-badge ${getBasisBadgeClass(row.basis_label)}">${escapeHtml(basisLabel)}</span>
                 <span class="admin-search-badge ${getStatusBadgeClass(row.status_label)}">${escapeHtml(statusLabel)}</span>
                 ${workspaceActionHtml}
+                ${manageActionHtml}
                 ${transferActionHtml}
                 ${ratingActionHtml}
                 <button

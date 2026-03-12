@@ -8,6 +8,7 @@
 
 require_once '../config/db.php';
 require_once '../config/program_ranking_lock.php';
+require_once '../config/student_preregistration.php';
 session_start();
 
 header('Content-Type: application/json');
@@ -108,6 +109,14 @@ if (program_ranking_is_interview_locked($conn, $interviewId)) {
     echo json_encode([
         'success' => false,
         'message' => 'This interview rank is locked and transfer processing is not allowed.'
+    ]);
+    exit;
+}
+
+if (student_preregistration_has_submitted_interview($conn, $interviewId) === true) {
+    echo json_encode([
+        'success' => false,
+        'message' => 'This student already submitted pre-registration and transfer processing is not allowed.'
     ]);
     exit;
 }

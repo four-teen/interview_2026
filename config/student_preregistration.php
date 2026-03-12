@@ -75,6 +75,74 @@ if (!function_exists('student_preregistration_format_program_label')) {
     }
 }
 
+if (!function_exists('student_preregistration_fetch_submitted_interview_ids')) {
+    function student_preregistration_fetch_submitted_interview_ids(mysqli $conn, array $interviewIds): ?array
+    {
+        if (!ensure_student_preregistration_storage($conn)) {
+            return null;
+        }
+
+        $normalizedIds = [];
+        foreach ($interviewIds as $interviewId) {
+            $normalizedId = (int) $interviewId;
+            if ($normalizedId > 0) {
+                $normalizedIds[$normalizedId] = $normalizedId;
+            }
+        }
+
+        if (empty($normalizedIds)) {
+            return [];
+        }
+
+        $placeholders = implode(',', array_fill(0, count($normalizedIds), '?'));
+        $sql = "
+            SELECT interview_id
+            FROM tbl_student_preregistration
+            WHERE status = 'submitted'
+              AND interview_id IN ({$placeholders})
+        ";
+
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            return null;
+        }
+
+        $params = array_values($normalizedIds);
+        $types = str_repeat('i', count($params));
+        $stmt->bind_param($types, ...$params);
+        $stmt->execute();
+
+        $submittedInterviewIds = [];
+        $result = $stmt->get_result();
+        while ($row = $result->fetch_assoc()) {
+            $submittedInterviewId = (int) ($row['interview_id'] ?? 0);
+            if ($submittedInterviewId > 0) {
+                $submittedInterviewIds[$submittedInterviewId] = true;
+            }
+        }
+        $stmt->close();
+
+        return $submittedInterviewIds;
+    }
+}
+
+if (!function_exists('student_preregistration_has_submitted_interview')) {
+    function student_preregistration_has_submitted_interview(mysqli $conn, int $interviewId): ?bool
+    {
+        $normalizedInterviewId = (int) $interviewId;
+        if ($normalizedInterviewId <= 0) {
+            return false;
+        }
+
+        $submittedInterviewIds = student_preregistration_fetch_submitted_interview_ids($conn, [$normalizedInterviewId]);
+        if ($submittedInterviewIds === null) {
+            return null;
+        }
+
+        return !empty($submittedInterviewIds[$normalizedInterviewId]);
+    }
+}
+
 if (!function_exists('student_preregistration_fetch_program_options')) {
     function student_preregistration_fetch_program_options(mysqli $conn): array
     {

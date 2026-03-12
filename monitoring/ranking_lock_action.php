@@ -4,6 +4,7 @@
  */
 
 require_once '../config/db.php';
+require_once '../config/student_preregistration.php';
 require_once 'program_ranking_monitoring_helper.php';
 session_start();
 
@@ -37,6 +38,88 @@ if ($programId <= 0) {
 }
 
 ensure_program_ranking_locks_table($conn);
+
+if (!function_exists('monitoring_ranking_normalize_interview_ids')) {
+    function monitoring_ranking_normalize_interview_ids(array $interviewIds): array
+    {
+        $normalizedIds = [];
+        foreach ($interviewIds as $interviewId) {
+            $normalizedId = (int) $interviewId;
+            if ($normalizedId > 0) {
+                $normalizedIds[$normalizedId] = $normalizedId;
+            }
+        }
+
+        return array_values($normalizedIds);
+    }
+}
+
+if (!function_exists('monitoring_ranking_split_unlockable_interview_ids')) {
+    function monitoring_ranking_split_unlockable_interview_ids(mysqli $conn, array $interviewIds): ?array
+    {
+        $candidateIds = monitoring_ranking_normalize_interview_ids($interviewIds);
+        if (empty($candidateIds)) {
+            return [
+                'unlockable_ids' => [],
+                'blocked_ids' => [],
+            ];
+        }
+
+        $submittedInterviewIds = student_preregistration_fetch_submitted_interview_ids($conn, $candidateIds);
+        if ($submittedInterviewIds === null) {
+            return null;
+        }
+
+        $unlockableIds = [];
+        $blockedIds = [];
+        foreach ($candidateIds as $candidateId) {
+            if (isset($submittedInterviewIds[$candidateId])) {
+                $blockedIds[] = $candidateId;
+                continue;
+            }
+
+            $unlockableIds[] = $candidateId;
+        }
+
+        return [
+            'unlockable_ids' => $unlockableIds,
+            'blocked_ids' => $blockedIds,
+        ];
+    }
+}
+
+if (!function_exists('monitoring_ranking_fetch_locked_interview_ids')) {
+    function monitoring_ranking_fetch_locked_interview_ids(mysqli $conn, int $programId): ?array
+    {
+        if ($programId <= 0) {
+            return [];
+        }
+
+        $stmt = $conn->prepare("
+            SELECT interview_id
+            FROM tbl_program_ranking_locks
+            WHERE program_id = ?
+        ");
+        if (!$stmt) {
+            return null;
+        }
+
+        $stmt->bind_param("i", $programId);
+        $stmt->execute();
+
+        $lockedInterviewIds = [];
+        $result = $stmt->get_result();
+        while ($row = $result->fetch_assoc()) {
+            $interviewId = (int) ($row['interview_id'] ?? 0);
+            if ($interviewId > 0) {
+                $lockedInterviewIds[$interviewId] = $interviewId;
+            }
+        }
+        $stmt->close();
+
+        return array_values($lockedInterviewIds);
+    }
+}
 
 if ($action === 'lock_range') {
     if ($startRank <= 0 || $endRank <= 0) {
@@ -233,9 +316,23 @@ if ($action === 'unlock_range') {
         }
     }
 
+    $unlockState = monitoring_ranking_split_unlockable_interview_ids($conn, array_values($interviewIds));
+    if ($unlockState === null) {
+        http_response_code(500);
+        echo json_encode([
+            'success' => false,
+            'message' => 'Failed to verify pre-registration status before unlocking.'
+        ]);
+        exit;
+    }
+
+    $unlockableInterviewIds = $unlockState['unlockable_ids'];
+    $blockedInterviewIds = $unlockState['blocked_ids'];
+    $blockedCount = count($blockedInterviewIds);
     $unlockedCount = 0;
-    if (!empty($interviewIds)) {
-        $placeholders = implode(',', array_fill(0, count($interviewIds), '?'));
+
+    if (!empty($unlockableInterviewIds)) {
+        $placeholders = implode(',', array_fill(0, count($unlockableInterviewIds), '?'));
         $sql = "
             DELETE FROM tbl_program_ranking_locks
             WHERE program_id = ?
@@ -251,7 +348,7 @@ if ($action === 'unlock_range') {
             exit;
         }
 
-        $params = array_merge([$programId], array_values($interviewIds));
+        $params = array_merge([$programId], $unlockableInterviewIds);
         $types = str_repeat('i', count($params));
         $stmt->bind_param($types, ...$params);
         $stmt->execute();
@@ -262,35 +359,104 @@ if ($action === 'unlock_range') {
     $updated = monitoring_program_ranking_fetch_payload($conn, $programId);
     $updatedLocks = is_array($updated['locks'] ?? null) ? $updated['locks'] : ['active_count' => 0, 'ranges' => []];
 
+    $success = !($unlockedCount === 0 && $blockedCount > 0);
+    if ($unlockedCount > 0 && $blockedCount > 0) {
+        $message = $unlockedCount . ' lock(s) removed. '
+            . $blockedCount . ' lock(s) kept because pre-registration is already submitted.';
+    } elseif ($blockedCount > 0) {
+        $message = $blockedCount === 1
+            ? 'This locked rank cannot be unlocked because the student already submitted pre-registration.'
+            : $blockedCount . ' locked rank(s) cannot be unlocked because the students already submitted pre-registration.';
+    } elseif ($unlockedCount > 0) {
+        $message = 'Lock range removed.';
+    } else {
+        $message = 'No locked ranks found in the selected range.';
+    }
+
     echo json_encode([
-        'success' => true,
-        'message' => 'Lock range removed.',
+        'success' => $success,
+        'message' => $message,
         'unlocked_count' => $unlockedCount,
+        'blocked_count' => $blockedCount,
         'locks' => $updatedLocks
     ]);
     exit;
 }
 
 if ($action === 'unlock_all') {
-    $stmt = $conn->prepare("DELETE FROM tbl_program_ranking_locks WHERE program_id = ?");
-    if (!$stmt) {
+    $lockedInterviewIds = monitoring_ranking_fetch_locked_interview_ids($conn, $programId);
+    if ($lockedInterviewIds === null) {
         http_response_code(500);
         echo json_encode([
             'success' => false,
-            'message' => 'Server error (unlock all).'
+            'message' => 'Server error (load locked ranks).'
         ]);
         exit;
     }
-    $stmt->bind_param("i", $programId);
-    $stmt->execute();
-    $unlockedCount = (int) $stmt->affected_rows;
-    $stmt->close();
+
+    $unlockState = monitoring_ranking_split_unlockable_interview_ids($conn, $lockedInterviewIds);
+    if ($unlockState === null) {
+        http_response_code(500);
+        echo json_encode([
+            'success' => false,
+            'message' => 'Failed to verify pre-registration status before unlocking.'
+        ]);
+        exit;
+    }
+
+    $unlockableInterviewIds = $unlockState['unlockable_ids'];
+    $blockedInterviewIds = $unlockState['blocked_ids'];
+    $blockedCount = count($blockedInterviewIds);
+    $unlockedCount = 0;
+
+    if (!empty($unlockableInterviewIds)) {
+        $placeholders = implode(',', array_fill(0, count($unlockableInterviewIds), '?'));
+        $sql = "
+            DELETE FROM tbl_program_ranking_locks
+            WHERE program_id = ?
+              AND interview_id IN ({$placeholders})
+        ";
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            http_response_code(500);
+            echo json_encode([
+                'success' => false,
+                'message' => 'Server error (unlock all).'
+            ]);
+            exit;
+        }
+
+        $params = array_merge([$programId], $unlockableInterviewIds);
+        $types = str_repeat('i', count($params));
+        $stmt->bind_param($types, ...$params);
+        $stmt->execute();
+        $unlockedCount = (int) $stmt->affected_rows;
+        $stmt->close();
+    }
+
+    $updated = monitoring_program_ranking_fetch_payload($conn, $programId);
+    $updatedLocks = is_array($updated['locks'] ?? null) ? $updated['locks'] : ['active_count' => 0, 'ranges' => []];
+
+    $success = !($unlockedCount === 0 && $blockedCount > 0);
+    if ($unlockedCount > 0 && $blockedCount > 0) {
+        $message = $unlockedCount . ' lock(s) removed. '
+            . $blockedCount . ' lock(s) kept because pre-registration is already submitted.';
+    } elseif ($blockedCount > 0) {
+        $message = $blockedCount === 1
+            ? 'This locked rank cannot be unlocked because the student already submitted pre-registration.'
+            : $blockedCount . ' locked rank(s) cannot be unlocked because the students already submitted pre-registration.';
+    } elseif ($unlockedCount > 0) {
+        $message = 'All locks removed.';
+    } else {
+        $message = 'No locked ranks found.';
+    }
 
     echo json_encode([
-        'success' => true,
-        'message' => 'All locks removed.',
+        'success' => $success,
+        'message' => $message,
         'unlocked_count' => $unlockedCount,
-        'locks' => ['active_count' => 0, 'max_locked_rank' => 0, 'ranges' => []]
+        'blocked_count' => $blockedCount,
+        'locks' => $updatedLocks
     ]);
     exit;
 }

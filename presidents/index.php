@@ -1,6 +1,7 @@
 <?php
 require_once '../config/db.php';
 require_once '../config/system_controls.php';
+require_once '../config/student_preregistration.php';
 session_start();
 
 if (!isset($_SESSION['logged_in']) || (($_SESSION['role'] ?? '') !== 'president')) {
@@ -279,6 +280,7 @@ $campusExpectedCounts = [];
 $campusExpectedAllCounts = [];
 $campusInterviewedCounts = [];
 $campusScoredCounts = [];
+$campusPreRegisteredCounts = [];
 $campusChartLabels = [];
 $campusChartFullLabels = [];
 $campusSnapshotRows = [];
@@ -307,6 +309,7 @@ foreach ($campuses as $campusRow) {
     $campusExpectedAllCounts[$campusId] = 0;
     $campusInterviewedCounts[$campusId] = 0;
     $campusScoredCounts[$campusId] = 0;
+    $campusPreRegisteredCounts[$campusId] = 0;
     $campusChartLabels[$campusId] = $campusCode !== '' ? strtoupper($campusCode) : ($campusFirstWord !== '' ? $campusFirstWord : ('Campus ' . $campusId));
     $campusChartFullLabels[$campusId] = $campusName !== '' ? $campusName : ('Campus ' . $campusId);
 }
@@ -314,6 +317,7 @@ foreach ($campuses as $campusRow) {
 $expectedInterviewsTotal = 0;
 $interviewedTotal = 0;
 $scoredTotal = 0;
+$preRegisteredTotal = 0;
 $campusesWithDemand = 0;
 $campusesWithInterviewActivity = 0;
 
@@ -395,12 +399,50 @@ if ($activeBatchId !== null) {
 
         $interviewStmt->close();
     }
+
+    if (ensure_student_preregistration_storage($conn)) {
+        $preRegisteredStmt = $conn->prepare("
+            SELECT
+                col.campus_id,
+                COUNT(*) AS preregistered_count
+            FROM tbl_student_preregistration spr
+            INNER JOIN tbl_student_interview si
+                ON si.interview_id = spr.interview_id
+               AND si.status = 'active'
+            INNER JOIN tbl_placement_results pr
+                ON pr.id = si.placement_result_id
+            INNER JOIN tbl_program p
+                ON p.program_id = spr.program_id
+            INNER JOIN tbl_college col
+                ON col.college_id = p.college_id
+            WHERE spr.status = 'submitted'
+              AND pr.upload_batch_id = ?
+            GROUP BY col.campus_id
+        ");
+        if ($preRegisteredStmt) {
+            $preRegisteredStmt->bind_param('s', $activeBatchId);
+            $preRegisteredStmt->execute();
+            $preRegisteredResult = $preRegisteredStmt->get_result();
+
+            while ($preRegisteredRow = $preRegisteredResult->fetch_assoc()) {
+                $campusId = (int) ($preRegisteredRow['campus_id'] ?? 0);
+                if ($campusId <= 0 || !isset($campusPreRegisteredCounts[$campusId])) {
+                    continue;
+                }
+
+                $campusPreRegisteredCounts[$campusId] = (int) ($preRegisteredRow['preregistered_count'] ?? 0);
+            }
+
+            $preRegisteredStmt->close();
+        }
+    }
 }
 
 $expectedSeriesData = [];
 $expectedAllSeriesData = [];
 $interviewedSeriesData = [];
 $scoredSeriesData = [];
+$preRegisteredSeriesData = [];
 foreach ($campuses as $campusRow) {
     $campusId = (int) ($campusRow['campus_id'] ?? 0);
     if ($campusId <= 0) {
@@ -411,6 +453,7 @@ foreach ($campuses as $campusRow) {
     $expectedAll = (int) ($campusExpectedAllCounts[$campusId] ?? 0);
     $interviewed = (int) ($campusInterviewedCounts[$campusId] ?? 0);
     $scored = (int) ($campusScoredCounts[$campusId] ?? 0);
+    $preRegistered = (int) ($campusPreRegisteredCounts[$campusId] ?? 0);
     $pending = max(0, $interviewed - $scored);
     $coverageRate = $expected > 0 ? round(($interviewed / $expected) * 100, 1) : null;
     $scoringRate = $interviewed > 0 ? round(($scored / $interviewed) * 100, 1) : null;
@@ -418,6 +461,7 @@ foreach ($campuses as $campusRow) {
     $expectedInterviewsTotal += $expected;
     $interviewedTotal += $interviewed;
     $scoredTotal += $scored;
+    $preRegisteredTotal += $preRegistered;
     if ($expected > 0) {
         $campusesWithDemand++;
     }
@@ -429,6 +473,7 @@ foreach ($campuses as $campusRow) {
     $expectedAllSeriesData[] = $expectedAll;
     $interviewedSeriesData[] = $interviewed;
     $scoredSeriesData[] = $scored;
+    $preRegisteredSeriesData[] = $preRegistered;
     $campusSnapshotRows[] = [
         'campus_id' => $campusId,
         'campus_code' => (string) ($campusChartLabels[$campusId] ?? ('Campus ' . $campusId)),
@@ -436,6 +481,7 @@ foreach ($campuses as $campusRow) {
         'expected' => $expected,
         'interviewed' => $interviewed,
         'scored' => $scored,
+        'pre_registered' => $preRegistered,
         'pending' => $pending,
         'coverage_rate' => $coverageRate,
         'scoring_rate' => $scoringRate
@@ -461,15 +507,21 @@ usort($campusSnapshotRows, static function (array $left, array $right): int {
 $pendingScoresTotal = max(0, $interviewedTotal - $scoredTotal);
 $coveragePercentTotal = $expectedInterviewsTotal > 0 ? round(($interviewedTotal / $expectedInterviewsTotal) * 100, 1) : null;
 $scoringPercentTotal = $interviewedTotal > 0 ? round(($scoredTotal / $interviewedTotal) * 100, 1) : null;
+$preRegisteredFromScoredPercent = $scoredTotal > 0 ? round(($preRegisteredTotal / $scoredTotal) * 100, 1) : null;
 $campusCombinedSeries = [
     ['name' => 'Expected for Interview', 'data' => $expectedSeriesData],
     ['name' => 'Interviewed', 'data' => $interviewedSeriesData],
     ['name' => 'Scored', 'data' => $scoredSeriesData],
     ['name' => 'Expected Without Cutoff', 'data' => $expectedAllSeriesData]
 ];
+$campusScoredVsPreRegisteredSeries = [
+    ['name' => 'Scored', 'data' => $scoredSeriesData],
+    ['name' => 'Pre-Registered', 'data' => $preRegisteredSeriesData]
+];
 $combinedCampusRangeLabel = $globalSatCutoffActive
     ? 'Expected for Interview respects the active global cutoff: ' . ($globalSatCutoffRangeText !== '' ? $globalSatCutoffRangeText : 'Configured cutoff') . '. Expected Without Cutoff shows mapped demand from the active batch before cutoff filtering. Interview activity is grouped by assigned first-choice campus.'
     : 'Expected for Interview and Expected Without Cutoff both use the active placement batch because no global SAT cutoff is active. Interview activity is grouped by assigned first-choice campus.';
+$preRegisteredChartSubtitle = 'Soft comparison of scored totals versus submitted pre-registration counts by campus for the active placement batch.';
 
 $leadingCampus = $campusSnapshotRows[0] ?? null;
 $leadingCampusName = $leadingCampus ? (string) ($leadingCampus['campus_name'] ?? 'Campus') : 'No campus data yet';
@@ -1012,6 +1064,15 @@ $leadingCampusLoad = $leadingCampus ? max(
                         </span>
                       </div>
                     </div>
+                    <div class="col-xl-4 col-md-6">
+                      <div class="pd-snapshot-card">
+                        <div class="pd-snapshot-label">Pre-Registered</div>
+                        <div class="pd-snapshot-value"><?= number_format($preRegisteredTotal); ?></div>
+                        <span class="pd-snapshot-hint">
+                          Compared with scored total: <?= htmlspecialchars(president_format_percent($preRegisteredFromScoredPercent)); ?>
+                        </span>
+                      </div>
+                    </div>
                   </div>
 
                   <div class="card pd-chart-card mb-4">
@@ -1019,6 +1080,14 @@ $leadingCampusLoad = $leadingCampus ? max(
                       <div class="pd-chart-title">Expected, Interviewed, and Scored by Campus</div>
                       <div class="pd-chart-subtitle mb-3"><?= htmlspecialchars($combinedCampusRangeLabel); ?></div>
                       <div id="presidentCampusCombinedChart"></div>
+                    </div>
+                  </div>
+
+                  <div class="card pd-chart-card mb-4">
+                    <div class="card-body">
+                      <div class="pd-chart-title">Scored vs Pre-Registered by Campus</div>
+                      <div class="pd-chart-subtitle mb-3"><?= htmlspecialchars($preRegisteredChartSubtitle); ?></div>
+                      <div id="presidentScoredPreRegisteredChart"></div>
                     </div>
                   </div>
                 </div>
@@ -1237,6 +1306,8 @@ $leadingCampusLoad = $leadingCampus ? max(
         const campusTooltipLabels = <?= json_encode(array_values($campusChartFullLabels)); ?>;
         const campusCombinedSeries = <?= json_encode($campusCombinedSeries); ?>;
         const campusCombinedChartEl = document.querySelector('#presidentCampusCombinedChart');
+        const campusScoredPreRegisteredSeries = <?= json_encode($campusScoredVsPreRegisteredSeries); ?>;
+        const campusScoredPreRegisteredChartEl = document.querySelector('#presidentScoredPreRegisteredChart');
         const campusStatusById = <?= json_encode($campusProgramStatus); ?>;
         const campusCardEls = document.querySelectorAll('.pd-campus-card[data-campus-id]');
         const campusStatusModalEl = document.getElementById('presidentCampusStatusModal');
@@ -1257,6 +1328,19 @@ $leadingCampusLoad = $leadingCampus ? max(
         function toNumber(value) {
           const numericValue = Number(value);
           return Number.isFinite(numericValue) ? numericValue : 0;
+        }
+
+        function campusTooltipTitle(context) {
+          const rawIndex = context && typeof context.dataPointIndex !== 'undefined'
+            ? context.dataPointIndex
+            : 0;
+          const index = Number(rawIndex);
+          return campusTooltipLabels[index] || campusCategories[index] || '';
+        }
+
+        function campusTooltipValue(value) {
+          const count = Math.round(toNumber(value));
+          return `${count.toLocaleString()} student${count === 1 ? '' : 's'}`;
         }
 
         function openCampusStatusModal(campusIdRaw) {
@@ -1413,14 +1497,12 @@ $leadingCampusLoad = $leadingCampus ? max(
                 intersect: false,
                 x: {
                   formatter: function (_, context) {
-                    const index = Number(context && context.dataPointIndex ? context.dataPointIndex : 0);
-                    return campusTooltipLabels[index] || campusCategories[index] || '';
+                    return campusTooltipTitle(context);
                   }
                 },
                 y: {
                   formatter: function (value) {
-                    const count = Math.round(toNumber(value));
-                    return `${count.toLocaleString()} student${count === 1 ? '' : 's'}`;
+                    return campusTooltipValue(value);
                   }
                 }
               },
@@ -1441,6 +1523,109 @@ $leadingCampusLoad = $leadingCampus ? max(
               },
               noData: {
                 text: hasCampusData ? 'Loading...' : 'No campus monitoring data available.'
+              }
+            }).render();
+          }
+        }
+
+        if (campusScoredPreRegisteredChartEl) {
+          const hasCampusComparisonData = Array.isArray(campusScoredPreRegisteredSeries)
+            && campusScoredPreRegisteredSeries.some((seriesRow) =>
+              Array.isArray(seriesRow.data) && seriesRow.data.some((value) => toNumber(value) > 0)
+            );
+
+          if (!Array.isArray(campusCategories) || campusCategories.length === 0 || !Array.isArray(campusScoredPreRegisteredSeries) || campusScoredPreRegisteredSeries.length === 0) {
+            campusScoredPreRegisteredChartEl.innerHTML = '<div class="text-muted small py-3">No scored or pre-registration data available.</div>';
+          } else {
+            new ApexCharts(campusScoredPreRegisteredChartEl, {
+              chart: {
+                type: 'area',
+                height: 300,
+                toolbar: { show: false },
+                zoom: { enabled: false }
+              },
+              series: campusScoredPreRegisteredSeries,
+              xaxis: {
+                categories: campusCategories,
+                axisBorder: { show: false },
+                axisTicks: { show: false },
+                labels: {
+                  rotate: 0,
+                  hideOverlappingLabels: false,
+                  style: {
+                    colors: '#7d8aa3',
+                    fontSize: '12px'
+                  }
+                }
+              },
+              stroke: {
+                curve: 'smooth',
+                width: 3
+              },
+              markers: {
+                size: 4,
+                strokeWidth: 0,
+                hover: {
+                  sizeOffset: 2
+                }
+              },
+              fill: {
+                type: 'gradient',
+                gradient: {
+                  shadeIntensity: 1,
+                  inverseColors: false,
+                  opacityFrom: 0.26,
+                  opacityTo: 0.04,
+                  stops: [0, 88, 100]
+                }
+              },
+              colors: ['#71dd37', '#03c3ec'],
+              dataLabels: {
+                enabled: false
+              },
+              grid: {
+                borderColor: '#eef2f7',
+                strokeDashArray: 4,
+                padding: {
+                  left: 8,
+                  right: 8
+                }
+              },
+              legend: {
+                position: 'top',
+                horizontalAlign: 'left'
+              },
+              tooltip: {
+                shared: true,
+                intersect: false,
+                x: {
+                  formatter: function (_, context) {
+                    return campusTooltipTitle(context);
+                  }
+                },
+                y: {
+                  formatter: function (value) {
+                    return campusTooltipValue(value);
+                  }
+                }
+              },
+              yaxis: {
+                min: 0,
+                forceNiceScale: true,
+                labels: {
+                  formatter: function (value) {
+                    return Math.round(toNumber(value)).toLocaleString();
+                  },
+                  style: {
+                    colors: '#7d8aa3'
+                  }
+                },
+                title: {
+                  text: 'Students'
+                }
+              },
+              noData: {
+                text: hasCampusComparisonData ? 'Loading...' : 'No scored or pre-registration data available.'
               }
             }).render();
           }

@@ -33,6 +33,12 @@ if ($credentialId <= 0) {
     exit;
 }
 
+$studentEsmPreferredProgramConditionSql = program_ranking_build_esm_preferred_program_condition_sql('pr.preferred_program');
+$studentCutoffBasisScoreSql = "CASE
+    WHEN {$studentEsmPreferredProgramConditionSql} THEN COALESCE(pr.esm_competency_standard_score, pr.sat_score, 0)
+    ELSE COALESCE(pr.overall_standard_score, pr.sat_score, 0)
+END";
+
 $sql = "
     SELECT
         sc.credential_id,
@@ -45,6 +51,7 @@ $sql = "
         pr.qualitative_text,
         pr.preferred_program,
         pr.upload_batch_id,
+        ({$studentCutoffBasisScoreSql}) AS cutoff_basis_score,
         pr.overall_standard_score,
         pr.overall_stanine,
         pr.overall_qualitative_text,
@@ -518,6 +525,215 @@ function build_reordered_program_choices($selectedProgramId, $firstChoiceId, $se
     return $ordered;
 }
 
+function student_program_ranking_compare_rows(array $left, array $right): int
+{
+    $leftFinal = (float) ($left['final_score'] ?? 0);
+    $rightFinal = (float) ($right['final_score'] ?? 0);
+    if ($leftFinal !== $rightFinal) {
+        return ($leftFinal < $rightFinal) ? 1 : -1;
+    }
+
+    $leftBasis = (float) ($left['cutoff_basis_score'] ?? 0);
+    $rightBasis = (float) ($right['cutoff_basis_score'] ?? 0);
+    if ($leftBasis !== $rightBasis) {
+        return ($leftBasis < $rightBasis) ? 1 : -1;
+    }
+
+    $nameComparison = strcasecmp((string) ($left['full_name'] ?? ''), (string) ($right['full_name'] ?? ''));
+    if ($nameComparison !== 0) {
+        return $nameComparison;
+    }
+
+    return strcmp((string) ($left['examinee_number'] ?? ''), (string) ($right['examinee_number'] ?? ''));
+}
+
+function student_program_ranking_get_projected_rank(array $rankedRows, array $candidateRow): ?int
+{
+    $candidateExaminee = trim((string) ($candidateRow['examinee_number'] ?? ''));
+    if ($candidateExaminee === '') {
+        return null;
+    }
+
+    $rows = [];
+    foreach ($rankedRows as $row) {
+        if ((string) ($row['examinee_number'] ?? '') === $candidateExaminee) {
+            continue;
+        }
+        $rows[] = $row;
+    }
+
+    $rows[] = $candidateRow;
+    usort($rows, 'student_program_ranking_compare_rows');
+
+    $rank = 1;
+    foreach ($rows as $row) {
+        if ((string) ($row['examinee_number'] ?? '') === $candidateExaminee) {
+            return $rank;
+        }
+        $rank++;
+    }
+
+    return null;
+}
+
+function student_program_ranking_build_context(mysqli $conn): array
+{
+    ensure_program_endorsement_table($conn);
+
+    $context = [
+        'rows_by_program' => [],
+        'endorsement_ids_by_program' => [],
+    ];
+
+    $esmPreferredProgramConditionSql = program_ranking_build_esm_preferred_program_condition_sql('pr.preferred_program');
+    $cutoffBasisScoreSql = "CASE
+        WHEN {$esmPreferredProgramConditionSql} THEN COALESCE(pr.esm_competency_standard_score, pr.sat_score, 0)
+        ELSE COALESCE(pr.overall_standard_score, pr.sat_score, 0)
+    END";
+
+    $rankingPoolSql = "
+        SELECT
+            COALESCE(NULLIF(si.program_id, 0), NULLIF(si.first_choice, 0)) AS program_id,
+            si.interview_id,
+            CASE
+                WHEN UPPER(COALESCE(si.classification, 'REGULAR')) = 'ETG' THEN 'ETG'
+                ELSE 'REGULAR'
+            END AS class_group,
+            si.examinee_number,
+            si.final_score,
+            ({$cutoffBasisScoreSql}) AS cutoff_basis_score,
+            pr.full_name
+        FROM tbl_student_interview si
+        INNER JOIN tbl_placement_results pr
+            ON pr.id = si.placement_result_id
+        WHERE si.status = 'active'
+          AND si.final_score IS NOT NULL
+          AND COALESCE(NULLIF(si.program_id, 0), NULLIF(si.first_choice, 0)) > 0
+    ";
+
+    if ($rankingPoolStmt = $conn->prepare($rankingPoolSql)) {
+        $rankingPoolStmt->execute();
+        $rankingPoolResult = $rankingPoolStmt->get_result();
+
+        while ($rankingRow = $rankingPoolResult->fetch_assoc()) {
+            $programId = (int) ($rankingRow['program_id'] ?? 0);
+            if ($programId <= 0) {
+                continue;
+            }
+
+            $classGroup = strtoupper(trim((string) ($rankingRow['class_group'] ?? 'REGULAR')));
+            if ($classGroup !== 'ETG') {
+                $classGroup = 'REGULAR';
+            }
+
+            if (!isset($context['rows_by_program'][$programId])) {
+                $context['rows_by_program'][$programId] = [
+                    'REGULAR' => [],
+                    'ETG' => [],
+                ];
+            }
+
+            $context['rows_by_program'][$programId][$classGroup][] = [
+                'interview_id' => (int) ($rankingRow['interview_id'] ?? 0),
+                'examinee_number' => (string) ($rankingRow['examinee_number'] ?? ''),
+                'final_score' => (float) ($rankingRow['final_score'] ?? 0),
+                'cutoff_basis_score' => (float) ($rankingRow['cutoff_basis_score'] ?? 0),
+                'full_name' => trim((string) ($rankingRow['full_name'] ?? '')),
+            ];
+        }
+
+        $rankingPoolStmt->close();
+    }
+
+    $endorsementSql = "
+        SELECT program_id, interview_id
+        FROM tbl_program_endorsements
+        ORDER BY program_id ASC, endorsed_at ASC, endorsement_id ASC
+    ";
+    $endorsementResult = $conn->query($endorsementSql);
+    if ($endorsementResult) {
+        while ($endorsementRow = $endorsementResult->fetch_assoc()) {
+            $programId = (int) ($endorsementRow['program_id'] ?? 0);
+            $interviewId = (int) ($endorsementRow['interview_id'] ?? 0);
+            if ($programId <= 0 || $interviewId <= 0) {
+                continue;
+            }
+
+            if (!isset($context['endorsement_ids_by_program'][$programId])) {
+                $context['endorsement_ids_by_program'][$programId] = [];
+            }
+
+            $context['endorsement_ids_by_program'][$programId][$interviewId] = true;
+        }
+        $endorsementResult->free();
+    }
+
+    foreach ($context['rows_by_program'] as $programId => $groupedRows) {
+        foreach (['REGULAR', 'ETG'] as $groupKey) {
+            $rows = $groupedRows[$groupKey] ?? [];
+            usort($rows, 'student_program_ranking_compare_rows');
+            $context['rows_by_program'][$programId][$groupKey] = $rows;
+        }
+    }
+
+    return $context;
+}
+
+function student_program_ranking_get_pool_state(array $context, int $programId, ?int $effectiveCutoff): array
+{
+    $programId = (int) $programId;
+    $regularRows = $context['rows_by_program'][$programId]['REGULAR'] ?? [];
+    $etgRows = $context['rows_by_program'][$programId]['ETG'] ?? [];
+    $endorsementIds = $context['endorsement_ids_by_program'][$programId] ?? [];
+
+    $passingRowsByInterviewId = [];
+    $passingRegularRows = [];
+    $passingEtgRows = [];
+
+    foreach ($regularRows as $row) {
+        if ($effectiveCutoff !== null && (float) ($row['cutoff_basis_score'] ?? 0) < $effectiveCutoff) {
+            continue;
+        }
+        $interviewId = (int) ($row['interview_id'] ?? 0);
+        if ($interviewId > 0) {
+            $passingRowsByInterviewId[$interviewId] = $row;
+        }
+        $passingRegularRows[] = $row;
+    }
+
+    foreach ($etgRows as $row) {
+        if ($effectiveCutoff !== null && (float) ($row['cutoff_basis_score'] ?? 0) < $effectiveCutoff) {
+            continue;
+        }
+        $interviewId = (int) ($row['interview_id'] ?? 0);
+        if ($interviewId > 0) {
+            $passingRowsByInterviewId[$interviewId] = $row;
+        }
+        $passingEtgRows[] = $row;
+    }
+
+    $filteredRegularRows = array_values(array_filter($passingRegularRows, static function (array $row) use ($endorsementIds): bool {
+        return !isset($endorsementIds[(int) ($row['interview_id'] ?? 0)]);
+    }));
+    $filteredEtgRows = array_values(array_filter($passingEtgRows, static function (array $row) use ($endorsementIds): bool {
+        return !isset($endorsementIds[(int) ($row['interview_id'] ?? 0)]);
+    }));
+
+    $endorsementCount = 0;
+    foreach ($endorsementIds as $interviewId => $_) {
+        if (isset($passingRowsByInterviewId[(int) $interviewId])) {
+            $endorsementCount++;
+        }
+    }
+
+    return [
+        'regular_rows' => $filteredRegularRows,
+        'etg_rows' => $filteredEtgRows,
+        'endorsement_count' => $endorsementCount,
+        'scored_total' => count($filteredRegularRows) + count($filteredEtgRows) + $endorsementCount,
+    ];
+}
+
 if (!ensure_student_profile_table($conn)) {
     http_response_code(500);
     exit('Student profile storage initialization failed.');
@@ -526,6 +742,21 @@ if (!ensure_student_profile_table($conn)) {
 if (!ensure_student_preregistration_table($conn)) {
     http_response_code(500);
     exit('Student pre-registration storage initialization failed.');
+}
+
+$globalSatCutoffState = get_global_sat_cutoff_state($conn);
+$globalSatCutoffEnabled = (bool) ($globalSatCutoffState['enabled'] ?? false);
+$globalSatCutoffValue = isset($globalSatCutoffState['value']) ? (int) $globalSatCutoffState['value'] : null;
+
+$studentRankingContext = student_program_ranking_build_context($conn);
+$studentTransferCandidateRow = null;
+if ($student['final_score'] !== null && $student['final_score'] !== '') {
+    $studentTransferCandidateRow = [
+        'examinee_number' => (string) ($student['examinee_number'] ?? ''),
+        'final_score' => (float) ($student['final_score'] ?? 0),
+        'cutoff_basis_score' => (float) ($student['cutoff_basis_score'] ?? 0),
+        'full_name' => trim((string) ($student['full_name'] ?? '')),
+    ];
 }
 
 $studentProfile = [
@@ -816,11 +1047,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['profile_lookup'])) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') === 'student_profile_save') {
     $flashType = 'danger';
     $flashMessage = 'Profile update failed.';
+    $hasSubmittedPreRegistration = is_array($studentPreRegistration)
+        && !empty($studentPreRegistration['preregistration_id'])
+        && strtolower(trim((string) ($studentPreRegistration['status'] ?? 'submitted'))) === 'submitted';
 
     $postedCsrf = (string) ($_POST['csrf_token'] ?? '');
     $sessionCsrf = (string) ($_SESSION['student_profile_csrf'] ?? '');
     if ($postedCsrf === '' || $sessionCsrf === '' || !hash_equals($sessionCsrf, $postedCsrf)) {
         $flashMessage = 'Invalid profile security token. Refresh the page and try again.';
+    } elseif ($hasSubmittedPreRegistration) {
+        $flashMessage = 'Profile updates are no longer available after pre-registration is submitted.';
     } else {
         $birthDate = trim((string) ($_POST['birth_date'] ?? ''));
         $sex = normalize_profile_text($_POST['sex'] ?? '', 10);
@@ -1363,6 +1599,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') =
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') === 'student_transfer_submit') {
     $flashType = 'danger';
     $flashMessage = 'Transfer request failed.';
+    $hasSubmittedPreRegistration = is_array($studentPreRegistration)
+        && !empty($studentPreRegistration['preregistration_id'])
+        && strtolower(trim((string) ($studentPreRegistration['status'] ?? 'submitted'))) === 'submitted';
 
     $postedCsrf = (string) ($_POST['csrf_token'] ?? '');
     $sessionCsrf = (string) ($_SESSION['student_transfer_csrf'] ?? '');
@@ -1371,18 +1610,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') =
     $transferReasonWords = count_reason_words($transferReason);
     $interviewId = (int) ($student['interview_id'] ?? 0);
     $currentFirstChoiceId = (int) ($student['first_choice'] ?? 0);
-    $studentSatScoreForTransfer = null;
     $studentClassGroupForTransfer = (strtoupper(trim((string) ($student['classification'] ?? 'REGULAR'))) === 'ETG')
         ? 'ETG'
         : 'REGULAR';
-    if (isset($student['sat_score']) && $student['sat_score'] !== '' && $student['sat_score'] !== null) {
-        $studentSatScoreForTransfer = (float) $student['sat_score'];
-    }
 
     if ($postedCsrf === '' || $sessionCsrf === '' || !hash_equals($sessionCsrf, $postedCsrf)) {
         $flashMessage = 'Invalid security token. Refresh the page and try again.';
     } elseif ($interviewId <= 0) {
         $flashMessage = 'Interview record is missing. Transfer cannot be processed.';
+    } elseif ($hasSubmittedPreRegistration) {
+        $flashMessage = 'Transfers are no longer available because your pre-registration has already been submitted.';
     } elseif (program_ranking_is_interview_locked($conn, $interviewId)) {
         $flashMessage = 'Transfers are no longer available because your current rank is locked.';
     } elseif ($targetProgramId <= 0) {
@@ -1451,7 +1688,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') =
             $targetCapacity = ($targetProgram['absorptive_capacity'] !== null && $targetProgram['absorptive_capacity'] !== '')
                 ? max(0, (int) $targetProgram['absorptive_capacity'])
                 : null;
-            $targetScored = max(0, (int) ($targetProgram['scored_students'] ?? 0));
+            $targetRawCutoff = ($targetProgram['cutoff_score'] !== null && $targetProgram['cutoff_score'] !== '')
+                ? (int) $targetProgram['cutoff_score']
+                : null;
+            $targetEffectiveCutoff = get_effective_sat_cutoff($targetRawCutoff, $globalSatCutoffEnabled, $globalSatCutoffValue);
+            $targetPoolState = student_program_ranking_get_pool_state($studentRankingContext, $targetProgramId, $targetEffectiveCutoff);
+            $targetScored = max(0, (int) ($targetPoolState['scored_total'] ?? 0));
             $targetRegularPercentage = ($targetProgram['regular_percentage'] !== null && $targetProgram['regular_percentage'] !== '')
                 ? round((float) $targetProgram['regular_percentage'], 2)
                 : null;
@@ -1481,25 +1723,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') =
                 $targetQuotaConfigured = true;
             }
 
-            $targetClassScored = 0;
-            if ($targetProgramId > 0) {
-                $targetClassSql = "
-                    SELECT COUNT(*) AS class_scored
-                    FROM tbl_student_interview
-                    WHERE status = 'active'
-                      AND final_score IS NOT NULL
-                      AND first_choice = ?
-                      AND UPPER(COALESCE(classification, 'REGULAR')) = ?
-                ";
-                $targetClassStmt = $conn->prepare($targetClassSql);
-                if ($targetClassStmt) {
-                    $targetClassStmt->bind_param('is', $targetProgramId, $studentClassGroupForTransfer);
-                    $targetClassStmt->execute();
-                    $targetClassRow = $targetClassStmt->get_result()->fetch_assoc();
-                    $targetClassScored = max(0, (int) ($targetClassRow['class_scored'] ?? 0));
-                    $targetClassStmt->close();
-                }
-            }
+            $targetClassRows = ($studentClassGroupForTransfer === 'ETG')
+                ? (array) ($targetPoolState['etg_rows'] ?? [])
+                : (array) ($targetPoolState['regular_rows'] ?? []);
+            $targetClassScored = count($targetClassRows);
 
             if ($targetCapacity !== null) {
                 if ($targetQuotaConfigured && $targetSlotLimit !== null) {
@@ -1510,18 +1737,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') =
             } else {
                 $targetAvailable = 0;
             }
-            $targetCutoff = ($targetProgram['cutoff_score'] !== null && $targetProgram['cutoff_score'] !== '')
-                ? (int) $targetProgram['cutoff_score']
+            $targetProjectedRank = ($studentTransferCandidateRow !== null)
+                ? student_program_ranking_get_projected_rank($targetClassRows, $studentTransferCandidateRow)
                 : null;
-            $targetOpen = ($targetCapacity !== null && $targetAvailable > 0);
-            $targetSatQualified = ($targetCutoff !== null && $studentSatScoreForTransfer !== null)
-                ? ($studentSatScoreForTransfer >= $targetCutoff)
+            $targetSatQualified = ($targetEffectiveCutoff !== null && $studentTransferCandidateRow !== null)
+                ? ((float) ($studentTransferCandidateRow['cutoff_basis_score'] ?? 0) >= $targetEffectiveCutoff)
                 : false;
+            $targetRankQualified = false;
+            if ($targetQuotaConfigured && $targetSlotLimit !== null) {
+                $targetRankQualified = ($targetProjectedRank !== null && $targetProjectedRank <= $targetSlotLimit);
+            } elseif ($targetCapacity !== null) {
+                $targetRankQualified = ($targetAvailable > 0);
+            }
 
-            if (!$targetOpen) {
-                $flashMessage = 'Selected program has no available slots.';
+            if ($studentTransferCandidateRow === null) {
+                $flashMessage = 'Final interview score is required before requesting a transfer.';
+            } elseif ($targetCapacity === null) {
+                $flashMessage = 'Selected program capacity is not configured.';
+            } elseif ($targetEffectiveCutoff === null) {
+                $flashMessage = 'Selected program cutoff is not configured.';
             } elseif (!$targetSatQualified) {
-                $flashMessage = 'Your SAT score does not meet the selected program cutoff.';
+                $flashMessage = 'Your score does not meet the selected program cutoff.';
+            } elseif (!$targetRankQualified) {
+                $flashMessage = $targetQuotaConfigured
+                    ? 'Your projected rank is outside the qualified pool for the selected program.'
+                    : 'Selected program has no available slots.';
             } else {
                 $conn->begin_transaction();
 
@@ -2057,121 +2297,9 @@ $logsActionSub = $studentRankLocked
     ? 'Unavailable while pre-registration is active'
     : ($isAdminStudentPreview ? 'Disabled during administrator preview' : 'Feature coming soon');
 
-$studentSatScore = null;
-if (isset($student['sat_score']) && $student['sat_score'] !== '' && $student['sat_score'] !== null) {
-    $studentSatScore = (float) $student['sat_score'];
-}
-$studentFinalScoreValue = $hasScoredInterview ? (float) $finalScore : null;
-$programRankingPools = [];
-$rankingPoolSql = "
-    SELECT
-        si.first_choice AS program_id,
-        CASE
-            WHEN UPPER(COALESCE(si.classification, 'REGULAR')) = 'ETG' THEN 'ETG'
-            ELSE 'REGULAR'
-        END AS class_group,
-        si.examinee_number,
-        si.final_score,
-        pr.sat_score,
-        pr.full_name
-    FROM tbl_student_interview si
-    INNER JOIN tbl_placement_results pr
-        ON pr.id = si.placement_result_id
-    WHERE si.status = 'active'
-      AND si.final_score IS NOT NULL
-      AND si.first_choice IS NOT NULL
-      AND si.first_choice > 0
-";
-
-if ($rankingPoolStmt = $conn->prepare($rankingPoolSql)) {
-    $rankingPoolStmt->execute();
-    $rankingPoolResult = $rankingPoolStmt->get_result();
-
-    while ($rankingRow = $rankingPoolResult->fetch_assoc()) {
-        $programId = (int) ($rankingRow['program_id'] ?? 0);
-        if ($programId <= 0) {
-            continue;
-        }
-
-        $classGroup = strtoupper(trim((string) ($rankingRow['class_group'] ?? 'REGULAR')));
-        if ($classGroup !== 'ETG') {
-            $classGroup = 'REGULAR';
-        }
-
-        if (!isset($programRankingPools[$programId])) {
-            $programRankingPools[$programId] = [
-                'REGULAR' => [],
-                'ETG' => [],
-            ];
-        }
-
-        $programRankingPools[$programId][$classGroup][] = [
-            'examinee_number' => (string) ($rankingRow['examinee_number'] ?? ''),
-            'final_score' => (float) ($rankingRow['final_score'] ?? 0),
-            'sat_score' => (float) ($rankingRow['sat_score'] ?? 0),
-            'full_name' => trim((string) ($rankingRow['full_name'] ?? '')),
-        ];
-    }
-
-    $rankingPoolStmt->close();
-}
-
-$rankingComparator = function (array $left, array $right): int {
-    $leftFinal = (float) ($left['final_score'] ?? 0);
-    $rightFinal = (float) ($right['final_score'] ?? 0);
-    if ($leftFinal !== $rightFinal) {
-        return ($leftFinal < $rightFinal) ? 1 : -1;
-    }
-
-    $leftSat = (float) ($left['sat_score'] ?? 0);
-    $rightSat = (float) ($right['sat_score'] ?? 0);
-    if ($leftSat !== $rightSat) {
-        return ($leftSat < $rightSat) ? 1 : -1;
-    }
-
-    $nameComparison = strcasecmp((string) ($left['full_name'] ?? ''), (string) ($right['full_name'] ?? ''));
-    if ($nameComparison !== 0) {
-        return $nameComparison;
-    }
-
-    return strcmp((string) ($left['examinee_number'] ?? ''), (string) ($right['examinee_number'] ?? ''));
-};
-
-foreach ($programRankingPools as $programId => $groupedRows) {
-    foreach (['REGULAR', 'ETG'] as $groupKey) {
-        $rows = $groupedRows[$groupKey] ?? [];
-        usort($rows, $rankingComparator);
-        $programRankingPools[$programId][$groupKey] = $rows;
-    }
-}
-
-$getProjectedRank = function (array $rankedRows, array $candidateRow) use ($rankingComparator): ?int {
-    $candidateExaminee = (string) ($candidateRow['examinee_number'] ?? '');
-    if ($candidateExaminee === '') {
-        return null;
-    }
-
-    $rows = [];
-    foreach ($rankedRows as $row) {
-        if ((string) ($row['examinee_number'] ?? '') === $candidateExaminee) {
-            continue;
-        }
-        $rows[] = $row;
-    }
-
-    $rows[] = $candidateRow;
-    usort($rows, $rankingComparator);
-
-    $rank = 1;
-    foreach ($rows as $row) {
-        if ((string) ($row['examinee_number'] ?? '') === $candidateExaminee) {
-            return $rank;
-        }
-        $rank++;
-    }
-
-    return null;
-};
+$studentCutoffBasisScore = ($student['cutoff_basis_score'] !== null && $student['cutoff_basis_score'] !== '')
+    ? (float) $student['cutoff_basis_score']
+    : null;
 
 $allPrograms = [];
 $allProgramsSql = "
@@ -2237,9 +2365,14 @@ if ($allProgramsStmt = $conn->prepare($allProgramsSql)) {
             ? round((float) $programRow['etg_percentage'], 2)
             : null;
 
-        $scoredStudents = max(0, (int) ($programRow['scored_students'] ?? 0));
+        $effectiveCutoff = get_effective_sat_cutoff($cutoffScore, $globalSatCutoffEnabled, $globalSatCutoffValue);
+        $poolState = student_program_ranking_get_pool_state($studentRankingContext, $programId, $effectiveCutoff);
+        $scoredStudents = max(0, (int) ($poolState['scored_total'] ?? 0));
         $endorsementCapacity = max(0, (int) ($programRow['endorsement_capacity'] ?? 0));
-        $classScoredCount = count($programRankingPools[$programId][$studentClassGroup] ?? []);
+        $classRows = ($studentClassGroup === 'ETG')
+            ? (array) ($poolState['etg_rows'] ?? [])
+            : (array) ($poolState['regular_rows'] ?? []);
+        $classScoredCount = count($classRows);
         $availableSlots = null;
 
         $quotaConfigured = false;
@@ -2275,33 +2408,49 @@ if ($allProgramsStmt = $conn->prepare($allProgramsSql)) {
         }
 
         $studentProjectedRank = null;
-        if ($hasScoredInterview && $studentFinalScoreValue !== null && $programId > 0) {
-            $rankingPool = $programRankingPools[$programId][$studentClassGroup] ?? [];
-            $studentProjectedRank = $getProjectedRank($rankingPool, [
-                'examinee_number' => $currentExaminee,
-                'final_score' => $studentFinalScoreValue,
-                'sat_score' => (float) ($studentSatScore ?? 0),
-                'full_name' => $studentName,
-            ]);
+        if ($studentTransferCandidateRow !== null && $programId > 0) {
+            $studentProjectedRank = student_program_ranking_get_projected_rank($classRows, $studentTransferCandidateRow);
         }
 
+        $canEvaluateSatQualification = ($effectiveCutoff !== null && $studentCutoffBasisScore !== null);
+        $satQualified = $canEvaluateSatQualification
+            ? ($studentCutoffBasisScore >= $effectiveCutoff)
+            : false;
         $slotStatus = 'Capacity not set';
         if ($capacity !== null) {
-            $slotStatus = ($availableSlots > 0) ? 'Open' : 'Full';
+            if ($quotaConfigured && $studentProjectedRank !== null) {
+                $isProgramFull = ($scoredStudents >= $capacity);
+                if ($studentSlotLimit !== null && $studentProjectedRank <= $studentSlotLimit) {
+                    $slotStatus = $canEvaluateSatQualification
+                        ? ($satQualified ? 'Qualified' : 'SAT Below Cutoff')
+                        : 'Open';
+                } else {
+                    $slotStatus = $isProgramFull ? 'Full' : 'Outside Ranked Pool';
+                }
+            } else {
+                if ($availableSlots > 0) {
+                    $slotStatus = $canEvaluateSatQualification
+                        ? ($satQualified ? 'Qualified' : 'SAT Below Cutoff')
+                        : 'Open';
+                } else {
+                    $slotStatus = 'Full';
+                }
+            }
         }
-
-        $satQualified = ($cutoffScore !== null && $studentSatScore !== null)
-            ? ($studentSatScore >= $cutoffScore)
-            : false;
-        $rankQualified = ($slotStatus === 'Open');
-        $transferOpen = ($slotStatus === 'Open') && $satQualified;
+        $rankQualified = false;
+        if ($quotaConfigured && $studentSlotLimit !== null) {
+            $rankQualified = ($studentProjectedRank !== null && $studentProjectedRank <= $studentSlotLimit);
+        } elseif ($capacity !== null) {
+            $rankQualified = ($availableSlots > 0);
+        }
+        $transferOpen = ($programId !== $firstChoiceId) && $rankQualified && $satQualified;
 
         $allPrograms[] = [
             'program_id' => $programId,
             'program_code' => strtoupper(trim((string) ($programRow['program_code'] ?? ''))),
             'program_label' => format_program_label($programRow['program_name'] ?? '', $programRow['major'] ?? ''),
             'absorptive_capacity' => $capacity,
-            'cutoff_score' => $cutoffScore,
+            'cutoff_score' => $effectiveCutoff,
             'regular_percentage' => $regularPercentage,
             'etg_percentage' => $etgPercentage,
             'regular_slots' => $regularSlots,
@@ -2362,13 +2511,14 @@ $buildChoiceSlotDetails = function ($programId, $scoredStudents) use ($programIn
     $slotStatus = (string) ($programData['slot_status'] ?? 'Capacity not set');
 
     $slotBadgeClass = 'bg-label-secondary';
-    if ($slotStatus === 'Open') {
+    if ($slotStatus === 'Open' || $slotStatus === 'Qualified') {
         $slotBadgeClass = 'bg-label-success';
-    } elseif ($slotStatus === 'Full') {
+    } elseif ($slotStatus === 'Full' || $slotStatus === 'Outside Ranked Pool' || $slotStatus === 'SAT Below Cutoff') {
         $slotBadgeClass = 'bg-label-danger';
     }
 
     $satQualified = (bool) ($programData['sat_qualified'] ?? false);
+    $rankQualified = (bool) ($programData['rank_qualified'] ?? false);
     $transferOpen = (bool) ($programData['transfer_open'] ?? false);
 
     $qualificationNote = 'No transfer evaluation';
@@ -2380,7 +2530,9 @@ $buildChoiceSlotDetails = function ($programId, $scoredStudents) use ($programIn
         $qualificationNote = 'Cutoff SAT not configured';
     } elseif (!$satQualified) {
         $qualificationNote = 'SAT below cutoff';
-    } elseif ($slotStatus !== 'Open') {
+    } elseif (!$rankQualified && $slotStatus === 'Outside Ranked Pool') {
+        $qualificationNote = 'Projected rank is outside the qualified pool';
+    } elseif (!$rankQualified && $slotStatus === 'Full') {
         $qualificationNote = 'No open slots available';
     } elseif ($transferOpen) {
         $qualificationNote = 'Eligible for transfer';
@@ -2527,7 +2679,9 @@ $profileParentGuardianCitymunCode = (int) ($studentProfile['parent_guardian_city
 $profileParentGuardianBarangayCode = (int) ($studentProfile['parent_guardian_barangay_code'] ?? 0);
 $profileCompletionBadge = number_format((float) $studentProfileCompletionPercent, 0) . '% Complete';
 $isProfileComplete = ((float) $studentProfileCompletionPercent >= 100.0);
-$preRegistrationSubmitted = is_array($studentPreRegistration) && !empty($studentPreRegistration['preregistration_id']);
+$preRegistrationSubmitted = is_array($studentPreRegistration)
+    && !empty($studentPreRegistration['preregistration_id'])
+    && strtolower(trim((string) ($studentPreRegistration['status'] ?? 'submitted'))) === 'submitted';
 $preRegistrationSubmittedAtDisplay = '';
 if ($preRegistrationSubmitted) {
     $submittedAt = (string) ($studentPreRegistration['submitted_at'] ?? '');
@@ -2537,7 +2691,7 @@ if ($preRegistrationSubmitted) {
         : $submittedAt;
 }
 
-$canUpdateProfile = ($studentRankLocked && !$isAdminStudentPreview);
+$canUpdateProfile = ($studentRankLocked && !$preRegistrationSubmitted && !$isAdminStudentPreview);
 $canSubmitPreRegistration = ($studentRankLocked && $isProfileComplete && !$preRegistrationSubmitted && !$isAdminStudentPreview);
 $preRegistrationButtonLabel = $preRegistrationSubmitted
     ? 'Pre-Registration Submitted'
@@ -2558,12 +2712,16 @@ if (!$preRegistrationSubmitted) {
 }
 $updateProfileButtonTitle = $canUpdateProfile
     ? 'Update your profile details.'
-    : ($isAdminStudentPreview ? 'Administrator preview is read-only.' : 'Profile updates open once your rank is locked.');
+    : ($isAdminStudentPreview
+        ? 'Administrator preview is read-only.'
+        : ($preRegistrationSubmitted
+            ? 'Profile updates are locked after pre-registration submission.'
+            : 'Profile updates open once your rank is locked.'));
 $updateProfileButtonLabel = $isAdminStudentPreview
     ? 'View Profile Details'
     : ($canUpdateProfile
         ? ($isProfileComplete ? 'Review Profile Details' : 'Complete Profile Details')
-        : 'Update My Profile');
+        : ($preRegistrationSubmitted ? 'Profile Locked' : 'Update My Profile'));
 $profileMenuSubtext = $isAdminStudentPreview
     ? 'Viewing this student as administrator'
     : ($studentRankLocked
@@ -4375,7 +4533,7 @@ $studentProfileFormFieldsHtml = ob_get_clean();
                                       data-cutoff="<?= htmlspecialchars((string) ($choiceCard['transfer_cutoff'] ?? 'N/A')); ?>"
                                       data-status="<?= htmlspecialchars((string) ($choiceCard['slot_status'] ?? 'N/A')); ?>"
                                     >
-                                      Transfer Here
+                                      Transfer
                                     </button>
                                   <?php endif; ?>
                                 </div>
@@ -4398,9 +4556,9 @@ $studentProfileFormFieldsHtml = ob_get_clean();
                                   $availableDisplay = $program['available_slots'] !== null ? number_format((int) $program['available_slots']) : 'N/A';
                                   $cutoffDisplay = $program['cutoff_score'] !== null ? number_format((int) $program['cutoff_score']) : 'N/A';
                                   $statusBadgeClass = 'bg-label-secondary';
-                                  if (($program['slot_status'] ?? '') === 'Open') {
+                                  if (in_array((string) ($program['slot_status'] ?? ''), ['Open', 'Qualified'], true)) {
                                       $statusBadgeClass = 'bg-label-success';
-                                  } elseif (($program['slot_status'] ?? '') === 'Full') {
+                                  } elseif (in_array((string) ($program['slot_status'] ?? ''), ['Full', 'Outside Ranked Pool', 'SAT Below Cutoff'], true)) {
                                       $statusBadgeClass = 'bg-label-danger';
                                   }
                                 ?>
@@ -4424,7 +4582,7 @@ $studentProfileFormFieldsHtml = ob_get_clean();
                                       data-cutoff="<?= htmlspecialchars($cutoffDisplay); ?>"
                                       data-status="<?= htmlspecialchars((string) ($program['slot_status'] ?? 'N/A')); ?>"
                                     >
-                                      Transfer Here
+                                      Transfer
                                     </button>
                                   <?php endif; ?>
                                 </div>
@@ -4688,9 +4846,9 @@ $studentProfileFormFieldsHtml = ob_get_clean();
           resultBodyEl.innerHTML = rows.map((row) => {
             let badgeClass = 'bg-label-secondary';
             const status = String(row.slot_status || 'Capacity not set');
-            if (status === 'Open') {
+            if (status === 'Open' || status === 'Qualified') {
               badgeClass = 'bg-label-success';
-            } else if (status === 'Full') {
+            } else if (status === 'Full' || status === 'Outside Ranked Pool' || status === 'SAT Below Cutoff') {
               badgeClass = 'bg-label-danger';
             }
 
