@@ -48,6 +48,7 @@ if ((int) ($student['placement_result_id'] ?? 0) > 0) {
     ]);
 }
 
+$adminActionCsrf = admin_student_management_get_transfer_csrf();
 $currentProgramLabel = trim((string) ($student['current_program_label'] ?? ''));
 $currentProgramLabel = $currentProgramLabel !== '' ? $currentProgramLabel : 'No active program assignment';
 $interviewStatusLabel = ((int) ($student['interview_id'] ?? 0) > 0)
@@ -55,6 +56,38 @@ $interviewStatusLabel = ((int) ($student['interview_id'] ?? 0) > 0)
     : 'No Interview Record';
 $ratingButtonDisabled = ((int) ($student['interview_id'] ?? 0) <= 0);
 $transferButtonDisabled = ((int) ($student['interview_id'] ?? 0) <= 0);
+$currentInterviewId = (int) ($student['interview_id'] ?? 0);
+$currentProgramId = (int) ($student['current_program_id'] ?? 0);
+$studentRankLocked = $student ? program_ranking_is_interview_locked($conn, $currentInterviewId) : false;
+$studentSubmittedPreRegistration = $student
+    ? (student_preregistration_has_submitted_interview($conn, $currentInterviewId) === true)
+    : false;
+$isCurrentProgramScc = !empty($student['is_current_program_endorsement']);
+$hasCurrentProgramSccOverride = !empty($student['current_program_endorsement_override_cutoff']);
+$canManageScc = $student
+    && $currentInterviewId > 0
+    && $currentProgramId > 0
+    && !$studentRankLocked
+    && !$studentSubmittedPreRegistration;
+$sccActionDisabledReason = '';
+if ($student) {
+    if ($currentInterviewId <= 0) {
+        $sccActionDisabledReason = 'SCC is unavailable because the student does not have an active interview record.';
+    } elseif ($currentProgramId <= 0) {
+        $sccActionDisabledReason = 'SCC is unavailable because the current program assignment is missing.';
+    } elseif ($studentRankLocked) {
+        $sccActionDisabledReason = 'SCC is unavailable because the student rank is already locked.';
+    } elseif ($studentSubmittedPreRegistration) {
+        $sccActionDisabledReason = 'SCC is unavailable because the student already submitted pre-registration.';
+    } elseif (!$isCurrentProgramScc && $student['final_score'] === null) {
+        $sccActionDisabledReason = 'SCC can only be added after the final interview score is available.';
+    } elseif (
+        !$isCurrentProgramScc &&
+        strtoupper(trim((string) ($student['classification'] ?? 'REGULAR'))) !== 'REGULAR'
+    ) {
+        $sccActionDisabledReason = 'Only Regular students can be added to SCC.';
+    }
+}
 ?>
 <!DOCTYPE html>
 <html
@@ -272,6 +305,23 @@ $transferButtonDisabled = ((int) ($student['interview_id'] ?? 0) <= 0);
                               <i class="bx bx-edit-alt me-1"></i>Give Scores
                             </button>
                           <?php endif; ?>
+
+                          <?php if ($canManageScc): ?>
+                            <form method="post" action="process_scc_student.php" class="d-inline">
+                              <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($adminActionCsrf, ENT_QUOTES); ?>" />
+                              <input type="hidden" name="placement_result_id" value="<?= (int) ($student['placement_result_id'] ?? 0); ?>" />
+                              <input type="hidden" name="interview_id" value="<?= $currentInterviewId; ?>" />
+                              <input type="hidden" name="scc_action" value="<?= $isCurrentProgramScc ? 'REMOVE' : 'ADD'; ?>" />
+                              <input type="hidden" name="return_to" value="<?= htmlspecialchars($workspaceUrl, ENT_QUOTES); ?>" />
+                              <button type="submit" class="btn <?= $isCurrentProgramScc ? 'btn-outline-success' : 'btn-outline-warning'; ?>">
+                                <i class="bx <?= $isCurrentProgramScc ? 'bx-minus-circle' : 'bx-bookmark-plus'; ?> me-1"></i><?= $isCurrentProgramScc ? 'Remove SCC' : 'Add SCC'; ?>
+                              </button>
+                            </form>
+                          <?php else: ?>
+                            <button type="button" class="btn btn-outline-secondary" disabled title="<?= htmlspecialchars($sccActionDisabledReason); ?>">
+                              <i class="bx bx-bookmark-plus me-1"></i><?= $isCurrentProgramScc ? 'Remove SCC' : 'Add SCC'; ?>
+                            </button>
+                          <?php endif; ?>
                         </div>
                       </div>
 
@@ -282,6 +332,12 @@ $transferButtonDisabled = ((int) ($student['interview_id'] ?? 0) <= 0);
                         </span>
                         <?php if ((int) ($student['pending_transfer_count'] ?? 0) > 0): ?>
                           <span class="badge bg-label-danger">Pending Transfer</span>
+                        <?php endif; ?>
+                        <?php if ($isCurrentProgramScc): ?>
+                          <span class="badge bg-label-success">SCC Active</span>
+                        <?php endif; ?>
+                        <?php if ($hasCurrentProgramSccOverride): ?>
+                          <span class="badge bg-label-warning">SCC Cutoff Override</span>
                         <?php endif; ?>
                         <?php if ((string) ($student['credential_status'] ?? '') === 'active'): ?>
                           <span class="badge bg-label-success">Student Login Active</span>
@@ -326,6 +382,10 @@ $transferButtonDisabled = ((int) ($student['interview_id'] ?? 0) <= 0);
                   </div>
                 </div>
 
+                <div class="alert alert-info py-2 mb-4">
+                  Administrator SCC follows the live shared-ranking rules for active, unlocked Regular interviews. When an administrator adds SCC, the entry can stay visible even if the student is below the normal cutoff.
+                </div>
+
                 <div class="card aws-detail-card mb-4">
                   <div class="card-header">
                     <h5 class="mb-0">Placement and Interview Details</h5>
@@ -344,6 +404,7 @@ $transferButtonDisabled = ((int) ($student['interview_id'] ?? 0) <= 0);
                       <div><span class="aws-detail-label">Overall Standard Score</span><span class="aws-detail-value"><?= htmlspecialchars((string) ($student['overall_standard_score'] ?? 'N/A')); ?></span></div>
                       <div><span class="aws-detail-label">ESM Standard Score</span><span class="aws-detail-value"><?= htmlspecialchars((string) ($student['esm_competency_standard_score'] ?? 'N/A')); ?></span></div>
                       <div><span class="aws-detail-label">Placement Result</span><span class="aws-detail-value"><?= htmlspecialchars((string) ($student['qualitative_text'] ?? 'N/A')); ?></span></div>
+                      <div><span class="aws-detail-label">Current SCC Status</span><span class="aws-detail-value"><?= $isCurrentProgramScc ? htmlspecialchars($hasCurrentProgramSccOverride ? 'SCC (Admin Cutoff Override)' : 'SCC Active') : 'Not Tagged'; ?></span></div>
                     </div>
                   </div>
                 </div>

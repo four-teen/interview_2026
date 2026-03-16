@@ -333,6 +333,7 @@ if (!function_exists('admin_student_management_fetch_student_record')) {
 
         ensure_student_credentials_table($conn);
         admin_student_management_ensure_transfer_history_table($conn);
+        ensure_program_endorsement_table($conn);
 
         $sql = "
             SELECT
@@ -381,7 +382,12 @@ if (!function_exists('admin_student_management_fetch_student_record')) {
                 sc.active_email,
                 sp.profile_id,
                 sp.profile_completion_percent,
-                COALESCE(transfer_stats.pending_transfer_count, 0) AS pending_transfer_count
+                COALESCE(transfer_stats.pending_transfer_count, 0) AS pending_transfer_count,
+                CASE
+                    WHEN current_endorsement.endorsement_id IS NULL THEN 0
+                    ELSE 1
+                END AS is_current_program_endorsement,
+                COALESCE(current_endorsement.override_cutoff, 0) AS current_program_endorsement_override_cutoff
             FROM tbl_placement_results pr
             LEFT JOIN (
                 SELECT si_active.*
@@ -416,6 +422,9 @@ if (!function_exists('admin_student_management_fetch_student_record')) {
             LEFT JOIN tbl_student_profile sp
                 ON sp.credential_id = sc.credential_id
                 OR sp.examinee_number = pr.examinee_number
+            LEFT JOIN tbl_program_endorsements current_endorsement
+                ON current_endorsement.interview_id = si.interview_id
+               AND current_endorsement.program_id = COALESCE(NULLIF(si.program_id, 0), NULLIF(si.first_choice, 0))
             LEFT JOIN (
                 SELECT interview_id, COUNT(*) AS pending_transfer_count
                 FROM tbl_student_transfer_history
@@ -454,6 +463,8 @@ if (!function_exists('admin_student_management_fetch_student_record')) {
         $row['placement_result_id'] = (int) ($row['placement_result_id'] ?? 0);
         $row['program_chair_id'] = (int) ($row['program_chair_id'] ?? 0);
         $row['pending_transfer_count'] = (int) ($row['pending_transfer_count'] ?? 0);
+        $row['is_current_program_endorsement'] = ((int) ($row['is_current_program_endorsement'] ?? 0) === 1);
+        $row['current_program_endorsement_override_cutoff'] = ((int) ($row['current_program_endorsement_override_cutoff'] ?? 0) === 1);
         $row['rank_display'] = 'N/A';
         $row['rank_note'] = 'No ranking validation';
         $row['rank_badge_class'] = 'bg-label-secondary';
@@ -502,6 +513,338 @@ if (!function_exists('admin_student_management_fetch_student_record')) {
         }
 
         return $row;
+    }
+}
+
+if (!function_exists('admin_student_management_execute_scc_action')) {
+    function admin_student_management_execute_scc_action(mysqli $conn, array $input): array
+    {
+        $adminAccountId = max(0, (int) ($input['admin_account_id'] ?? 0));
+        $placementResultId = max(0, (int) ($input['placement_result_id'] ?? 0));
+        $interviewId = max(0, (int) ($input['interview_id'] ?? 0));
+        $action = strtoupper(trim((string) ($input['action'] ?? 'ADD')));
+
+        if ($adminAccountId <= 0 || $placementResultId <= 0 || $interviewId <= 0 || !in_array($action, ['ADD', 'REMOVE'], true)) {
+            return [
+                'success' => false,
+                'message' => 'Invalid SCC request.',
+            ];
+        }
+
+        ensure_program_endorsement_table($conn);
+
+        $student = admin_student_management_fetch_student_record($conn, [
+            'placement_result_id' => $placementResultId,
+        ]);
+
+        if (!$student || (int) ($student['interview_id'] ?? 0) !== $interviewId) {
+            return [
+                'success' => false,
+                'message' => 'Student interview record not found.',
+            ];
+        }
+
+        if ((string) ($student['interview_status'] ?? '') !== 'active') {
+            return [
+                'success' => false,
+                'message' => 'Only active interview records can be managed for SCC.',
+            ];
+        }
+
+        if (program_ranking_is_interview_locked($conn, $interviewId)) {
+            return [
+                'success' => false,
+                'message' => 'This interview rank is locked and SCC cannot be changed.',
+            ];
+        }
+
+        if (student_preregistration_has_submitted_interview($conn, $interviewId) === true) {
+            return [
+                'success' => false,
+                'message' => 'This student already submitted pre-registration and SCC cannot be changed.',
+            ];
+        }
+
+        $programId = (int) ($student['current_program_id'] ?? 0);
+        if ($programId <= 0) {
+            return [
+                'success' => false,
+                'message' => 'Current program assignment is missing.',
+            ];
+        }
+
+        $isCurrentlyEndorsed = !empty($student['is_current_program_endorsement']);
+        if ($action === 'REMOVE') {
+            if (!$isCurrentlyEndorsed) {
+                return [
+                    'success' => true,
+                    'message' => 'Student is not currently tagged as SCC.',
+                ];
+            }
+
+            $deleteSql = "
+                DELETE FROM tbl_program_endorsements
+                WHERE program_id = ?
+                  AND interview_id = ?
+                LIMIT 1
+            ";
+            $deleteStmt = $conn->prepare($deleteSql);
+            if (!$deleteStmt) {
+                return [
+                    'success' => false,
+                    'message' => 'Failed to prepare SCC removal.',
+                ];
+            }
+
+            $deleteStmt->bind_param('ii', $programId, $interviewId);
+            $ok = $deleteStmt->execute();
+            $deleteStmt->close();
+
+            if (!$ok) {
+                return [
+                    'success' => false,
+                    'message' => 'Failed to remove SCC tag.',
+                ];
+            }
+
+            return [
+                'success' => true,
+                'message' => 'Student removed from SCC list.',
+            ];
+        }
+
+        if ($student['final_score'] === null || $student['final_score'] === '') {
+            return [
+                'success' => false,
+                'message' => 'Final interview score is required before adding SCC.',
+            ];
+        }
+
+        $classification = strtoupper(trim((string) ($student['classification'] ?? 'REGULAR')));
+        if ($classification !== 'REGULAR') {
+            return [
+                'success' => false,
+                'message' => 'Only Regular students can be added to SCC.',
+            ];
+        }
+
+        if ($isCurrentlyEndorsed) {
+            return [
+                'success' => true,
+                'message' => 'Student is already tagged as SCC for the current program.',
+            ];
+        }
+
+        $programSql = "
+            SELECT
+                p.program_id,
+                cutoff.cutoff_score,
+                cutoff.absorptive_capacity,
+                cutoff.regular_percentage,
+                cutoff.etg_percentage,
+                COALESCE(cutoff.endorsement_capacity, 0) AS endorsement_capacity
+            FROM tbl_program p
+            LEFT JOIN (
+                SELECT
+                    pc1.program_id,
+                    pc1.cutoff_score,
+                    pc1.absorptive_capacity,
+                    pc1.regular_percentage,
+                    pc1.etg_percentage,
+                    COALESCE(pc1.endorsement_capacity, 0) AS endorsement_capacity
+                FROM tbl_program_cutoff pc1
+                INNER JOIN (
+                    SELECT program_id, MAX(cutoff_id) AS latest_cutoff_id
+                    FROM tbl_program_cutoff
+                    GROUP BY program_id
+                ) latest
+                    ON latest.latest_cutoff_id = pc1.cutoff_id
+            ) cutoff
+                ON cutoff.program_id = p.program_id
+            WHERE p.program_id = ?
+              AND p.status = 'active'
+            LIMIT 1
+        ";
+        $programStmt = $conn->prepare($programSql);
+        if (!$programStmt) {
+            return [
+                'success' => false,
+                'message' => 'Failed to prepare current program lookup.',
+            ];
+        }
+
+        $programStmt->bind_param('i', $programId);
+        $programStmt->execute();
+        $program = $programStmt->get_result()->fetch_assoc();
+        $programStmt->close();
+
+        if (!$program) {
+            return [
+                'success' => false,
+                'message' => 'Current program is not available.',
+            ];
+        }
+
+        $rankingPayload = program_ranking_fetch_payload($conn, $programId, null);
+        if (!($rankingPayload['success'] ?? false)) {
+            return [
+                'success' => false,
+                'message' => (string) ($rankingPayload['message'] ?? 'Failed to load current ranking state.'),
+            ];
+        }
+
+        $quota = is_array($rankingPayload['quota'] ?? null) ? $rankingPayload['quota'] : [];
+        $endorsementCapacity = max(0, (int) ($quota['endorsement_capacity'] ?? ($program['endorsement_capacity'] ?? 0)));
+        if ($endorsementCapacity <= 0) {
+            return [
+                'success' => false,
+                'message' => 'SCC capacity is 0. Configure SCC capacity first.',
+            ];
+        }
+
+        $currentEndorsed = max(0, (int) ($quota['endorsement_selected'] ?? 0));
+        if ($currentEndorsed >= $endorsementCapacity) {
+            return [
+                'success' => false,
+                'message' => 'SCC capacity is full.',
+            ];
+        }
+
+        $globalCutoffState = get_global_sat_cutoff_state($conn);
+        $globalCutoffEnabled = (bool) ($globalCutoffState['enabled'] ?? false);
+        $globalCutoffValue = isset($globalCutoffState['value']) ? (int) $globalCutoffState['value'] : null;
+        $programCutoff = $program['cutoff_score'] !== null ? (int) $program['cutoff_score'] : null;
+        $effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalCutoffEnabled, $globalCutoffValue);
+
+        $quotaEnabled = (($quota['enabled'] ?? false) === true);
+        $regularSlots = isset($quota['regular_slots']) ? max(0, (int) $quota['regular_slots']) : null;
+        $satScore = (int) ($student['sat_score'] ?? 0);
+        $isInRegularRankingList = false;
+
+        if ($quotaEnabled) {
+            $regularSlotsCount = max(0, (int) $regularSlots);
+            $sccInRegularSlots = min($currentEndorsed, $regularSlotsCount, $endorsementCapacity);
+            $limit = max(0, $regularSlotsCount - $sccInRegularSlots);
+            if ($limit > 0) {
+                $rankedSql = "
+                    SELECT si_rank.interview_id
+                    FROM tbl_student_interview si_rank
+                    INNER JOIN tbl_placement_results pr_rank
+                        ON si_rank.placement_result_id = pr_rank.id
+                    LEFT JOIN tbl_program_endorsements pe_rank
+                        ON pe_rank.program_id = ?
+                       AND pe_rank.interview_id = si_rank.interview_id
+                    WHERE COALESCE(NULLIF(si_rank.program_id, 0), NULLIF(si_rank.first_choice, 0)) = ?
+                      AND si_rank.status = 'active'
+                      AND si_rank.final_score IS NOT NULL
+                      AND UPPER(COALESCE(si_rank.classification, 'REGULAR')) = 'REGULAR'
+                      AND pe_rank.endorsement_id IS NULL
+                ";
+                if ($effectiveCutoff !== null) {
+                    $rankedSql .= " AND pr_rank.sat_score >= ? ";
+                }
+                $rankedSql .= "
+                    ORDER BY
+                        si_rank.final_score DESC,
+                        pr_rank.sat_score DESC,
+                        pr_rank.full_name ASC
+                    LIMIT ?
+                ";
+
+                $rankedStmt = $conn->prepare($rankedSql);
+                if (!$rankedStmt) {
+                    return [
+                        'success' => false,
+                        'message' => 'Failed to prepare SCC eligibility check.',
+                    ];
+                }
+
+                if ($effectiveCutoff !== null) {
+                    $rankedStmt->bind_param('iiii', $programId, $programId, $effectiveCutoff, $limit);
+                } else {
+                    $rankedStmt->bind_param('iii', $programId, $programId, $limit);
+                }
+                $rankedStmt->execute();
+                $rankedResult = $rankedStmt->get_result();
+                while ($rankedRow = $rankedResult->fetch_assoc()) {
+                    if ((int) ($rankedRow['interview_id'] ?? 0) === $interviewId) {
+                        $isInRegularRankingList = true;
+                        break;
+                    }
+                }
+                $rankedStmt->close();
+            }
+        } else {
+            if ($effectiveCutoff === null) {
+                $isInRegularRankingList = true;
+            } else {
+                $isInRegularRankingList = $satScore >= $effectiveCutoff;
+            }
+        }
+
+        if ($isInRegularRankingList) {
+            return [
+                'success' => false,
+                'message' => 'Student is already covered by the regular ranking list. SCC is for outside-ranked regular cases.',
+            ];
+        }
+
+        $requiresCutoffOverride = true;
+        foreach ((array) ($rankingPayload['rows'] ?? []) as $rankingRow) {
+            if ((int) ($rankingRow['interview_id'] ?? 0) === $interviewId) {
+                $requiresCutoffOverride = false;
+                break;
+            }
+        }
+
+        $insertSql = "
+            INSERT INTO tbl_program_endorsements (
+                program_id,
+                interview_id,
+                endorsed_by,
+                override_cutoff
+            )
+            VALUES (?, ?, ?, ?)
+        ";
+        $insertStmt = $conn->prepare($insertSql);
+        if (!$insertStmt) {
+            return [
+                'success' => false,
+                'message' => 'Failed to prepare SCC insert.',
+            ];
+        }
+
+        $overrideCutoffValue = $requiresCutoffOverride ? 1 : 0;
+        $insertStmt->bind_param('iiii', $programId, $interviewId, $adminAccountId, $overrideCutoffValue);
+        $ok = $insertStmt->execute();
+        $insertStmt->close();
+
+        if (!$ok) {
+            return [
+                'success' => false,
+                'message' => 'Failed to add SCC tag.',
+            ];
+        }
+
+        $syncChoiceSql = "
+            UPDATE tbl_student_interview
+            SET first_choice = ?
+            WHERE interview_id = ?
+            LIMIT 1
+        ";
+        $syncChoiceStmt = $conn->prepare($syncChoiceSql);
+        if ($syncChoiceStmt) {
+            $syncChoiceStmt->bind_param('ii', $programId, $interviewId);
+            $syncChoiceStmt->execute();
+            $syncChoiceStmt->close();
+        }
+
+        return [
+            'success' => true,
+            'message' => $requiresCutoffOverride
+                ? 'Student added to SCC list by administrator cutoff override.'
+                : 'Student added to SCC list.',
+        ];
     }
 }
 

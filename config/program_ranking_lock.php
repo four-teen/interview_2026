@@ -373,12 +373,8 @@ if (!function_exists('program_ranking_fetch_payload')) {
         $resultRanking = $stmtRanking->get_result();
         $stmtRanking->close();
 
-        $allRegularRows = [];
-        $allEtgRows = [];
-        $allRowsByInterviewId = [];
-
-        while ($row = $resultRanking->fetch_assoc()) {
-            $mapped = [
+        $mapRankingRow = static function (array $row): array {
+            return [
                 'interview_id' => (int) ($row['interview_id'] ?? 0),
                 'examinee_number' => (string) ($row['examinee_number'] ?? ''),
                 'full_name' => (string) ($row['full_name'] ?? ''),
@@ -387,8 +383,17 @@ if (!function_exists('program_ranking_fetch_payload')) {
                 'final_score' => number_format((float) ($row['final_score'] ?? 0), 2, '.', ''),
                 'interview_datetime' => (string) ($row['interview_datetime'] ?? ''),
                 'encoded_by' => (string) ($row['encoded_by'] ?? ''),
-                'is_endorsement' => false
+                'is_endorsement' => false,
+                'cutoff_override' => false,
             ];
+        };
+
+        $allRegularRows = [];
+        $allEtgRows = [];
+        $allRowsByInterviewId = [];
+
+        while ($row = $resultRanking->fetch_assoc()) {
+            $mapped = $mapRankingRow($row);
             $allRowsByInterviewId[$mapped['interview_id']] = $mapped;
             if ((int) ($row['classification_group'] ?? 0) === 1) {
                 $allEtgRows[] = $mapped;
@@ -430,17 +435,100 @@ if (!function_exists('program_ranking_fetch_payload')) {
         }
 
         $endorsementRowsRaw = load_program_endorsements($conn, $programId);
+        $overrideOnlyRowsByInterviewId = [];
+        $overrideOnlyIds = [];
+        foreach ($endorsementRowsRaw as $endorsementRow) {
+            $eid = (int) ($endorsementRow['interview_id'] ?? 0);
+            if (
+                $eid > 0 &&
+                !isset($allRowsByInterviewId[$eid]) &&
+                !empty($endorsementRow['override_cutoff'])
+            ) {
+                $overrideOnlyIds[$eid] = $eid;
+            }
+        }
+
+        if (!empty($overrideOnlyIds)) {
+            $placeholders = implode(',', array_fill(0, count($overrideOnlyIds), '?'));
+            $overrideSql = "
+                SELECT
+                    si.interview_id,
+                    si.examinee_number,
+                    pr.full_name,
+                    ({$cutoffBasisScoreSql}) AS cutoff_basis_score,
+                    si.final_score,
+                    si.interview_datetime,
+                    a.acc_fullname AS encoded_by,
+                    CASE
+                        WHEN UPPER(COALESCE(si.classification, 'REGULAR')) = 'ETG'
+                            THEN CONCAT('ETG-', COALESCE(NULLIF(TRIM(ec.class_desc), ''), 'UNSPECIFIED'))
+                        ELSE 'REGULAR'
+                    END AS classification_label,
+                    CASE
+                        WHEN UPPER(COALESCE(si.classification, 'REGULAR')) = 'ETG' THEN 1
+                        ELSE 0
+                    END AS classification_group
+                FROM tbl_student_interview si
+                INNER JOIN tbl_placement_results pr
+                    ON si.placement_result_id = pr.id
+                LEFT JOIN tblaccount a
+                    ON si.program_chair_id = a.accountid
+                LEFT JOIN tbl_etg_class ec
+                    ON si.etg_class_id = ec.etgclassid
+                WHERE COALESCE(NULLIF(si.program_id, 0), NULLIF(si.first_choice, 0)) = ?
+                  AND si.status = 'active'
+                  AND si.final_score IS NOT NULL
+                  AND si.interview_id IN ({$placeholders})
+                ORDER BY si.interview_id ASC
+            ";
+
+            $overrideStmt = $conn->prepare($overrideSql);
+            if (!$overrideStmt) {
+                return ['success' => false, 'http_status' => 500, 'message' => 'Server error (override endorsement query).'];
+            }
+
+            $overrideParams = array_merge([$programId], array_values($overrideOnlyIds));
+            $overrideTypes = 'i' . str_repeat('i', count($overrideOnlyIds));
+            $overrideBind = [$overrideTypes];
+            foreach ($overrideParams as $index => $value) {
+                $overrideBind[] = &$overrideParams[$index];
+            }
+
+            if (!call_user_func_array([$overrideStmt, 'bind_param'], $overrideBind)) {
+                $overrideStmt->close();
+                return ['success' => false, 'http_status' => 500, 'message' => 'Server error (override endorsement bind).'];
+            }
+
+            $overrideStmt->execute();
+            $overrideResult = $overrideStmt->get_result();
+            while ($overrideRow = $overrideResult->fetch_assoc()) {
+                $mapped = $mapRankingRow($overrideRow);
+                $mapped['cutoff_override'] = true;
+                $overrideOnlyRowsByInterviewId[(int) ($mapped['interview_id'] ?? 0)] = $mapped;
+            }
+            $overrideStmt->close();
+        }
+
         $endorsementRows = [];
         $endorsementIds = [];
         foreach ($endorsementRowsRaw as $endorsementRow) {
             $eid = (int) ($endorsementRow['interview_id'] ?? 0);
-            if ($eid <= 0 || !isset($allRowsByInterviewId[$eid])) {
+            if ($eid <= 0) {
                 continue;
             }
-            $mapped = $allRowsByInterviewId[$eid];
+
+            if (isset($allRowsByInterviewId[$eid])) {
+                $mapped = $allRowsByInterviewId[$eid];
+            } elseif (isset($overrideOnlyRowsByInterviewId[$eid])) {
+                $mapped = $overrideOnlyRowsByInterviewId[$eid];
+            } else {
+                continue;
+            }
+
             $mapped['is_endorsement'] = true;
             $mapped['endorsement_label'] = 'SCC';
             $mapped['endorsement_order'] = (string) ($endorsementRow['endorsed_at'] ?? '');
+            $mapped['cutoff_override'] = !empty($endorsementRow['override_cutoff']) || !empty($mapped['cutoff_override']);
             $endorsementRows[] = $mapped;
             $endorsementIds[$eid] = true;
         }
