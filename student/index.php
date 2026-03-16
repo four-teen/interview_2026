@@ -70,10 +70,13 @@ $sql = "
         ec.class_desc AS etg_class_name,
         p1.program_name AS first_program_name,
         p1.major AS first_program_major,
+        p1cam.campus_name AS first_program_campus_name,
         p2.program_name AS second_program_name,
         p2.major AS second_program_major,
+        p2cam.campus_name AS second_program_campus_name,
         p3.program_name AS third_program_name,
-        p3.major AS third_program_major
+        p3.major AS third_program_major,
+        p3cam.campus_name AS third_program_campus_name
     FROM tbl_student_credentials sc
     LEFT JOIN tbl_placement_results pr
       ON pr.id = sc.placement_result_id
@@ -88,10 +91,22 @@ $sql = "
       ON ec.etgclassid = si.etg_class_id
     LEFT JOIN tbl_program p1
       ON p1.program_id = si.first_choice
+    LEFT JOIN tbl_college p1col
+      ON p1col.college_id = p1.college_id
+    LEFT JOIN tbl_campus p1cam
+      ON p1cam.campus_id = p1col.campus_id
     LEFT JOIN tbl_program p2
       ON p2.program_id = si.second_choice
+    LEFT JOIN tbl_college p2col
+      ON p2col.college_id = p2.college_id
+    LEFT JOIN tbl_campus p2cam
+      ON p2cam.campus_id = p2col.campus_id
     LEFT JOIN tbl_program p3
       ON p3.program_id = si.third_choice
+    LEFT JOIN tbl_college p3col
+      ON p3col.college_id = p3.college_id
+    LEFT JOIN tbl_campus p3cam
+      ON p3cam.campus_id = p3col.campus_id
     WHERE sc.credential_id = ?
       AND sc.status = 'active'
     ORDER BY si.interview_datetime DESC, si.interview_id DESC
@@ -1634,6 +1649,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') =
         $targetProgramSql = "
             SELECT
                 p.program_id,
+                col.campus_id,
+                cam.campus_name,
                 pc.cutoff_score,
                 pc.absorptive_capacity,
                 pc.regular_percentage,
@@ -1641,6 +1658,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') =
                 COALESCE(pc.endorsement_capacity, 0) AS endorsement_capacity,
                 COALESCE(scored.scored_students, 0) AS scored_students
             FROM tbl_program p
+            LEFT JOIN tbl_college col
+                ON col.college_id = p.college_id
+            LEFT JOIN tbl_campus cam
+                ON cam.campus_id = col.campus_id
             LEFT JOIN (
                 SELECT
                     pcx.program_id,
@@ -1685,6 +1706,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') =
         if (!$targetProgram) {
             $flashMessage = 'Selected transfer program is not available.';
         } else {
+            $targetCampusId = (int) ($targetProgram['campus_id'] ?? 0);
             $targetCapacity = ($targetProgram['absorptive_capacity'] !== null && $targetProgram['absorptive_capacity'] !== '')
                 ? max(0, (int) $targetProgram['absorptive_capacity'])
                 : null;
@@ -1752,6 +1774,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') =
 
             if ($studentTransferCandidateRow === null) {
                 $flashMessage = 'Final interview score is required before requesting a transfer.';
+            } elseif ($targetCampusId <= 0) {
+                $flashMessage = 'Selected program campus is not configured.';
             } elseif ($targetCapacity === null) {
                 $flashMessage = 'Selected program capacity is not configured.';
             } elseif ($targetEffectiveCutoff === null) {
@@ -1843,6 +1867,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') =
                             second_choice = ?,
                             third_choice = ?,
                             program_id = ?,
+                            campus_id = ?,
                             program_chair_id = ?
                         WHERE interview_id = ?
                         LIMIT 1
@@ -1852,11 +1877,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') =
                         throw new Exception('Failed to prepare interview update.');
                     }
                     $updateInterviewStmt->bind_param(
-                        'iiiiii',
+                        'iiiiiii',
                         $newFirstChoice,
                         $newSecondChoice,
                         $newThirdChoice,
                         $targetProgramId,
+                        $targetCampusId,
                         $targetProgramChairId,
                         $interviewId
                     );
@@ -1929,6 +1955,21 @@ function format_program_label($name, $major)
         return strtoupper($name);
     }
     return strtoupper($name . ' - ' . $major);
+}
+
+function resolve_program_campus_name($preferredCampusName, $fallbackCampusName = '', $programId = 0)
+{
+    $preferredCampusName = trim((string) $preferredCampusName);
+    if ($preferredCampusName !== '') {
+        return $preferredCampusName;
+    }
+
+    $fallbackCampusName = trim((string) $fallbackCampusName);
+    if ($fallbackCampusName !== '') {
+        return $fallbackCampusName;
+    }
+
+    return ((int) $programId > 0) ? 'No campus assigned' : '';
 }
 
 $finalScore = $student['final_score'];
@@ -2308,6 +2349,8 @@ $allProgramsSql = "
         p.program_code,
         p.program_name,
         p.major,
+        col.campus_id,
+        cam.campus_name,
         pc.absorptive_capacity,
         pc.cutoff_score,
         pc.regular_percentage,
@@ -2315,6 +2358,10 @@ $allProgramsSql = "
         COALESCE(pc.endorsement_capacity, 0) AS endorsement_capacity,
         COALESCE(scored.scored_students, 0) AS scored_students
     FROM tbl_program p
+    LEFT JOIN tbl_college col
+        ON col.college_id = p.college_id
+    LEFT JOIN tbl_campus cam
+        ON cam.campus_id = col.campus_id
     LEFT JOIN (
         SELECT
             pcx.program_id,
@@ -2449,6 +2496,8 @@ if ($allProgramsStmt = $conn->prepare($allProgramsSql)) {
             'program_id' => $programId,
             'program_code' => strtoupper(trim((string) ($programRow['program_code'] ?? ''))),
             'program_label' => format_program_label($programRow['program_name'] ?? '', $programRow['major'] ?? ''),
+            'campus_id' => (int) ($programRow['campus_id'] ?? 0),
+            'campus_name' => resolve_program_campus_name($programRow['campus_name'] ?? '', '', $programId),
             'absorptive_capacity' => $capacity,
             'cutoff_score' => $effectiveCutoff,
             'regular_percentage' => $regularPercentage,
@@ -2541,6 +2590,7 @@ $buildChoiceSlotDetails = function ($programId, $scoredStudents) use ($programIn
     return [
         'program_id' => $programId,
         'program_code' => $programCode,
+        'campus_name' => resolve_program_campus_name($programData['campus_name'] ?? '', '', $programId),
         'cutoff_display' => ($cutoffScore !== null) ? number_format($cutoffScore) : 'N/A',
         'capacity_display' => ($capacity !== null) ? number_format($capacity) : 'N/A',
         'available_display' => ($available !== null) ? number_format($available) : 'N/A',
@@ -2555,11 +2605,28 @@ $firstChoiceSlotDetails = $buildChoiceSlotDetails($firstChoiceId, $firstChoiceSc
 $secondChoiceSlotDetails = $buildChoiceSlotDetails($secondChoiceId, $secondChoiceScoredTotal);
 $thirdChoiceSlotDetails = $buildChoiceSlotDetails($thirdChoiceId, $thirdChoiceScoredTotal);
 
+$firstChoiceCampusName = resolve_program_campus_name(
+    $student['first_program_campus_name'] ?? '',
+    $firstChoiceSlotDetails['campus_name'] ?? '',
+    $firstChoiceId
+);
+$secondChoiceCampusName = resolve_program_campus_name(
+    $student['second_program_campus_name'] ?? '',
+    $secondChoiceSlotDetails['campus_name'] ?? '',
+    $secondChoiceId
+);
+$thirdChoiceCampusName = resolve_program_campus_name(
+    $student['third_program_campus_name'] ?? '',
+    $thirdChoiceSlotDetails['campus_name'] ?? '',
+    $thirdChoiceId
+);
+
 $programChoiceCards = [
     [
         'title' => '1st Choice Program',
         'program' => format_program_label($student['first_program_name'] ?? '', $student['first_program_major'] ?? ''),
         'program_code' => $firstChoiceSlotDetails['program_code'],
+        'campus_name' => $firstChoiceCampusName,
         'is_primary' => true,
         'stat_label' => 'Rank / Total Ranked',
         'stat_value' => $firstChoiceRankDisplay,
@@ -2586,6 +2653,7 @@ $programChoiceCards = [
         'title' => '2nd Choice Program',
         'program' => format_program_label($student['second_program_name'] ?? '', $student['second_program_major'] ?? ''),
         'program_code' => $secondChoiceSlotDetails['program_code'],
+        'campus_name' => $secondChoiceCampusName,
         'is_primary' => false,
         'stat_label' => 'Available Slots',
         'stat_value' => $secondChoiceSlotDetails['available_display'],
@@ -2612,6 +2680,7 @@ $programChoiceCards = [
         'title' => '3rd Choice Program',
         'program' => format_program_label($student['third_program_name'] ?? '', $student['third_program_major'] ?? ''),
         'program_code' => $thirdChoiceSlotDetails['program_code'],
+        'campus_name' => $thirdChoiceCampusName,
         'is_primary' => false,
         'stat_label' => 'Available Slots',
         'stat_value' => $thirdChoiceSlotDetails['available_display'],
@@ -3565,6 +3634,12 @@ $studentProfileFormFieldsHtml = ob_get_clean();
         letter-spacing: 0.03em;
       }
 
+      .student-program-campus {
+        margin-top: 0.28rem;
+        font-size: 0.74rem;
+        color: #6a7b92;
+      }
+
       .student-program-card-value {
         color: #696cff;
         font-weight: 700;
@@ -4128,8 +4203,8 @@ $studentProfileFormFieldsHtml = ob_get_clean();
                       id="studentProgramSearchInput"
                       class="form-control border-0 shadow-none w-100"
                       style="max-width: 42rem;"
-                      placeholder="Search program name/code and press Enter to view available slots"
-                      aria-label="Search programs"
+                      placeholder="Search program name, code, or campus and press Enter to view available slots"
+                      aria-label="Search programs by name, code, or campus"
                     />
                   </form>
                 <?php elseif ($isAdminStudentPreview): ?>
@@ -4393,6 +4468,9 @@ $studentProfileFormFieldsHtml = ob_get_clean();
                                     <?php if (!empty($choiceCard['program_code'])): ?>
                                       <div class="student-program-code"><?= htmlspecialchars((string) $choiceCard['program_code']); ?></div>
                                     <?php endif; ?>
+                                    <?php if (!empty($choiceCard['campus_name'])): ?>
+                                      <div class="student-program-campus">Campus: <?= htmlspecialchars((string) $choiceCard['campus_name']); ?></div>
+                                    <?php endif; ?>
                                   </div>
                                   <span class="student-rank-lock-pill" title="Locked rank" aria-label="Locked rank">
                                     <i class="bx bx-lock-alt"></i>
@@ -4482,6 +4560,9 @@ $studentProfileFormFieldsHtml = ob_get_clean();
                                   <?php if (!empty($choiceCard['program_code'])): ?>
                                     <div class="student-program-code"><?= htmlspecialchars((string) $choiceCard['program_code']); ?></div>
                                   <?php endif; ?>
+                                  <?php if (!empty($choiceCard['campus_name'])): ?>
+                                    <div class="student-program-campus">Campus: <?= htmlspecialchars((string) $choiceCard['campus_name']); ?></div>
+                                  <?php endif; ?>
                                   <div class="student-program-card-title mt-3"><?= htmlspecialchars($choiceCard['stat_label']); ?></div>
                                 <?php if ($index === 0 && $choiceCard['stat_primary_value'] !== null && $choiceCard['stat_secondary_value'] !== null): ?>
                                     <div class="student-program-card-value">
@@ -4528,6 +4609,7 @@ $studentProfileFormFieldsHtml = ob_get_clean();
                                       data-program-id="<?= htmlspecialchars((string) ($choiceCard['transfer_program_id'] ?? '')); ?>"
                                       data-program-code="<?= htmlspecialchars((string) ($choiceCard['program_code'] ?? '')); ?>"
                                       data-program-label="<?= htmlspecialchars((string) ($choiceCard['program'] ?? '')); ?>"
+                                      data-program-campus="<?= htmlspecialchars((string) ($choiceCard['campus_name'] ?? '')); ?>"
                                       data-capacity="<?= htmlspecialchars((string) ($choiceCard['transfer_capacity'] ?? 'N/A')); ?>"
                                       data-available="<?= htmlspecialchars((string) ($choiceCard['transfer_available'] ?? 'N/A')); ?>"
                                       data-cutoff="<?= htmlspecialchars((string) ($choiceCard['transfer_cutoff'] ?? 'N/A')); ?>"
@@ -4564,6 +4646,7 @@ $studentProfileFormFieldsHtml = ob_get_clean();
                                 ?>
                                 <div class="student-program-item">
                                   <div class="student-program-item-name"><?= htmlspecialchars((string) ($program['program_code'] ?? '')); ?><?= htmlspecialchars((string) ($program['program_code'] ?? '') !== '' ? ' - ' : ''); ?><?= htmlspecialchars((string) ($program['program_label'] ?? 'N/A')); ?></div>
+                                  <div class="student-program-item-meta">Campus: <strong><?= htmlspecialchars((string) ($program['campus_name'] ?? 'No campus assigned')); ?></strong></div>
                                   <div class="student-program-item-meta">Capacity: <strong><?= htmlspecialchars($capacityDisplay); ?></strong></div>
                                   <div class="student-program-item-meta">Cutoff SAT: <strong><?= htmlspecialchars($cutoffDisplay); ?></strong></div>
                                   <div class="mt-2 d-flex align-items-center justify-content-between">
@@ -4577,6 +4660,7 @@ $studentProfileFormFieldsHtml = ob_get_clean();
                                       data-program-id="<?= htmlspecialchars((string) ($program['program_id'] ?? '')); ?>"
                                       data-program-code="<?= htmlspecialchars((string) ($program['program_code'] ?? '')); ?>"
                                       data-program-label="<?= htmlspecialchars((string) ($program['program_label'] ?? '')); ?>"
+                                      data-program-campus="<?= htmlspecialchars((string) ($program['campus_name'] ?? '')); ?>"
                                       data-capacity="<?= htmlspecialchars($capacityDisplay); ?>"
                                       data-available="<?= htmlspecialchars($availableDisplay); ?>"
                                       data-cutoff="<?= htmlspecialchars($cutoffDisplay); ?>"
@@ -4679,6 +4763,7 @@ $studentProfileFormFieldsHtml = ob_get_clean();
               </div>
               <div class="small text-muted mb-2">Program Details</div>
               <div class="small">
+                <div class="d-flex justify-content-between py-1 border-bottom"><span>Campus</span><strong id="transferModalCampus">-</strong></div>
                 <div class="d-flex justify-content-between py-1 border-bottom"><span>Capacity</span><strong id="transferModalCapacity">-</strong></div>
                 <div class="d-flex justify-content-between py-1 border-bottom"><span>Available Slots</span><strong id="transferModalAvailable">-</strong></div>
                 <div class="d-flex justify-content-between py-1 border-bottom"><span>Cutoff SAT</span><strong id="transferModalCutoff">-</strong></div>
@@ -4853,7 +4938,8 @@ $studentProfileFormFieldsHtml = ob_get_clean();
             }
 
             const programCode = row.program_code ? `${escapeHtml(row.program_code)} - ` : '';
-            return `<tr><td class="fw-semibold">${programCode}${escapeHtml(row.program_label || '-')}</td><td>${formatNumber(row.absorptive_capacity)}</td><td>${formatNumber(row.available_slots)}</td><td><span class="badge ${badgeClass}">${escapeHtml(status)}</span></td></tr>`;
+            const campusName = escapeHtml(row.campus_name || 'No campus assigned');
+            return `<tr><td><div class="fw-semibold">${programCode}${escapeHtml(row.program_label || '-')}</div><div class="small text-muted mt-1">Campus: ${campusName}</div></td><td>${formatNumber(row.absorptive_capacity)}</td><td>${formatNumber(row.available_slots)}</td><td><span class="badge ${badgeClass}">${escapeHtml(status)}</span></td></tr>`;
           }).join('');
 
           emptyEl.classList.add('d-none');
@@ -4883,7 +4969,8 @@ $studentProfileFormFieldsHtml = ob_get_clean();
           const filteredRows = (programData || []).filter((row) => {
             const label = String(row.program_label || '').toLowerCase();
             const code = String(row.program_code || '').toLowerCase();
-            return label.includes(query) || code.includes(query);
+            const campus = String(row.campus_name || '').toLowerCase();
+            return label.includes(query) || code.includes(query) || campus.includes(query);
           });
 
           renderRows(filteredRows);
@@ -5200,6 +5287,7 @@ $studentProfileFormFieldsHtml = ob_get_clean();
             setText('transferModalProgramLabel', this.getAttribute('data-program-label'));
             setText('transferModalProgramCode', this.getAttribute('data-program-code'));
             setText('transferModalStatus', this.getAttribute('data-status'));
+            setText('transferModalCampus', this.getAttribute('data-program-campus'));
             setText('transferModalCapacity', this.getAttribute('data-capacity'));
             setText('transferModalAvailable', this.getAttribute('data-available'));
             setText('transferModalCutoff', this.getAttribute('data-cutoff'));
