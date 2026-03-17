@@ -2280,16 +2280,8 @@ if ($firstChoiceId > 0 && $hasScoredInterview) {
         $currentInterviewId = (int) ($student['interview_id'] ?? 0);
         $matchingRankingRow = null;
         $matchedByInterview = false;
-        $matchedInsideIndex = 0;
-        $matchedInsideRegularIndex = 0;
-        $matchedInsideSccIndex = 0;
-        $matchedInsideEtgIndex = 0;
-        $matchedOutsideIndex = 0;
-        $insideSeen = 0;
-        $insideRegularSeen = 0;
-        $insideSccSeen = 0;
-        $insideEtgSeen = 0;
-        $outsideSeen = 0;
+        $insideQualifiedCount = 0;
+        $lastInsideLiveRank = 0;
         $outsideRowCount = 0;
         $sharedQuota = isset($sharedRankingPayload['quota']) && is_array($sharedRankingPayload['quota'])
             ? $sharedRankingPayload['quota']
@@ -2315,35 +2307,16 @@ if ($firstChoiceId > 0 && $hasScoredInterview) {
             $rowOutside = !empty($rankingRow['is_outside_capacity']);
 
             if ($rowOutside) {
-                $outsideSeen++;
                 $outsideRowCount++;
-            } elseif ($rowSection === 'scc') {
-                $insideSeen++;
-                $insideSccSeen++;
-            } elseif ($rowSection === 'etg') {
-                $insideSeen++;
-                $insideEtgSeen++;
             } else {
-                $insideSeen++;
-                $insideRegularSeen++;
+                $insideQualifiedCount++;
+                $lastInsideLiveRank = max($lastInsideLiveRank, (int) ($rankingRow['rank'] ?? 0));
             }
 
             $isInterviewMatch = ($currentInterviewId > 0 && $rowInterviewId === $currentInterviewId);
             $isExamineeMatch = ($rowExamineeNumber !== '' && $rowExamineeNumber === $currentExaminee);
             if ($isInterviewMatch || (!$matchedByInterview && $isExamineeMatch)) {
                 $matchingRankingRow = $rankingRow;
-                if ($rowOutside) {
-                    $matchedOutsideIndex = $outsideSeen;
-                } else {
-                    $matchedInsideIndex = $insideSeen;
-                }
-                if (!$rowOutside && $rowSection === 'scc') {
-                    $matchedInsideSccIndex = $insideSccSeen;
-                } elseif (!$rowOutside && $rowSection === 'etg') {
-                    $matchedInsideEtgIndex = $insideEtgSeen;
-                } elseif (!$rowOutside) {
-                    $matchedInsideRegularIndex = $insideRegularSeen;
-                }
             }
 
             if ($isInterviewMatch) {
@@ -2414,13 +2387,12 @@ if ($firstChoiceId > 0 && $hasScoredInterview) {
 
             if ($quotaDisplayEnabled) {
                 $displayPosition = $firstChoiceRank;
-                if ($firstChoiceOutsideCapacity) {
-                    $displayPosition = max(0, (int) $firstChoiceAbsorptiveCapacity) + max(0, $matchedOutsideIndex);
-                } else {
-                    $displayPosition = max(0, $matchedInsideIndex);
+                $hiddenInsideSlots = max(0, (int) $firstChoiceAbsorptiveCapacity - $insideQualifiedCount);
+                if ($firstChoiceRank > 0 && $firstChoiceRank > $lastInsideLiveRank) {
+                    $displayPosition += $hiddenInsideSlots;
                 }
 
-                $displayTotal = max(0, (int) $firstChoiceAbsorptiveCapacity) + max(0, $outsideRowCount);
+                $displayTotal = max(0, count($sharedRankingRows) + $hiddenInsideSlots);
                 $firstChoiceRankValueDisplay = $displayPosition > 0 ? number_format($displayPosition) : 'N/A';
                 $firstChoiceRankTotalDisplay = number_format($displayTotal);
                 $firstChoiceRankDisplay = $firstChoiceRankValueDisplay . ' / ' . $firstChoiceRankTotalDisplay;
