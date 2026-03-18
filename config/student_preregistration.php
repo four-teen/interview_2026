@@ -308,6 +308,113 @@ if (!function_exists('student_preregistration_fetch_report')) {
     }
 }
 
+if (!function_exists('student_preregistration_fetch_program_progress_rows')) {
+    function student_preregistration_fetch_program_progress_rows(mysqli $conn, array $filters = []): array
+    {
+        $programId = max(0, (int) ($filters['program_id'] ?? 0));
+
+        if (function_exists('ensure_program_ranking_locks_table')) {
+            ensure_program_ranking_locks_table($conn);
+        }
+
+        $where = [
+            "p.status = 'active'",
+            "col.status = 'active'",
+            "cam.status = 'active'",
+        ];
+        $types = '';
+        $params = [];
+
+        if ($programId > 0) {
+            $where[] = 'p.program_id = ?';
+            $types .= 'i';
+            $params[] = $programId;
+        }
+
+        $sql = "
+            SELECT
+                p.program_id,
+                cam.campus_id,
+                cam.campus_code,
+                cam.campus_name,
+                p.program_code,
+                p.program_name,
+                p.major,
+                COALESCE(prereg.prereg_count, 0) AS prereg_count,
+                COALESCE(scored.scored_count, 0) AS scored_count,
+                COALESCE(lockstat.locked_count, 0) AS locked_count
+            FROM tbl_program p
+            INNER JOIN tbl_college col
+                ON col.college_id = p.college_id
+            INNER JOIN tbl_campus cam
+                ON cam.campus_id = col.campus_id
+            LEFT JOIN (
+                SELECT
+                    spr.program_id,
+                    COUNT(*) AS prereg_count
+                FROM tbl_student_preregistration spr
+                GROUP BY spr.program_id
+            ) prereg
+                ON prereg.program_id = p.program_id
+            LEFT JOIN (
+                SELECT
+                    COALESCE(NULLIF(si.program_id, 0), NULLIF(si.first_choice, 0)) AS ranking_program_id,
+                    COUNT(*) AS scored_count
+                FROM tbl_student_interview si
+                WHERE si.status = 'active'
+                  AND si.final_score IS NOT NULL
+                  AND COALESCE(NULLIF(si.program_id, 0), NULLIF(si.first_choice, 0)) IS NOT NULL
+                GROUP BY COALESCE(NULLIF(si.program_id, 0), NULLIF(si.first_choice, 0))
+            ) scored
+                ON scored.ranking_program_id = p.program_id
+            LEFT JOIN (
+                SELECT
+                    l.program_id,
+                    COUNT(*) AS locked_count
+                FROM tbl_program_ranking_locks l
+                GROUP BY l.program_id
+            ) lockstat
+                ON lockstat.program_id = p.program_id
+            WHERE " . implode(' AND ', $where) . "
+            ORDER BY cam.campus_name ASC, p.program_code ASC, p.program_name ASC, p.major ASC
+        ";
+
+        $rows = [];
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            return $rows;
+        }
+
+        if ($types !== '') {
+            $stmt->bind_param($types, ...$params);
+        }
+
+        $stmt->execute();
+        $result = $stmt->get_result();
+        while ($row = $result->fetch_assoc()) {
+            $row['program_label'] = student_preregistration_format_program_label($row);
+            $row['prereg_count'] = max(0, (int) ($row['prereg_count'] ?? 0));
+            $row['scored_count'] = max(0, (int) ($row['scored_count'] ?? 0));
+            $row['locked_count'] = max(0, (int) ($row['locked_count'] ?? 0));
+            $row['remaining_count'] = max(0, $row['scored_count'] - $row['locked_count']);
+
+            if (
+                $programId <= 0
+                && $row['prereg_count'] <= 0
+                && $row['scored_count'] <= 0
+                && $row['locked_count'] <= 0
+            ) {
+                continue;
+            }
+
+            $rows[] = $row;
+        }
+        $stmt->close();
+
+        return $rows;
+    }
+}
+
 if (!function_exists('student_preregistration_delete_by_program')) {
     function student_preregistration_delete_by_program(mysqli $conn, int $programId): array
     {

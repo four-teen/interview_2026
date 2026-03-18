@@ -53,6 +53,58 @@ $rows = $report['rows'];
 $summary = $report['summary'];
 $printHeader = student_preregistration_get_print_header();
 $printSections = student_preregistration_build_print_sections($rows);
+foreach ($printSections as &$printSection) {
+    $sectionRows = is_array($printSection['rows'] ?? null) ? $printSection['rows'] : [];
+    usort($sectionRows, static function (array $left, array $right): int {
+        $leftName = trim((string) ($left['full_name'] ?? ''));
+        $rightName = trim((string) ($right['full_name'] ?? ''));
+        $leftLastName = $leftName;
+        $rightLastName = $rightName;
+
+        if (strpos($leftName, ',') !== false) {
+            $leftLastName = trim((string) strstr($leftName, ',', true));
+        } elseif ($leftName !== '') {
+            $leftParts = preg_split('/\s+/', $leftName);
+            $leftLastName = trim((string) end($leftParts));
+        }
+
+        if (strpos($rightName, ',') !== false) {
+            $rightLastName = trim((string) strstr($rightName, ',', true));
+        } elseif ($rightName !== '') {
+            $rightParts = preg_split('/\s+/', $rightName);
+            $rightLastName = trim((string) end($rightParts));
+        }
+
+        if (function_exists('mb_strtoupper')) {
+            $leftLastName = mb_strtoupper($leftLastName, 'UTF-8');
+            $rightLastName = mb_strtoupper($rightLastName, 'UTF-8');
+            $leftName = mb_strtoupper($leftName, 'UTF-8');
+            $rightName = mb_strtoupper($rightName, 'UTF-8');
+        } else {
+            $leftLastName = strtoupper($leftLastName);
+            $rightLastName = strtoupper($rightLastName);
+            $leftName = strtoupper($leftName);
+            $rightName = strtoupper($rightName);
+        }
+
+        $lastNameCompare = strcmp($leftLastName, $rightLastName);
+        if ($lastNameCompare !== 0) {
+            return $lastNameCompare;
+        }
+
+        $nameCompare = strcmp($leftName, $rightName);
+        if ($nameCompare !== 0) {
+            return $nameCompare;
+        }
+
+        return strcmp(
+            trim((string) ($left['examinee_number'] ?? '')),
+            trim((string) ($right['examinee_number'] ?? ''))
+        );
+    });
+    $printSection['rows'] = $sectionRows;
+}
+unset($printSection);
 $monitoringPreregFlash = $_SESSION['monitoring_prereg_flash'] ?? null;
 if (is_array($monitoringPreregFlash) && isset($monitoringPreregFlash['message'])) {
     $flashMessage = [
@@ -186,84 +238,151 @@ function format_monitoring_prereg_datetime($value): string
         display: none;
       }
 
-      .mpr-print-header {
+      .mpr-print-program-block + .mpr-print-program-block {
+        break-before: page;
+        page-break-before: always;
+      }
+
+      .mpr-print-cover {
+        display: block;
         text-align: center;
-        margin-bottom: 0.45rem;
+        padding: 10mm 10mm 0;
+        break-after: page;
+        page-break-after: always;
       }
 
       .mpr-print-school {
-        font-size: 1.1rem;
+        font-size: 1.15rem;
         font-weight: 700;
+        line-height: 1.15;
         color: #1f2937;
-        margin-bottom: 0;
       }
 
       .mpr-print-address {
-        margin-top: 0.05rem;
-        margin-bottom: 0.05rem;
-        font-size: 0.78rem;
+        margin-top: 0.08rem;
+        font-size: 0.82rem;
+        line-height: 1.15;
         color: #4b5563;
       }
 
-      .mpr-print-title {
-        margin-top: 0.15rem;
-        margin-bottom: 0.1rem;
-        font-size: 0.95rem;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        color: #1f2937;
-      }
-
-      .mpr-print-generated {
-        margin-top: 0;
-        margin-bottom: 0;
-        font-size: 0.78rem;
-        color: #6b7280;
-      }
-
-      .mpr-print-section + .mpr-print-section {
-        margin-top: 1.4rem;
-        page-break-before: auto;
-      }
-
       .mpr-print-program {
-        border-bottom: 1px solid #111827;
-        padding-bottom: 0.28rem;
-        margin-bottom: 0.6rem;
-        font-size: 0.98rem;
+        margin-top: 0.9rem;
+        font-size: 1.5rem;
         font-weight: 700;
+        line-height: 1.2;
+        text-transform: uppercase;
         color: #111827;
       }
 
       .mpr-print-count {
-        margin-left: 0.45rem;
+        margin-top: 0.3rem;
+        font-size: 0.96rem;
+        font-weight: 600;
+        line-height: 1.15;
+        color: #374151;
+      }
+
+      .mpr-print-generated {
+        margin-top: 0.28rem;
         font-size: 0.78rem;
+        line-height: 1.15;
+        color: #6b7280;
+      }
+
+      .mpr-print-list-page {
+        padding-top: 0;
+      }
+
+      .mpr-print-list-head {
+        margin-bottom: 0.7rem;
+      }
+
+      .mpr-print-list-title {
+        font-size: 1rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        color: #111827;
+      }
+
+      .mpr-print-list-subtitle {
+        margin-top: 0.2rem;
+        font-size: 0.82rem;
         font-weight: 600;
         color: #6b7280;
       }
 
-      .mpr-print-list {
-        margin: 0;
-        padding-left: 1.45rem;
+      .mpr-print-table {
+        width: calc(100% - 0.8mm);
+        margin-right: 0.8mm;
+        border-collapse: collapse;
+        table-layout: fixed;
+        border: 1px solid #9ca3af;
+        border-right: 1px solid #9ca3af;
       }
 
-      .mpr-print-list li + li {
-        margin-top: 0.38rem;
+      .mpr-print-table th,
+      .mpr-print-table td {
+        border: 1px solid #9ca3af !important;
+        padding: 0.42rem 0.5rem;
+        vertical-align: top;
       }
 
-      .mpr-print-list-name {
+      .mpr-print-table thead th {
+        background: #f3f4f6;
+        font-size: 0.75rem;
         font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: #374151;
+      }
+
+      .mpr-print-table td {
+        font-size: 0.9rem;
         color: #111827;
       }
 
-      .mpr-print-list-meta {
-        display: block;
-        font-size: 0.78rem;
-        color: #4b5563;
+      .mpr-print-table th:last-child,
+      .mpr-print-table td:last-child {
+        border-right: 1px solid #9ca3af !important;
+      }
+
+      .mpr-print-table tbody tr:last-child td {
+        border-bottom: 1px solid #9ca3af !important;
+      }
+
+      .mpr-print-col-no {
+        width: 10mm;
+      }
+
+      .mpr-print-col-examinee {
+        width: 24mm;
+      }
+
+      .mpr-print-no,
+      .mpr-print-examinee {
+        white-space: nowrap;
+      }
+
+      .mpr-print-fullname {
+        font-weight: 700;
+        text-transform: uppercase;
+        color: #111827;
+      }
+
+      .mpr-print-empty {
+        border: 1px dashed #cbd5e1;
+        border-radius: 0.75rem;
+        padding: 1rem 1.1rem;
+        color: #64748b;
+        background: #f8fafc;
       }
 
       @media print {
+        @page {
+          size: A4 portrait;
+          margin: 12mm;
+        }
+
         .layout-menu,
         .layout-navbar,
         .content-backdrop,
@@ -274,6 +393,7 @@ function format_monitoring_prereg_datetime($value): string
         .mpr-screen-table,
         .mpr-page-title,
         .mpr-page-subtitle,
+        .alert,
         footer {
           display: none !important;
         }
@@ -287,12 +407,6 @@ function format_monitoring_prereg_datetime($value): string
           max-width: 100% !important;
         }
 
-        .card,
-        .mpr-stat-card {
-          border: 1px solid #d8dee8 !important;
-          box-shadow: none !important;
-        }
-
         .mpr-print-sheet {
           display: block;
         }
@@ -302,8 +416,17 @@ function format_monitoring_prereg_datetime($value): string
           background: #fff !important;
         }
 
-        .mpr-print-section {
-          break-inside: avoid;
+        .mpr-print-table {
+          page-break-inside: auto;
+        }
+
+        .mpr-print-table tr {
+          page-break-inside: avoid;
+          page-break-after: auto;
+        }
+
+        .mpr-print-table thead {
+          display: table-header-group;
         }
       }
     </style>
@@ -491,38 +614,50 @@ function format_monitoring_prereg_datetime($value): string
               </div>
 
               <div class="mpr-print-sheet">
-                <div class="mpr-print-header">
-                  <div class="mpr-print-school"><?= htmlspecialchars((string) ($printHeader['institution'] ?? 'Sultan Kudarat State University')); ?></div>
-                  <div class="mpr-print-address"><?= htmlspecialchars((string) ($printHeader['address'] ?? '')); ?></div>
-                  <div class="mpr-print-title"><?= htmlspecialchars((string) ($printHeader['report_title'] ?? 'Pre-Registered Students')); ?></div>
-                  <div class="mpr-print-generated">Generated on <?= htmlspecialchars($printGeneratedAt); ?></div>
-                </div>
-
                 <?php if (empty($printSections)): ?>
-                  <div class="text-muted">No pre-registered students found for the selected filter.</div>
+                  <div class="mpr-print-empty">No pre-registered students found for the selected filter.</div>
                 <?php else: ?>
                   <?php foreach ($printSections as $section): ?>
-                    <section class="mpr-print-section">
-                      <div class="mpr-print-program">
-                        <?= htmlspecialchars((string) ($section['program_label'] ?? 'No Program')); ?>
-                        <span class="mpr-print-count">(<?= number_format(count((array) ($section['rows'] ?? []))); ?> students)</span>
+                    <?php $sectionRows = (array) ($section['rows'] ?? []); ?>
+                    <section class="mpr-print-program-block">
+                      <div class="mpr-print-cover">
+                        <div class="mpr-print-school"><?= htmlspecialchars((string) ($printHeader['institution'] ?? 'Sultan Kudarat State University')); ?></div>
+                        <div class="mpr-print-address"><?= htmlspecialchars((string) ($printHeader['address'] ?? '')); ?></div>
+                        <div class="mpr-print-program"><?= htmlspecialchars((string) ($section['program_label'] ?? 'No Program')); ?></div>
+                        <div class="mpr-print-count">Total Pre-Registered: <?= number_format(count($sectionRows)); ?></div>
+                        <div class="mpr-print-generated">Generated on <?= htmlspecialchars($printGeneratedAt); ?></div>
                       </div>
-                      <ol class="mpr-print-list">
-                        <?php foreach (($section['rows'] ?? []) as $printRow): ?>
-                          <li>
-                            <span class="mpr-print-list-name"><?= htmlspecialchars((string) ($printRow['full_name'] ?? 'Unknown Student')); ?></span>
-                            <span class="mpr-print-list-meta">
-                              Examinee #: <?= htmlspecialchars((string) ($printRow['examinee_number'] ?? '')); ?>
-                              <?php if (trim((string) ($printRow['campus_name'] ?? '')) !== ''): ?>
-                                | Campus: <?= htmlspecialchars((string) $printRow['campus_name']); ?>
-                              <?php endif; ?>
-                              <?php if ((int) ($printRow['locked_rank'] ?? 0) > 0): ?>
-                                | Locked Rank: #<?= number_format((int) $printRow['locked_rank']); ?>
-                              <?php endif; ?>
-                            </span>
-                          </li>
-                        <?php endforeach; ?>
-                      </ol>
+
+                      <div class="mpr-print-list-page">
+                        <div class="mpr-print-list-head">
+                          <div class="mpr-print-list-title"><?= htmlspecialchars((string) ($section['program_label'] ?? 'No Program')); ?></div>
+                          <div class="mpr-print-list-subtitle">Alphabetical pre-registration list | <?= number_format(count($sectionRows)); ?> student<?= count($sectionRows) === 1 ? '' : 's'; ?></div>
+                        </div>
+
+                        <table class="mpr-print-table">
+                          <colgroup>
+                            <col class="mpr-print-col-no" />
+                            <col class="mpr-print-col-examinee" />
+                            <col />
+                          </colgroup>
+                          <thead>
+                            <tr>
+                              <th>No.</th>
+                              <th>Examinee Number</th>
+                              <th>Full Name</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <?php foreach ($sectionRows as $index => $printRow): ?>
+                              <tr>
+                                <td class="mpr-print-no"><?= number_format($index + 1); ?></td>
+                                <td class="mpr-print-examinee"><?= htmlspecialchars((string) ($printRow['examinee_number'] ?? '')); ?></td>
+                                <td class="mpr-print-fullname"><?= htmlspecialchars((string) ($printRow['full_name'] ?? 'Unknown Student')); ?></td>
+                              </tr>
+                            <?php endforeach; ?>
+                          </tbody>
+                        </table>
+                      </div>
                     </section>
                   <?php endforeach; ?>
                 <?php endif; ?>
