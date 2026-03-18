@@ -23,6 +23,8 @@
                       $sidebarActiveKey = 'student_workspace';
                   } elseif ($sidebarCurrentPage === 'student_monitoring.php') {
                       $sidebarActiveKey = 'student_monitoring';
+                  } elseif ($sidebarCurrentPage === 'program_rankings.php') {
+                      $sidebarActiveKey = 'program_rankings';
                   } elseif ($sidebarCurrentPage === 'preregistrations.php') {
                       $sidebarActiveKey = 'preregistrations';
                   } elseif ($sidebarCurrentPage === 'progchair_monitoring.php') {
@@ -241,6 +243,21 @@
                 <div class="sidebar-action-content">
                   <div class="sidebar-action-title">Student Monitoring</div>
                   <small class="sidebar-action-sub">View student progress and status</small>
+                </div>
+              </a>
+            </li>
+
+            <li class="menu-item px-2">
+              <a
+                href="<?= $sidebarHrefPrefix; ?>program_rankings.php"
+                class="menu-link sidebar-action-card<?= $sidebarActiveKey === 'program_rankings' ? ' active' : ''; ?>"
+              >
+                <span class="sidebar-action-icon bg-label-warning">
+                  <i class="bx bx-list-ol"></i>
+                </span>
+                <div class="sidebar-action-content">
+                  <div class="sidebar-action-title">Program Rankings</div>
+                  <small class="sidebar-action-sub">Select a program and view ranked students</small>
                 </div>
               </a>
             </li>

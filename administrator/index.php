@@ -959,6 +959,9 @@ $expectedCampusMonitoringLabel = trim($expectedCampusRangeLabel . ' Expected dem
                 <a href="placement_results/index.php" class="btn btn-sm btn-outline-primary">
                   Manage Placement Results
                 </a>
+                <a href="program_rankings.php" class="btn btn-sm btn-outline-warning">
+                  Program Rankings
+                </a>
                 <div class="admin-login-control">
                   <span class="admin-login-chip <?= $nonAdminLoginLocked ? 'locked' : 'unlocked'; ?>">
                     Login: <?= $nonAdminLoginLocked ? 'Locked' : 'Unlocked'; ?>

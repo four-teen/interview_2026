@@ -10,9 +10,13 @@ session_start();
 
 header('Content-Type: application/json; charset=utf-8');
 
+$role = (string) ($_SESSION['role'] ?? '');
+$isMonitoring = ($role === 'monitoring');
+$isAdministrator = ($role === 'administrator');
+
 if (
     !isset($_SESSION['logged_in']) ||
-    (($_SESSION['role'] ?? '') !== 'monitoring') ||
+    (!$isMonitoring && !$isAdministrator) ||
     empty($_SESSION['accountid'])
 ) {
     http_response_code(403);

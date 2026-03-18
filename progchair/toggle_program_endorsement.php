@@ -11,11 +11,15 @@ session_start();
 
 header('Content-Type: application/json');
 
+$role = (string) ($_SESSION['role'] ?? '');
+$isProgchair = ($role === 'progchair');
+$isAdministrator = ($role === 'administrator');
+
 if (
     !isset($_SESSION['logged_in']) ||
-    ($_SESSION['role'] ?? '') !== 'progchair' ||
+    (!$isProgchair && !$isAdministrator) ||
     empty($_SESSION['accountid']) ||
-    empty($_SESSION['campus_id'])
+    ($isProgchair && empty($_SESSION['campus_id']))
 ) {
     http_response_code(403);
     echo json_encode([
@@ -26,7 +30,7 @@ if (
 }
 
 $accountId = (int) $_SESSION['accountid'];
-$campusId = (int) $_SESSION['campus_id'];
+$campusId = $isProgchair ? (int) $_SESSION['campus_id'] : 0;
 
 $programId = isset($_POST['program_id']) ? (int) $_POST['program_id'] : 0;
 $interviewId = isset($_POST['interview_id']) ? (int) $_POST['interview_id'] : 0;
@@ -58,9 +62,16 @@ $programSql = "
         ON pc.program_id = p.program_id
     WHERE p.program_id = ?
       AND p.status = 'active'
-      AND c.campus_id = ?
     LIMIT 1
 ";
+
+if ($isProgchair) {
+    $programSql = str_replace(
+        "LIMIT 1",
+        "  AND c.campus_id = ?\n    LIMIT 1",
+        $programSql
+    );
+}
 
 $stmtProgram = $conn->prepare($programSql);
 if (!$stmtProgram) {
@@ -72,7 +83,11 @@ if (!$stmtProgram) {
     exit;
 }
 
-$stmtProgram->bind_param("ii", $programId, $campusId);
+if ($isProgchair) {
+    $stmtProgram->bind_param("ii", $programId, $campusId);
+} else {
+    $stmtProgram->bind_param("i", $programId);
+}
 $stmtProgram->execute();
 $program = $stmtProgram->get_result()->fetch_assoc();
 $stmtProgram->close();
@@ -92,7 +107,7 @@ $globalCutoffEnabled = (bool) ($globalCutoffState['enabled'] ?? false);
 $globalCutoffValue = isset($globalCutoffState['value']) ? (int) $globalCutoffState['value'] : null;
 $effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalCutoffEnabled, $globalCutoffValue);
 
-$rankingPayload = program_ranking_fetch_payload($conn, $programId, $campusId);
+$rankingPayload = program_ranking_fetch_payload($conn, $programId, $isProgchair ? $campusId : null);
 if (!($rankingPayload['success'] ?? false)) {
     http_response_code(500);
     echo json_encode([
