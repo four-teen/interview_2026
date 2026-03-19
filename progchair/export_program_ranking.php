@@ -59,12 +59,13 @@ if ($cutoffValue !== null && $cutoffValue !== '') {
 }
 
 if (($quota['enabled'] ?? false) === true) {
+    $regularEffectiveSlots = max(0, (int) ($quota['regular_effective_slots'] ?? $quota['regular_slots'] ?? 0));
     $quotaSummary = sprintf(
         'Capacity: %d | Base: %d | Regular: %d/%d | SCC: %d/%d | ETG: %d/%d',
         (int) ($quota['absorptive_capacity'] ?? 0),
         (int) ($quota['base_capacity'] ?? 0),
         (int) ($quota['regular_shown'] ?? 0),
-        (int) ($quota['regular_slots'] ?? 0),
+        $regularEffectiveSlots,
         (int) ($quota['endorsement_shown'] ?? 0),
         (int) ($quota['endorsement_capacity'] ?? 0),
         (int) ($quota['etg_shown'] ?? 0),

@@ -101,6 +101,48 @@ if (!function_exists('program_ranking_normalize_section')) {
     }
 }
 
+if (!function_exists('program_ranking_summarize_locked_rows')) {
+    function program_ranking_summarize_locked_rows(array $lockRows): array
+    {
+        $lockedInterviewIds = [];
+        $insideCounts = [
+            'regular' => 0,
+            'scc' => 0,
+            'etg' => 0,
+        ];
+        $outsideCounts = [
+            'regular' => 0,
+            'scc' => 0,
+            'etg' => 0,
+        ];
+
+        foreach ($lockRows as $lockRow) {
+            $interviewId = (int) ($lockRow['interview_id'] ?? 0);
+            if ($interviewId > 0) {
+                $lockedInterviewIds[$interviewId] = true;
+            }
+
+            $section = program_ranking_normalize_section((string) ($lockRow['snapshot_section'] ?? 'regular'));
+            if (!isset($insideCounts[$section])) {
+                $section = 'regular';
+            }
+
+            $isOutsideCapacity = ((int) ($lockRow['snapshot_outside_capacity'] ?? 0) === 1);
+            if ($isOutsideCapacity) {
+                $outsideCounts[$section]++;
+            } else {
+                $insideCounts[$section]++;
+            }
+        }
+
+        return [
+            'locked_interview_ids' => $lockedInterviewIds,
+            'inside_counts' => $insideCounts,
+            'outside_counts' => $outsideCounts,
+        ];
+    }
+}
+
 if (!function_exists('program_ranking_build_lock_ranges')) {
     function program_ranking_build_lock_ranges(array $lockRows): array
     {
@@ -131,6 +173,23 @@ if (!function_exists('program_ranking_build_lock_ranges')) {
         }
         $ranges[] = ($start === $end) ? (string) $start : ($start . '-' . $end);
         return $ranges;
+    }
+}
+
+if (!function_exists('program_ranking_find_row_by_interview_id')) {
+    function program_ranking_find_row_by_interview_id(array $rows, int $interviewId): ?array
+    {
+        if ($interviewId <= 0) {
+            return null;
+        }
+
+        foreach ($rows as $row) {
+            if ((int) ($row['interview_id'] ?? 0) === $interviewId) {
+                return $row;
+            }
+        }
+
+        return null;
     }
 }
 
@@ -542,6 +601,22 @@ if (!function_exists('program_ranking_fetch_payload')) {
 
         $regularRows = $filteredRegularRows;
         $etgRows = $filteredEtgRows;
+        $lockRows = program_ranking_load_active_locks($conn, $programId);
+        $lockedSummary = program_ranking_summarize_locked_rows($lockRows);
+        $lockedInterviewIds = $lockedSummary['locked_interview_ids'];
+        $lockedInsideCounts = is_array($lockedSummary['inside_counts'] ?? null)
+            ? $lockedSummary['inside_counts']
+            : ['regular' => 0, 'scc' => 0, 'etg' => 0];
+
+        $unlockedRegularRows = array_values(array_filter($regularRows, function (array $row) use ($lockedInterviewIds): bool {
+            return !isset($lockedInterviewIds[(int) ($row['interview_id'] ?? 0)]);
+        }));
+        $unlockedEndorsementRows = array_values(array_filter($endorsementRows, function (array $row) use ($lockedInterviewIds): bool {
+            return !isset($lockedInterviewIds[(int) ($row['interview_id'] ?? 0)]);
+        }));
+        $unlockedEtgRows = array_values(array_filter($etgRows, function (array $row) use ($lockedInterviewIds): bool {
+            return !isset($lockedInterviewIds[(int) ($row['interview_id'] ?? 0)]);
+        }));
 
         $regularEffectiveSlots = null;
         $endorsementInRegularSlots = 0;
@@ -549,20 +624,65 @@ if (!function_exists('program_ranking_fetch_payload')) {
         if ($quotaEnabled) {
             $regularSlotsCount = max(0, (int) $regularSlots);
             $endorsementSlotsCount = max(0, (int) $endorsementCapacity);
-            $endorsementInRegularSlots = min($endorsementSelectedCount, $regularSlotsCount, $endorsementSlotsCount);
-            $regularEffectiveSlots = max(0, $regularSlotsCount - $endorsementInRegularSlots);
-            $regularShownCount = min(count($regularRows), $regularEffectiveSlots);
-            $etgShownCount = min(count($etgRows), max(0, (int) $etgSlots));
-            $endorsementShownCount = min($endorsementSelectedCount, min($regularSlotsCount, $endorsementSlotsCount));
+            $regularEffectiveSlots = $regularSlotsCount;
+            $regularRemainingSlots = max(0, $regularSlotsCount - max(0, (int) ($lockedInsideCounts['regular'] ?? 0)));
+            $endorsementRemainingSlots = max(0, $endorsementSlotsCount - max(0, (int) ($lockedInsideCounts['scc'] ?? 0)));
+            $etgRemainingSlots = max(0, max(0, (int) $etgSlots) - max(0, (int) ($lockedInsideCounts['etg'] ?? 0)));
+        } else {
+            $regularRemainingSlots = 0;
+            $endorsementRemainingSlots = 0;
+            $etgRemainingSlots = 0;
+        }
+
+        $regularSplit = program_ranking_split_rows_by_capacity($unlockedRegularRows, $regularRemainingSlots, $quotaEnabled);
+        $endorsementSplit = program_ranking_split_rows_by_capacity($unlockedEndorsementRows, $endorsementRemainingSlots, $quotaEnabled);
+        $etgSplit = program_ranking_split_rows_by_capacity($unlockedEtgRows, $etgRemainingSlots, $quotaEnabled);
+
+        $regularInsideRows = $regularSplit['inside'];
+        $regularOutsideRows = $regularSplit['outside'];
+        $endorsementInsideRows = $endorsementSplit['inside'];
+        $endorsementOutsideRows = $endorsementSplit['outside'];
+        $etgInsideRows = $etgSplit['inside'];
+        $etgOutsideRows = $etgSplit['outside'];
+
+        if ($quotaEnabled && $absorptiveCapacity !== null) {
+            $insideTotal = max(0, (int) ($lockedInsideCounts['regular'] ?? 0))
+                + max(0, (int) ($lockedInsideCounts['scc'] ?? 0))
+                + max(0, (int) ($lockedInsideCounts['etg'] ?? 0))
+                + count($regularInsideRows)
+                + count($endorsementInsideRows)
+                + count($etgInsideRows);
+
+            $remainingAbsorptiveSlots = max(0, max(0, (int) $absorptiveCapacity) - $insideTotal);
+            $promoteOutsideRows = static function (array &$insideRows, array &$outsideRows) use (&$remainingAbsorptiveSlots): void {
+                if ($remainingAbsorptiveSlots <= 0 || empty($outsideRows)) {
+                    return;
+                }
+
+                $split = program_ranking_split_rows_by_capacity($outsideRows, $remainingAbsorptiveSlots, true);
+                if (!empty($split['inside'])) {
+                    $insideRows = array_merge($insideRows, $split['inside']);
+                    $remainingAbsorptiveSlots = max(0, $remainingAbsorptiveSlots - count($split['inside']));
+                }
+                $outsideRows = $split['outside'];
+            };
+
+            // Fill any unused total absorptive seats from the remaining pools in section priority order.
+            $promoteOutsideRows($regularInsideRows, $regularOutsideRows);
+            $promoteOutsideRows($endorsementInsideRows, $endorsementOutsideRows);
+            $promoteOutsideRows($etgInsideRows, $etgOutsideRows);
+        }
+
+        if ($quotaEnabled) {
+            $regularShownCount = max(0, (int) ($lockedInsideCounts['regular'] ?? 0)) + count($regularInsideRows);
+            $etgShownCount = max(0, (int) ($lockedInsideCounts['etg'] ?? 0)) + count($etgInsideRows);
+            $endorsementShownCount = max(0, (int) ($lockedInsideCounts['scc'] ?? 0)) + count($endorsementInsideRows);
+            $regularEffectiveSlots = $regularShownCount;
         } else {
             $regularShownCount = count($regularRows);
             $etgShownCount = count($etgRows);
             $endorsementShownCount = $endorsementSelectedCount;
         }
-
-        $regularSplit = program_ranking_split_rows_by_capacity($regularRows, max(0, (int) ($regularSlots ?? 0)), $quotaEnabled);
-        $endorsementSplit = program_ranking_split_rows_by_capacity($endorsementRows, max(0, (int) $endorsementCapacity), $quotaEnabled);
-        $etgSplit = program_ranking_split_rows_by_capacity($etgRows, max(0, (int) ($etgSlots ?? 0)), $quotaEnabled);
 
         $orderedEntries = [];
         $pushRows = function (array $rows, string $section, bool $outside) use (&$orderedEntries): void {
@@ -573,14 +693,13 @@ if (!function_exists('program_ranking_fetch_payload')) {
                 $orderedEntries[] = $entry;
             }
         };
-        $pushRows($regularSplit['inside'], 'regular', false);
-        $pushRows($endorsementSplit['inside'], 'scc', false);
-        $pushRows($etgSplit['inside'], 'etg', false);
-        $pushRows($regularSplit['outside'], 'regular', true);
-        $pushRows($endorsementSplit['outside'], 'scc', true);
-        $pushRows($etgSplit['outside'], 'etg', true);
+        $pushRows($regularInsideRows, 'regular', false);
+        $pushRows($endorsementInsideRows, 'scc', false);
+        $pushRows($etgInsideRows, 'etg', false);
+        $pushRows($regularOutsideRows, 'regular', true);
+        $pushRows($endorsementOutsideRows, 'scc', true);
+        $pushRows($etgOutsideRows, 'etg', true);
 
-        $lockRows = program_ranking_load_active_locks($conn, $programId);
         $lockApply = program_ranking_apply_locks($orderedEntries, $lockRows);
 
         return [

@@ -710,76 +710,11 @@ if (!function_exists('admin_student_management_execute_scc_action')) {
             ];
         }
 
-        $globalCutoffState = get_global_sat_cutoff_state($conn);
-        $globalCutoffEnabled = (bool) ($globalCutoffState['enabled'] ?? false);
-        $globalCutoffValue = isset($globalCutoffState['value']) ? (int) $globalCutoffState['value'] : null;
-        $programCutoff = $program['cutoff_score'] !== null ? (int) $program['cutoff_score'] : null;
-        $effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalCutoffEnabled, $globalCutoffValue);
-
-        $quotaEnabled = (($quota['enabled'] ?? false) === true);
-        $regularSlots = isset($quota['regular_slots']) ? max(0, (int) $quota['regular_slots']) : null;
-        $satScore = (int) ($student['sat_score'] ?? 0);
         $isInRegularRankingList = false;
-
-        if ($quotaEnabled) {
-            $regularSlotsCount = max(0, (int) $regularSlots);
-            $sccInRegularSlots = min($currentEndorsed, $regularSlotsCount, $endorsementCapacity);
-            $limit = max(0, $regularSlotsCount - $sccInRegularSlots);
-            if ($limit > 0) {
-                $rankedSql = "
-                    SELECT si_rank.interview_id
-                    FROM tbl_student_interview si_rank
-                    INNER JOIN tbl_placement_results pr_rank
-                        ON si_rank.placement_result_id = pr_rank.id
-                    LEFT JOIN tbl_program_endorsements pe_rank
-                        ON pe_rank.program_id = ?
-                       AND pe_rank.interview_id = si_rank.interview_id
-                    WHERE COALESCE(NULLIF(si_rank.program_id, 0), NULLIF(si_rank.first_choice, 0)) = ?
-                      AND si_rank.status = 'active'
-                      AND si_rank.final_score IS NOT NULL
-                      AND UPPER(COALESCE(si_rank.classification, 'REGULAR')) = 'REGULAR'
-                      AND pe_rank.endorsement_id IS NULL
-                ";
-                if ($effectiveCutoff !== null) {
-                    $rankedSql .= " AND pr_rank.sat_score >= ? ";
-                }
-                $rankedSql .= "
-                    ORDER BY
-                        si_rank.final_score DESC,
-                        pr_rank.sat_score DESC,
-                        pr_rank.full_name ASC
-                    LIMIT ?
-                ";
-
-                $rankedStmt = $conn->prepare($rankedSql);
-                if (!$rankedStmt) {
-                    return [
-                        'success' => false,
-                        'message' => 'Failed to prepare SCC eligibility check.',
-                    ];
-                }
-
-                if ($effectiveCutoff !== null) {
-                    $rankedStmt->bind_param('iiii', $programId, $programId, $effectiveCutoff, $limit);
-                } else {
-                    $rankedStmt->bind_param('iii', $programId, $programId, $limit);
-                }
-                $rankedStmt->execute();
-                $rankedResult = $rankedStmt->get_result();
-                while ($rankedRow = $rankedResult->fetch_assoc()) {
-                    if ((int) ($rankedRow['interview_id'] ?? 0) === $interviewId) {
-                        $isInRegularRankingList = true;
-                        break;
-                    }
-                }
-                $rankedStmt->close();
-            }
-        } else {
-            if ($effectiveCutoff === null) {
-                $isInRegularRankingList = true;
-            } else {
-                $isInRegularRankingList = $satScore >= $effectiveCutoff;
-            }
+        $matchingRankingRow = program_ranking_find_row_by_interview_id((array) ($rankingPayload['rows'] ?? []), $interviewId);
+        if ($matchingRankingRow !== null) {
+            $matchingSection = program_ranking_normalize_section((string) ($matchingRankingRow['row_section'] ?? 'regular'));
+            $isInRegularRankingList = ($matchingSection === 'regular' && empty($matchingRankingRow['is_outside_capacity']));
         }
 
         if ($isInRegularRankingList) {

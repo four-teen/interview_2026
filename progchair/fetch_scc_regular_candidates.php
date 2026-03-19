@@ -105,12 +105,6 @@ if (!$program) {
     exit;
 }
 
-$programCutoff = $program['cutoff_score'] !== null ? (int) $program['cutoff_score'] : null;
-$globalCutoffState = get_global_sat_cutoff_state($conn);
-$globalCutoffEnabled = (bool) ($globalCutoffState['enabled'] ?? false);
-$globalCutoffValue = isset($globalCutoffState['value']) ? (int) $globalCutoffState['value'] : null;
-$effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalCutoffEnabled, $globalCutoffValue);
-
 $rankingPayload = program_ranking_fetch_payload($conn, $programId, $isProgchair ? $campusId : null);
 if (!($rankingPayload['success'] ?? false)) {
     http_response_code(500);
@@ -121,87 +115,16 @@ if (!($rankingPayload['success'] ?? false)) {
     exit;
 }
 
-$quota = is_array($rankingPayload['quota'] ?? null) ? $rankingPayload['quota'] : [];
-$endorsementCapacity = max(0, (int) ($quota['endorsement_capacity'] ?? 0));
-$quotaEnabled = (($quota['enabled'] ?? false) === true);
-$regularSlots = isset($quota['regular_slots']) ? max(0, (int) $quota['regular_slots']) : null;
-$currentEndorsedCount = max(0, (int) ($quota['endorsement_selected'] ?? 0));
-
 $excludeInterviewIds = [];
+foreach ((array) ($rankingPayload['rows'] ?? []) as $rankingRow) {
+    $section = program_ranking_normalize_section((string) ($rankingRow['row_section'] ?? 'regular'));
+    if ($section !== 'regular' || !empty($rankingRow['is_outside_capacity'])) {
+        continue;
+    }
 
-if ($quotaEnabled) {
-    $regularSlotsCount = max(0, (int) $regularSlots);
-    $sccInRegularSlots = min($currentEndorsedCount, $regularSlotsCount, $endorsementCapacity);
-    $limit = max(0, $regularSlotsCount - $sccInRegularSlots);
-    if ($limit > 0) {
-        $rankedSql = "
-            SELECT si_rank.interview_id
-            FROM tbl_student_interview si_rank
-            INNER JOIN tbl_placement_results pr_rank
-                ON si_rank.placement_result_id = pr_rank.id
-            LEFT JOIN tbl_program_endorsements pe_rank
-                ON pe_rank.program_id = ?
-               AND pe_rank.interview_id = si_rank.interview_id
-            WHERE COALESCE(NULLIF(si_rank.program_id, 0), NULLIF(si_rank.first_choice, 0)) = ?
-              AND si_rank.status = 'active'
-              AND si_rank.final_score IS NOT NULL
-              AND UPPER(COALESCE(si_rank.classification, 'REGULAR')) = 'REGULAR'
-              AND pe_rank.endorsement_id IS NULL
-        ";
-
-        $rankedTypes = 'ii';
-        $rankedParams = [$programId, $programId];
-
-        if ($effectiveCutoff !== null) {
-            $rankedSql .= " AND pr_rank.sat_score >= ? ";
-            $rankedTypes .= 'i';
-            $rankedParams[] = $effectiveCutoff;
-        }
-
-        $rankedSql .= "
-            ORDER BY
-                si_rank.final_score DESC,
-                pr_rank.sat_score DESC,
-                pr_rank.full_name ASC
-            LIMIT ?
-        ";
-        $rankedTypes .= 'i';
-        $rankedParams[] = $limit;
-
-        $stmtRanked = $conn->prepare($rankedSql);
-        if (!$stmtRanked) {
-            http_response_code(500);
-            echo json_encode([
-                'success' => false,
-                'message' => 'Server error (ranked regular query).'
-            ]);
-            exit;
-        }
-
-        $rankedBindArgs = [$rankedTypes];
-        foreach ($rankedParams as $idx => $value) {
-            $rankedBindArgs[] = &$rankedParams[$idx];
-        }
-
-        if (!call_user_func_array([$stmtRanked, 'bind_param'], $rankedBindArgs)) {
-            $stmtRanked->close();
-            http_response_code(500);
-            echo json_encode([
-                'success' => false,
-                'message' => 'Server error (ranked regular bind).'
-            ]);
-            exit;
-        }
-
-        $stmtRanked->execute();
-        $rankedResult = $stmtRanked->get_result();
-        while ($rankedRow = $rankedResult->fetch_assoc()) {
-            $rankedInterviewId = (int) ($rankedRow['interview_id'] ?? 0);
-            if ($rankedInterviewId > 0) {
-                $excludeInterviewIds[] = $rankedInterviewId;
-            }
-        }
-        $stmtRanked->close();
+    $rankedInterviewId = (int) ($rankingRow['interview_id'] ?? 0);
+    if ($rankedInterviewId > 0) {
+        $excludeInterviewIds[] = $rankedInterviewId;
     }
 }
 
@@ -230,23 +153,12 @@ $sql = "
 $types = 'ii';
 $params = [$programId, $programId];
 
-if ($quotaEnabled) {
-    if (!empty($excludeInterviewIds)) {
-        $placeholders = implode(',', array_fill(0, count($excludeInterviewIds), '?'));
-        $sql .= " AND si.interview_id NOT IN ({$placeholders}) ";
-        $types .= str_repeat('i', count($excludeInterviewIds));
-        foreach ($excludeInterviewIds as $excludeId) {
-            $params[] = (int) $excludeId;
-        }
-    }
-} else {
-    if ($effectiveCutoff !== null) {
-        $sql .= " AND pr.sat_score < ? ";
-        $types .= 'i';
-        $params[] = $effectiveCutoff;
-    } else {
-        // No quota and no cutoff means regular students are already in the ranking list.
-        $sql .= " AND 1 = 0 ";
+if (!empty($excludeInterviewIds)) {
+    $placeholders = implode(',', array_fill(0, count($excludeInterviewIds), '?'));
+    $sql .= " AND si.interview_id NOT IN ({$placeholders}) ";
+    $types .= str_repeat('i', count($excludeInterviewIds));
+    foreach ($excludeInterviewIds as $excludeId) {
+        $params[] = (int) $excludeId;
     }
 }
 

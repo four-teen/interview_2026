@@ -1524,7 +1524,7 @@ if ($isProgramCardsRequest) {
             return `${total} ranked student${total === 1 ? '' : 's'} | REGULAR: ${regularCount} | SCC: ${endorsementCount} | ETG: ${etgCount}`;
           }
 
-          const regularSlots = Math.max(0, Number(quota.regular_slots ?? 0));
+          const regularSlots = Math.max(0, Number(quota.regular_effective_slots ?? quota.regular_slots ?? 0));
           const etgSlots = Math.max(0, Number(quota.etg_slots ?? 0));
           const sccSlots = Math.max(0, Number(quota.endorsement_capacity ?? 0));
           const regularUsed = Math.min(regularCount, regularSlots);

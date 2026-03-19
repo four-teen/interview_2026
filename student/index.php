@@ -770,6 +770,19 @@ function student_program_ranking_get_pool_state(array $context, int $programId, 
     ];
 }
 
+function student_program_ranking_section_label(string $section): string
+{
+    $normalized = program_ranking_normalize_section($section);
+    if ($normalized === 'scc') {
+        return 'SCC';
+    }
+    if ($normalized === 'etg') {
+        return 'ETG';
+    }
+
+    return 'Regular';
+}
+
 if (!ensure_student_profile_table($conn)) {
     http_response_code(500);
     exit('Student profile storage initialization failed.');
@@ -2254,13 +2267,14 @@ $firstChoiceRankTotal = ($firstChoiceAbsorptiveCapacity !== null)
 $firstChoiceRankValueDisplay = null;
 $firstChoiceRankTotalDisplay = ($firstChoiceId > 0) ? number_format($firstChoiceRankTotal) : null;
 $firstChoiceRankDisplay = 'N/A';
-$firstChoiceRankLabel = 'Rank Position / Total Scored';
+$firstChoiceRankLabel = 'Overall Rank / Total Ranked';
 $firstChoicePoolRank = $firstChoiceRank;
 $firstChoicePoolTotal = $firstChoiceRankTotal;
 $firstChoicePoolRankValueDisplay = null;
 $firstChoicePoolRankTotalDisplay = $firstChoiceRankTotalDisplay;
 $firstChoicePoolRankDisplay = 'N/A';
 $firstChoiceRankingSection = 'regular';
+$firstChoiceRankingSectionLabel = student_program_ranking_section_label($firstChoiceRankingSection);
 $firstChoiceRawRank = $firstChoiceRank;
 $firstChoiceRegularEffectiveSlots = $firstChoiceRegularSlots;
 $firstChoiceEndorsementShown = 0;
@@ -2268,6 +2282,7 @@ $firstChoiceEtgShown = 0;
 $firstChoiceQuotaAdjustedPosition = null;
 $firstChoiceQuotaAdjustedPositionDisplay = null;
 $firstChoiceQuotaNote = '';
+$firstChoiceHasSharedRankingRow = false;
 if ($firstChoiceId > 0) {
     if ($hasScoredInterview && $firstChoiceRank !== null) {
         $firstChoiceRankValueDisplay = number_format($firstChoiceRank);
@@ -2361,6 +2376,7 @@ if ($firstChoiceId > 0 && $hasScoredInterview) {
         $firstChoiceRankTotalDisplay = number_format($firstChoiceRankTotal);
 
         if ($matchingRankingRow !== null) {
+            $firstChoiceHasSharedRankingRow = true;
             $firstChoiceRank = max(0, (int) ($matchingRankingRow['rank'] ?? 0));
             $firstChoiceRawRank = $firstChoiceRank;
             $firstChoiceRankValueDisplay = $firstChoiceRank > 0 ? number_format($firstChoiceRank) : 'N/A';
@@ -2369,6 +2385,7 @@ if ($firstChoiceId > 0 && $hasScoredInterview) {
             if ($firstChoiceRankingSection === '') {
                 $firstChoiceRankingSection = 'regular';
             }
+            $firstChoiceRankingSectionLabel = student_program_ranking_section_label($firstChoiceRankingSection);
 
             $sectionRank = 0;
             $sectionTotal = 0;
@@ -2452,15 +2469,21 @@ if ($firstChoiceId > 0 && $hasScoredInterview) {
             } elseif ($firstChoiceOutsideCapacity) {
                 if ($firstChoiceRankingSection === 'regular' && $firstChoiceQuotaAdjustedPosition !== null) {
                     $firstChoiceStatusText = 'Outside regular quota';
+                } elseif ($firstChoiceRankingSection === 'scc') {
+                    $firstChoiceStatusText = 'Outside SCC quota';
+                } elseif ($firstChoiceRankingSection === 'etg') {
+                    $firstChoiceStatusText = 'Outside ETG quota';
                 } else {
-                    $firstChoiceStatusText = 'Outside quota';
+                    $firstChoiceStatusText = 'Outside ranked pool';
                 }
                 $firstChoiceStatusClass = 'status-out';
             } else {
                 if ($firstChoiceRankingSection === 'regular' && $firstChoiceRegularEffectiveSlots !== null) {
                     $firstChoiceStatusText = 'Within regular quota';
-                } elseif ($firstChoiceRankingSection === 'scc' || $firstChoiceRankingSection === 'etg') {
-                    $firstChoiceStatusText = 'Within quota';
+                } elseif ($firstChoiceRankingSection === 'scc') {
+                    $firstChoiceStatusText = 'Within SCC quota';
+                } elseif ($firstChoiceRankingSection === 'etg') {
+                    $firstChoiceStatusText = 'Within ETG quota';
                 } else {
                     $firstChoiceStatusText = 'Within ranked pool';
                 }
@@ -2478,6 +2501,17 @@ if ($firstChoiceId > 0 && $hasScoredInterview) {
             $firstChoiceOutsideCapacity = true;
         }
     }
+}
+
+$firstChoiceDisplayRankLabel = $firstChoiceRankLabel;
+$firstChoiceDisplayRankValue = $firstChoiceRankDisplay;
+$firstChoiceDisplayRankPrimaryValue = $firstChoiceRankValueDisplay;
+$firstChoiceDisplayRankSecondaryValue = $firstChoiceRankTotalDisplay;
+if (!$studentRankLocked && $firstChoiceHasSharedRankingRow) {
+    $firstChoiceDisplayRankLabel = $firstChoiceRankingSectionLabel . ' Rank / Total ' . $firstChoiceRankingSectionLabel;
+    $firstChoiceDisplayRankValue = $firstChoicePoolRankDisplay;
+    $firstChoiceDisplayRankPrimaryValue = $firstChoicePoolRankValueDisplay;
+    $firstChoiceDisplayRankSecondaryValue = $firstChoicePoolRankTotalDisplay;
 }
 
 $transferActionEnabled = (!$studentRankLocked && $firstChoiceOutsideCapacity && !$isAdminStudentPreview);
@@ -2789,6 +2823,10 @@ $firstChoicePrimaryMetaRows = [
 
 $firstChoicePrimaryMetaRows[] = ['label' => 'Available Slots', 'value' => $firstChoiceSlotDetails['available_display']];
 $firstChoicePrimaryMetaRows[] = ['label' => 'Cutoff SAT', 'value' => $firstChoiceSlotDetails['cutoff_display']];
+if ($firstChoiceHasSharedRankingRow) {
+    $firstChoicePrimaryMetaRows[] = ['label' => 'Ranking Pool', 'value' => $firstChoiceRankingSectionLabel];
+    $firstChoicePrimaryMetaRows[] = ['label' => 'Overall Rank', 'value' => $firstChoiceRankDisplay];
+}
 
 $programChoiceCards = [
     [
@@ -2797,10 +2835,10 @@ $programChoiceCards = [
         'program_code' => $firstChoiceSlotDetails['program_code'],
         'campus_name' => $firstChoiceCampusName,
         'is_primary' => true,
-        'stat_label' => $firstChoiceRankLabel,
-        'stat_value' => $firstChoiceRankDisplay,
-        'stat_primary_value' => $firstChoiceRankValueDisplay,
-        'stat_secondary_value' => $firstChoiceRankTotalDisplay,
+        'stat_label' => $firstChoiceDisplayRankLabel,
+        'stat_value' => $firstChoiceDisplayRankValue,
+        'stat_primary_value' => $firstChoiceDisplayRankPrimaryValue,
+        'stat_secondary_value' => $firstChoiceDisplayRankSecondaryValue,
         'stat_primary_outside' => $firstChoiceOutsideCapacity,
         'meta_rows' => $firstChoicePrimaryMetaRows,
         'slot_status' => $firstChoiceSlotDetails['slot_status'],

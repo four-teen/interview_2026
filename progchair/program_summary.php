@@ -462,10 +462,10 @@ if ($pageError === null && $selectedProgramId > 0) {
             );
             $sectionStats[$sectionKey]['remaining_to_lock'] = max(0, (int) ($stats['priority_target'] ?? 0) - $lockedPriorityCount);
 
-            if ($stats['configured_slots'] !== null) {
+            if (($rankingQuota['enabled'] ?? false) && $stats['configured_slots'] !== null) {
                 $sectionStats[$sectionKey]['available_slots'] = max(
                     0,
-                    (int) $stats['configured_slots'] - min(max(0, (int) ($stats['locked_inside_count'] ?? 0)), (int) $stats['configured_slots'])
+                    max(0, (int) ($stats['priority_target'] ?? 0)) - max(0, (int) ($stats['inside_count'] ?? 0))
                 );
             }
         }
@@ -1276,7 +1276,7 @@ $activeListRows = $studentListRows[$selectedView] ?? [];
                               <?= $absorptiveCapacity !== null ? number_format($absorptiveCapacity) : 'Not set'; ?>
                             </div>
                             <span class="pss-detail-item-sub">
-                              <?= $baseCapacity !== null ? 'Base capacity after SCC reserve: ' . number_format($baseCapacity) : 'Capacity distribution not configured yet'; ?>
+                              <?= $baseCapacity !== null ? 'Base capacity before live rollover: ' . number_format($baseCapacity) : 'Capacity distribution not configured yet'; ?>
                             </span>
                           </div>
                           <div class="pss-detail-item">
@@ -1365,7 +1365,7 @@ $activeListRows = $studentListRows[$selectedView] ?? [];
                         <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
                           <div class="pss-detail-title">Capacity And Lock Breakdown</div>
                           <span class="badge bg-label-info">
-                            Available slots shown for REGULAR / SCC / ETG
+                            Live ranking target shown for REGULAR / SCC / ETG
                           </span>
                         </div>
 
@@ -1375,11 +1375,11 @@ $activeListRows = $studentListRows[$selectedView] ?? [];
                               <tr>
                                 <th>Category</th>
                                 <th class="text-center">Qualified / Selected</th>
-                                <th class="text-center">Configured Slots</th>
-                                <th class="text-center">Priority To Lock</th>
+                                <th class="text-center">Base Slots</th>
+                                <th class="text-center">Live Target</th>
                                 <th class="text-center">Locked</th>
                                 <th class="text-center">Remaining To Lock</th>
-                                <th class="text-center">Available Slots</th>
+                                <th class="text-center">Open Live Seats</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -1517,19 +1517,19 @@ $activeListRows = $studentListRows[$selectedView] ?? [];
                         <div class="pss-detail-title mb-3">Chair Notes</div>
                         <div class="pss-meta-list">
                           <div class="pss-meta-line">
-                            <div class="pss-meta-key">Regular slots still open</div>
+                            <div class="pss-meta-key">Regular live seats open</div>
                             <div class="pss-meta-value">
                               <?= $sectionStats['regular']['available_slots'] !== null ? number_format((int) $sectionStats['regular']['available_slots']) : 'N/A'; ?>
                             </div>
                           </div>
                           <div class="pss-meta-line">
-                            <div class="pss-meta-key">SCC slots still open</div>
+                            <div class="pss-meta-key">SCC live seats open</div>
                             <div class="pss-meta-value">
                               <?= $sectionStats['scc']['available_slots'] !== null ? number_format((int) $sectionStats['scc']['available_slots']) : 'N/A'; ?>
                             </div>
                           </div>
                           <div class="pss-meta-line">
-                            <div class="pss-meta-key">ETG slots still open</div>
+                            <div class="pss-meta-key">ETG live seats open</div>
                             <div class="pss-meta-value">
                               <?= $sectionStats['etg']['available_slots'] !== null ? number_format((int) $sectionStats['etg']['available_slots']) : 'N/A'; ?>
                             </div>
