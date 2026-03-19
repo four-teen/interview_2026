@@ -349,6 +349,21 @@
 
             <li class="menu-item px-2">
               <a
+                href="program_summary.php"
+                class="menu-link sidebar-action-card<?= ($sidebarCurrentPage === 'program_summary.php') ? ' active' : ''; ?>"
+              >
+                <span class="sidebar-action-icon bg-label-primary">
+                  <i class="bx bx-bar-chart-alt-2"></i>
+                </span>
+                <div class="sidebar-action-content">
+                  <div class="sidebar-action-title">Program Summary</div>
+                  <small class="sidebar-action-sub">One-stop program counts, slots, and lock status</small>
+                </div>
+              </a>
+            </li>
+
+            <li class="menu-item px-2">
+              <a
                 href="index.php?open_action=pending"
                 data-owner-action="pending"
                 class="menu-link sidebar-action-card js-owner-action-trigger<?= ($sidebarCurrentPage === 'index.php' && $sidebarOwnerAction === 'pending') ? ' active' : ''; ?>"
