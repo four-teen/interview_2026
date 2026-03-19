@@ -14,7 +14,9 @@ if (!function_exists('ensure_student_preregistration_storage')) {
                 profile_completion_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00,
                 agreement_accepted TINYINT(1) NOT NULL DEFAULT 0,
                 agreement_accepted_at DATETIME DEFAULT NULL,
-                status ENUM('submitted') NOT NULL DEFAULT 'submitted',
+                status ENUM('submitted', 'forfeited') NOT NULL DEFAULT 'submitted',
+                forfeited_at DATETIME DEFAULT NULL,
+                forfeited_by INT(10) UNSIGNED DEFAULT NULL,
                 submitted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 PRIMARY KEY (preregistration_id),
@@ -32,6 +34,8 @@ if (!function_exists('ensure_student_preregistration_storage')) {
         $columnsToEnsure = [
             'agreement_accepted' => "ALTER TABLE tbl_student_preregistration ADD COLUMN agreement_accepted TINYINT(1) NOT NULL DEFAULT 0 AFTER profile_completion_percent",
             'agreement_accepted_at' => "ALTER TABLE tbl_student_preregistration ADD COLUMN agreement_accepted_at DATETIME DEFAULT NULL AFTER agreement_accepted",
+            'forfeited_at' => "ALTER TABLE tbl_student_preregistration ADD COLUMN forfeited_at DATETIME DEFAULT NULL AFTER status",
+            'forfeited_by' => "ALTER TABLE tbl_student_preregistration ADD COLUMN forfeited_by INT(10) UNSIGNED DEFAULT NULL AFTER forfeited_at",
         ];
 
         foreach ($columnsToEnsure as $columnName => $alterSql) {
@@ -47,6 +51,23 @@ if (!function_exists('ensure_student_preregistration_storage')) {
             }
 
             if (!$conn->query($alterSql)) {
+                return false;
+            }
+        }
+
+        $statusColumnResult = $conn->query("SHOW COLUMNS FROM tbl_student_preregistration LIKE 'status'");
+        if (!$statusColumnResult) {
+            return false;
+        }
+
+        $statusColumn = $statusColumnResult->fetch_assoc();
+        $statusColumnResult->free();
+        $statusType = strtolower((string) ($statusColumn['Type'] ?? ''));
+        if (strpos($statusType, "'forfeited'") === false) {
+            if (!$conn->query("
+                ALTER TABLE tbl_student_preregistration
+                MODIFY COLUMN status ENUM('submitted', 'forfeited') NOT NULL DEFAULT 'submitted'
+            ")) {
                 return false;
             }
         }
@@ -157,6 +178,7 @@ if (!function_exists('student_preregistration_fetch_program_options')) {
             FROM tbl_program p
             LEFT JOIN tbl_student_preregistration spr
                 ON spr.program_id = p.program_id
+               AND spr.status = 'submitted'
             WHERE p.status = 'active'
             GROUP BY p.program_id, p.program_code, p.program_name, p.major
             ORDER BY p.program_name ASC, p.major ASC, p.program_code ASC
@@ -205,6 +227,8 @@ if (!function_exists('student_preregistration_fetch_report')) {
             $types .= 'i';
             $params[] = $programId;
         }
+
+        $where[] = "spr.status = 'submitted'";
 
         $sql = "
             SELECT
@@ -353,6 +377,7 @@ if (!function_exists('student_preregistration_fetch_program_progress_rows')) {
                     spr.program_id,
                     COUNT(*) AS prereg_count
                 FROM tbl_student_preregistration spr
+                WHERE spr.status = 'submitted'
                 GROUP BY spr.program_id
             ) prereg
                 ON prereg.program_id = p.program_id
@@ -507,6 +532,120 @@ if (!function_exists('student_preregistration_delete_by_programs')) {
             'deleted' => $deleted,
             'message' => $deleted > 0 ? 'Pre-registrations removed.' : 'No pre-registrations found for selected programs.',
             'program_ids' => $normalizedIds,
+        ];
+    }
+}
+
+if (!function_exists('student_preregistration_forfeit')) {
+    function student_preregistration_forfeit(mysqli $conn, int $preregistrationId, ?int $accountId = null): array
+    {
+        $preregistrationId = max(0, $preregistrationId);
+        if ($preregistrationId <= 0) {
+            return [
+                'success' => false,
+                'message' => 'Invalid pre-registration selected.',
+            ];
+        }
+
+        if (!ensure_student_preregistration_storage($conn)) {
+            return [
+                'success' => false,
+                'message' => 'Failed to prepare pre-registration storage.',
+            ];
+        }
+
+        $lookupSql = "
+            SELECT preregistration_id, examinee_number, status
+            FROM tbl_student_preregistration
+            WHERE preregistration_id = ?
+            LIMIT 1
+        ";
+        $lookupStmt = $conn->prepare($lookupSql);
+        if (!$lookupStmt) {
+            return [
+                'success' => false,
+                'message' => 'Server error while preparing pre-registration lookup.',
+            ];
+        }
+
+        $lookupStmt->bind_param('i', $preregistrationId);
+        $lookupStmt->execute();
+        $row = $lookupStmt->get_result()->fetch_assoc();
+        $lookupStmt->close();
+
+        if (!$row) {
+            return [
+                'success' => false,
+                'message' => 'Pre-registration record not found.',
+            ];
+        }
+
+        $currentStatus = strtolower(trim((string) ($row['status'] ?? 'submitted')));
+        if ($currentStatus !== 'submitted') {
+            return [
+                'success' => false,
+                'message' => 'This pre-registration is already forfeited.',
+                'status' => $currentStatus,
+            ];
+        }
+
+        if (($accountId ?? 0) > 0) {
+            $updateSql = "
+                UPDATE tbl_student_preregistration
+                SET status = 'forfeited',
+                    forfeited_at = NOW(),
+                    forfeited_by = ?
+                WHERE preregistration_id = ?
+                  AND status = 'submitted'
+                LIMIT 1
+            ";
+            $updateStmt = $conn->prepare($updateSql);
+            if (!$updateStmt) {
+                return [
+                    'success' => false,
+                    'message' => 'Server error while preparing forfeiture update.',
+                ];
+            }
+            $updateStmt->bind_param('ii', $accountId, $preregistrationId);
+        } else {
+            $updateSql = "
+                UPDATE tbl_student_preregistration
+                SET status = 'forfeited',
+                    forfeited_at = NOW(),
+                    forfeited_by = NULL
+                WHERE preregistration_id = ?
+                  AND status = 'submitted'
+                LIMIT 1
+            ";
+            $updateStmt = $conn->prepare($updateSql);
+            if (!$updateStmt) {
+                return [
+                    'success' => false,
+                    'message' => 'Server error while preparing forfeiture update.',
+                ];
+            }
+            $updateStmt->bind_param('i', $preregistrationId);
+        }
+
+        $executed = $updateStmt->execute();
+        $affectedRows = $executed ? (int) $updateStmt->affected_rows : 0;
+        $updateStmt->close();
+
+        if (!$executed || $affectedRows <= 0) {
+            return [
+                'success' => false,
+                'message' => 'Failed to forfeit pre-registration.',
+            ];
+        }
+
+        $examineeNumber = trim((string) ($row['examinee_number'] ?? ''));
+        return [
+            'success' => true,
+            'message' => $examineeNumber !== ''
+                ? 'Pre-registration forfeited for examinee #' . $examineeNumber . '.'
+                : 'Pre-registration forfeited.',
+            'preregistration_id' => $preregistrationId,
+            'examinee_number' => $examineeNumber,
         ];
     }
 }

@@ -608,6 +608,7 @@ if ($isProgramCardsRequest) {
     <link rel="stylesheet" href="../assets/vendor/css/theme-default.css" />
     <link rel="stylesheet" href="../assets/css/demo.css" />
     <link rel="stylesheet" href="../assets/vendor/libs/perfect-scrollbar/perfect-scrollbar.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" />
     <script src="../assets/vendor/js/helpers.js"></script>
     <script src="../assets/js/config.js"></script>
     <style>
@@ -906,6 +907,37 @@ if ($isProgramCardsRequest) {
         fill: currentColor;
       }
 
+      #monitoringLockStatus {
+        font-weight: 600;
+      }
+
+      .swal2-popup .scc-picker-wrap {
+        text-align: left;
+      }
+
+      .swal2-popup .scc-picker-label {
+        display: block;
+        margin-bottom: 0.35rem;
+        font-size: 0.86rem;
+        font-weight: 600;
+        color: #374151;
+      }
+
+      .swal2-popup .scc-picker-help {
+        margin-top: 0.45rem;
+        font-size: 0.78rem;
+        color: #6b7280;
+        line-height: 1.35;
+      }
+
+      .swal2-popup .select2-container {
+        width: 100% !important;
+      }
+
+      .swal2-container .select2-dropdown {
+        z-index: 21001;
+      }
+
       .ranking-scc-row {
         color: #15803d;
       }
@@ -1118,6 +1150,11 @@ if ($isProgramCardsRequest) {
                           <i class="bx bx-reset me-1"></i> Unlock All
                         </button>
                       </div>
+                      <div class="col-12 col-md-auto d-grid">
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="monitoringAddSccRegularBtn" disabled>
+                          <i class="bx bx-plus-circle me-1"></i> Add SCC (Regular)
+                        </button>
+                      </div>
                     </div>
 
                     <div class="d-flex flex-column flex-md-row justify-content-between gap-2 mb-3">
@@ -1172,11 +1209,13 @@ if ($isProgramCardsRequest) {
     </div>
 
     <script src="../assets/vendor/libs/jquery/jquery.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
     <script src="../assets/vendor/libs/popper/popper.js"></script>
     <script src="../assets/vendor/js/bootstrap.js"></script>
     <script src="../assets/vendor/libs/perfect-scrollbar/perfect-scrollbar.js"></script>
     <script src="../assets/vendor/js/menu.js"></script>
     <script src="../assets/js/main.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <script>
       (function () {
         const listEl = document.getElementById('monitoringProgramList');
@@ -1288,8 +1327,11 @@ if ($isProgramCardsRequest) {
         const lockRangeBtn = document.getElementById('monitoringLockRangeBtn');
         const unlockRangeBtn = document.getElementById('monitoringUnlockRangeBtn');
         const unlockAllBtn = document.getElementById('monitoringUnlockAllBtn');
+        const addSccRegularBtn = document.getElementById('monitoringAddSccRegularBtn');
         const lockSummaryEl = document.getElementById('monitoringLockSummary');
         const lockStatusEl = document.getElementById('monitoringLockStatus');
+        const sccCandidatesEndpoint = '../progchair/fetch_scc_regular_candidates.php';
+        const toggleEndorsementEndpoint = '../progchair/toggle_program_endorsement.php';
 
         let currentProgramId = 0;
         let currentProgramName = '';
@@ -1318,6 +1360,32 @@ if ($isProgramCardsRequest) {
           lockStatusEl.classList.toggle('text-success', !Boolean(isError));
         }
 
+        function getMonitoringRankingSwalOptions(options = {}) {
+          const mergedOptions = { ...(options || {}) };
+          const originalDidOpen = mergedOptions.didOpen;
+
+          mergedOptions.didOpen = (...args) => {
+            const swalContainer = typeof Swal !== 'undefined' ? Swal.getContainer() : null;
+            if (swalContainer) {
+              swalContainer.style.zIndex = '20000';
+            }
+            if (typeof originalDidOpen === 'function') {
+              originalDidOpen(...args);
+            }
+          };
+
+          return mergedOptions;
+        }
+
+        function fireMonitoringRankingSwal(title, text, icon) {
+          if (typeof Swal === 'undefined') {
+            window.alert(`${title}\n\n${text}`);
+            return Promise.resolve();
+          }
+
+          return Swal.fire(getMonitoringRankingSwalOptions({ title, text, icon }));
+        }
+
         function updateLockSummary() {
           if (!lockSummaryEl) return;
           const count = Number(currentLocks?.active_count ?? 0);
@@ -1328,6 +1396,25 @@ if ($isProgramCardsRequest) {
           }
           const label = ranges.length ? ranges.join(', ') : `${count} number(s)`;
           lockSummaryEl.textContent = `Locked No.: ${label}`;
+        }
+
+        function refreshActionButtons() {
+          const hasProgram = currentProgramId > 0;
+          const ecCapacity = Math.max(0, Number(currentQuota?.endorsement_capacity ?? 0));
+          const ecSelected = Math.max(0, Number(currentQuota?.endorsement_selected ?? 0));
+          const ecRemaining = Math.max(0, ecCapacity - ecSelected);
+
+          if (addSccRegularBtn) {
+            const canAddScc = hasProgram && ecCapacity > 0 && ecRemaining > 0;
+            addSccRegularBtn.disabled = !canAddScc;
+            addSccRegularBtn.title = addSccRegularBtn.disabled
+              ? (!hasProgram
+                  ? 'No active program selected.'
+                  : (ecCapacity <= 0
+                      ? 'SCC capacity is 0.'
+                      : (ecRemaining <= 0 ? 'SCC is full.' : 'No active program selected.')))
+              : `Add SCC from student interview list (${ecRemaining} slot${ecRemaining === 1 ? '' : 's'} remaining).`;
+          }
         }
 
         function escapeHtml(value) {
@@ -1447,6 +1534,161 @@ if ($isProgramCardsRequest) {
           return `Capacity: REGULAR: ${regularUsed}/${regularSlots} | SCC: ${endorsementUsed}/${sccSlots} | ETG: ${etgUsed}/${etgSlots}`;
         }
 
+        function toggleEndorsement(interviewId, action) {
+          if (!currentProgramId || !interviewId) {
+            return Promise.resolve();
+          }
+
+          const formData = new URLSearchParams();
+          formData.set('program_id', String(currentProgramId));
+          formData.set('interview_id', String(interviewId));
+          formData.set('action', String(action || '').toUpperCase());
+
+          return fetch(toggleEndorsementEndpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+              Accept: 'application/json'
+            },
+            body: formData.toString()
+          })
+            .then((res) => res.json())
+            .then((data) => {
+              if (!data || !data.success) {
+                throw new Error((data && data.message) || 'Failed to update SCC list.');
+              }
+
+              return data;
+            });
+        }
+
+        function openAddEcPicker(sourceType) {
+          const targetType = String(sourceType || '').toUpperCase();
+          if (targetType !== 'REGULAR') {
+            fireMonitoringRankingSwal('Unavailable', 'Only Regular students can be added to SCC from this action.', 'info');
+            return;
+          }
+
+          const ecCapacity = Math.max(0, Number(currentQuota?.endorsement_capacity ?? 0));
+          const ecSelected = Math.max(0, Number(currentQuota?.endorsement_selected ?? 0));
+          const ecRemaining = Math.max(0, ecCapacity - ecSelected);
+
+          if (ecCapacity <= 0) {
+            fireMonitoringRankingSwal('SCC Capacity', 'SCC capacity is 0. Configure SCC capacity first.', 'info');
+            return;
+          }
+
+          if (ecRemaining <= 0) {
+            fireMonitoringRankingSwal('SCC Full', 'SCC capacity is full.', 'info');
+            return;
+          }
+
+          if (typeof Swal === 'undefined' || typeof $ === 'undefined' || !$.fn || !$.fn.select2) {
+            fireMonitoringRankingSwal('Unavailable', 'SCC picker dependencies are not available on this page.', 'error');
+            return;
+          }
+
+          let pickerSelect = null;
+
+          Swal.fire(getMonitoringRankingSwalOptions({
+            title: 'Add SCC (Regular)',
+            html: `
+              <div class="scc-picker-wrap">
+                <label for="monitoringSccRegularPicker" class="scc-picker-label">Select student</label>
+                <select id="monitoringSccRegularPicker"></select>
+                <div class="scc-picker-help">
+                  All individuals selected under SCC are required to participate in the program interview.
+                </div>
+              </div>
+            `,
+            showCancelButton: true,
+            confirmButtonText: 'Add SCC',
+            cancelButtonText: 'Cancel',
+            focusConfirm: false,
+            didOpen: () => {
+              const selectEl = document.getElementById('monitoringSccRegularPicker');
+              if (!selectEl) {
+                return;
+              }
+
+              pickerSelect = $(selectEl);
+              pickerSelect.select2({
+                width: '100%',
+                dropdownParent: $(Swal.getPopup()),
+                placeholder: 'Search examinee # or student name',
+                allowClear: true,
+                minimumInputLength: 0,
+                ajax: {
+                  url: sccCandidatesEndpoint,
+                  dataType: 'json',
+                  delay: 250,
+                  data: (params) => ({
+                    program_id: currentProgramId,
+                    q: params.term || '',
+                    page: params.page || 1
+                  }),
+                  processResults: (data) => {
+                    const results = (data && data.success && Array.isArray(data.results)) ? data.results : [];
+                    return {
+                      results,
+                      pagination: {
+                        more: Boolean(data?.pagination?.more)
+                      }
+                    };
+                  }
+                },
+                language: {
+                  noResults: () => 'No outside-ranked regular candidate found.',
+                  searching: () => 'Searching...'
+                }
+              });
+
+              pickerSelect.on('select2:open', () => {
+                const searchField = document.querySelector('.select2-container--open .select2-search__field');
+                if (searchField) {
+                  searchField.focus();
+                }
+              });
+
+              pickerSelect.select2('open');
+            },
+            willClose: () => {
+              if (pickerSelect && pickerSelect.data('select2')) {
+                pickerSelect.select2('destroy');
+              }
+              pickerSelect = null;
+            },
+            preConfirm: () => {
+              const selectedValue = pickerSelect && pickerSelect.length ? pickerSelect.val() : '';
+              const interviewId = Number(selectedValue || 0);
+              if (!interviewId) {
+                Swal.showValidationMessage('Please select a student.');
+                return false;
+              }
+
+              return interviewId;
+            }
+          })).then((result) => {
+            if (!result.isConfirmed || !result.value) {
+              return;
+            }
+
+            const interviewId = Number(result.value || 0);
+            if (!interviewId) {
+              return;
+            }
+
+            toggleEndorsement(interviewId, 'ADD')
+              .then((data) => {
+                fireMonitoringRankingSwal('Added', data.message || 'Student added to SCC list.', 'success');
+                loadProgramRanking(currentProgramId, currentProgramName);
+              })
+              .catch((error) => {
+                fireMonitoringRankingSwal('Error', error.message || 'Failed to add SCC.', 'error');
+              });
+          });
+        }
+
         async function loadProgramRanking(programId, programName) {
           currentProgramId = Number(programId || 0);
           currentProgramName = String(programName || 'PROGRAM');
@@ -1454,6 +1696,7 @@ if ($isProgramCardsRequest) {
           currentQuota = null;
           currentLocks = { active_count: 0, ranges: [] };
           updateLockSummary();
+          refreshActionButtons();
 
           if (titleEl) titleEl.textContent = `Program Ranking - ${currentProgramName}`;
           if (metaEl) metaEl.textContent = 'Loading...';
@@ -1476,6 +1719,7 @@ if ($isProgramCardsRequest) {
               ? data.locks
               : { active_count: 0, ranges: [] };
             updateLockSummary();
+            refreshActionButtons();
 
             if (currentRows.length === 0) {
               if (emptyEl && currentQuota && currentQuota.enabled === true) {
@@ -1494,6 +1738,7 @@ if ($isProgramCardsRequest) {
             }
             setState({ loading: false, empty: false, showTable: true });
           } catch (error) {
+            refreshActionButtons();
             if (emptyEl) {
               emptyEl.textContent = (error && error.message) ? error.message : 'Failed to load ranking.';
             }
@@ -1663,6 +1908,9 @@ if ($isProgramCardsRequest) {
         }
         if (unlockAllBtn) {
           unlockAllBtn.addEventListener('click', () => applyLockAction('unlock_all'));
+        }
+        if (addSccRegularBtn) {
+          addSccRegularBtn.addEventListener('click', () => openAddEcPicker('REGULAR'));
         }
         if (printBtn) {
           printBtn.addEventListener('click', printCurrentRanking);

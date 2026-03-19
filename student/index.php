@@ -329,22 +329,24 @@ function ensure_student_profile_table($conn)
 function ensure_student_preregistration_table($conn)
 {
     $sql = "
-        CREATE TABLE IF NOT EXISTS tbl_student_preregistration (
-            preregistration_id INT(10) UNSIGNED NOT NULL AUTO_INCREMENT,
-            credential_id INT(10) UNSIGNED NOT NULL,
-            interview_id INT(10) UNSIGNED NOT NULL,
-            examinee_number VARCHAR(50) NOT NULL,
-            program_id INT(10) UNSIGNED NOT NULL,
-            locked_rank INT(10) UNSIGNED DEFAULT NULL,
-            profile_completion_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00,
-            agreement_accepted TINYINT(1) NOT NULL DEFAULT 0,
-            agreement_accepted_at DATETIME DEFAULT NULL,
-            status ENUM('submitted') NOT NULL DEFAULT 'submitted',
-            submitted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            PRIMARY KEY (preregistration_id),
-            UNIQUE KEY uq_student_prereg_credential (credential_id),
-            UNIQUE KEY uq_student_prereg_interview (interview_id),
+            CREATE TABLE IF NOT EXISTS tbl_student_preregistration (
+                preregistration_id INT(10) UNSIGNED NOT NULL AUTO_INCREMENT,
+                credential_id INT(10) UNSIGNED NOT NULL,
+                interview_id INT(10) UNSIGNED NOT NULL,
+                examinee_number VARCHAR(50) NOT NULL,
+                program_id INT(10) UNSIGNED NOT NULL,
+                locked_rank INT(10) UNSIGNED DEFAULT NULL,
+                profile_completion_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+                agreement_accepted TINYINT(1) NOT NULL DEFAULT 0,
+                agreement_accepted_at DATETIME DEFAULT NULL,
+                status ENUM('submitted', 'forfeited') NOT NULL DEFAULT 'submitted',
+                forfeited_at DATETIME DEFAULT NULL,
+                forfeited_by INT(10) UNSIGNED DEFAULT NULL,
+                submitted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (preregistration_id),
+                UNIQUE KEY uq_student_prereg_credential (credential_id),
+                UNIQUE KEY uq_student_prereg_interview (interview_id),
             KEY idx_student_prereg_program (program_id),
             KEY idx_student_prereg_examinee (examinee_number)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
@@ -357,6 +359,8 @@ function ensure_student_preregistration_table($conn)
     $columnsToEnsure = [
         'agreement_accepted' => "ALTER TABLE tbl_student_preregistration ADD COLUMN agreement_accepted TINYINT(1) NOT NULL DEFAULT 0 AFTER profile_completion_percent",
         'agreement_accepted_at' => "ALTER TABLE tbl_student_preregistration ADD COLUMN agreement_accepted_at DATETIME DEFAULT NULL AFTER agreement_accepted",
+        'forfeited_at' => "ALTER TABLE tbl_student_preregistration ADD COLUMN forfeited_at DATETIME DEFAULT NULL AFTER status",
+        'forfeited_by' => "ALTER TABLE tbl_student_preregistration ADD COLUMN forfeited_by INT(10) UNSIGNED DEFAULT NULL AFTER forfeited_at",
     ];
 
     foreach ($columnsToEnsure as $columnName => $alterSql) {
@@ -372,6 +376,23 @@ function ensure_student_preregistration_table($conn)
         }
 
         if (!$conn->query($alterSql)) {
+            return false;
+        }
+    }
+
+    $statusColumnResult = $conn->query("SHOW COLUMNS FROM tbl_student_preregistration LIKE 'status'");
+    if (!$statusColumnResult) {
+        return false;
+    }
+
+    $statusColumn = $statusColumnResult->fetch_assoc();
+    $statusColumnResult->free();
+    $statusType = strtolower((string) ($statusColumn['Type'] ?? ''));
+    if (strpos($statusType, "'forfeited'") === false) {
+        if (!$conn->query("
+            ALTER TABLE tbl_student_preregistration
+            MODIFY COLUMN status ENUM('submitted', 'forfeited') NOT NULL DEFAULT 'submitted'
+        ")) {
             return false;
         }
     }
@@ -1557,7 +1578,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') =
         $flashMessage = 'Pre-registration opens only after your rank is locked.';
     } elseif (!$profileIsComplete) {
         $flashMessage = 'Complete your profile to 100% before submitting pre-registration.';
-    } elseif (is_array($studentPreRegistration) && !empty($studentPreRegistration['preregistration_id'])) {
+    } elseif (
+        is_array($studentPreRegistration)
+        && !empty($studentPreRegistration['preregistration_id'])
+        && strtolower(trim((string) ($studentPreRegistration['status'] ?? 'submitted'))) === 'submitted'
+    ) {
         $flashType = 'success';
         $flashMessage = 'Pre-registration was already submitted.';
     } elseif (!$agreementAccepted) {
@@ -1576,6 +1601,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') =
                 agreement_accepted_at,
                 status
             ) VALUES (?, ?, ?, ?, NULLIF(?, 0), ?, 1, NOW(), 'submitted')
+            ON DUPLICATE KEY UPDATE
+                locked_rank = VALUES(locked_rank),
+                profile_completion_percent = VALUES(profile_completion_percent),
+                agreement_accepted = VALUES(agreement_accepted),
+                agreement_accepted_at = VALUES(agreement_accepted_at),
+                status = 'submitted',
+                forfeited_at = NULL,
+                forfeited_by = NULL,
+                submitted_at = NOW()
         ";
         $insertStmt = $conn->prepare($insertSql);
         if ($insertStmt) {

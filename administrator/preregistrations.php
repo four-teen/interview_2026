@@ -14,9 +14,56 @@ if (!isset($_SESSION['logged_in']) || (($_SESSION['role'] ?? '') !== 'administra
 $adminStudentPreviewCsrf = admin_student_impersonation_get_csrf_token();
 $adminStudentPreviewFlash = admin_student_impersonation_pop_flash();
 $adminStudentPreviewReturnTo = admin_student_impersonation_normalize_return_to((string) ($_SERVER['REQUEST_URI'] ?? ''));
+$adminPreregFlash = $_SESSION['administrator_prereg_flash'] ?? null;
+unset($_SESSION['administrator_prereg_flash']);
 $search = trim((string) ($_GET['q'] ?? ''));
 $programFilter = (int) ($_GET['program_id'] ?? 0);
 $storageReady = ensure_student_preregistration_storage($conn);
+$adminPreregCsrf = (string) ($_SESSION['administrator_prereg_csrf'] ?? '');
+if ($adminPreregCsrf === '') {
+    try {
+        $adminPreregCsrf = bin2hex(random_bytes(32));
+    } catch (Throwable $e) {
+        $adminPreregCsrf = sha1(uniqid('administrator_prereg_', true));
+    }
+    $_SESSION['administrator_prereg_csrf'] = $adminPreregCsrf;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') === 'forfeit_preregistration') {
+    $postedCsrf = (string) ($_POST['csrf_token'] ?? '');
+    $preregistrationId = (int) ($_POST['preregistration_id'] ?? 0);
+    $preserveSearch = trim((string) ($_POST['search'] ?? ''));
+    $preserveProgramFilter = (int) ($_POST['preserve_program_filter'] ?? 0);
+
+    if ($postedCsrf === '' || !hash_equals($adminPreregCsrf, $postedCsrf)) {
+        $_SESSION['administrator_prereg_flash'] = [
+            'type' => 'danger',
+            'message' => 'Invalid request token. Refresh the page and try again.',
+        ];
+    } else {
+        $forfeitResult = student_preregistration_forfeit(
+            $conn,
+            $preregistrationId,
+            (int) ($_SESSION['accountid'] ?? 0)
+        );
+        $_SESSION['administrator_prereg_flash'] = [
+            'type' => ($forfeitResult['success'] ?? false) ? 'success' : 'danger',
+            'message' => (string) ($forfeitResult['message'] ?? 'Failed to forfeit pre-registration.'),
+        ];
+    }
+
+    $redirectParams = [];
+    if ($preserveProgramFilter > 0) {
+        $redirectParams['program_id'] = $preserveProgramFilter;
+    }
+    if ($preserveSearch !== '') {
+        $redirectParams['q'] = $preserveSearch;
+    }
+    $nextUrl = 'preregistrations.php' . (empty($redirectParams) ? '' : '?' . http_build_query($redirectParams));
+    header('Location: ' . $nextUrl);
+    exit;
+}
+
 $programOptions = $storageReady ? student_preregistration_fetch_program_options($conn) : [];
 $report = $storageReady
     ? student_preregistration_fetch_report($conn, [
@@ -253,6 +300,13 @@ function format_administrator_prereg_datetime($value): string
         display: flex;
         align-items: center;
         gap: 0.75rem;
+      }
+
+      .prg-action-stack {
+        display: inline-flex;
+        flex-direction: column;
+        gap: 0.4rem;
+        align-items: center;
       }
 
       .prg-progress-modal-dialog {
@@ -538,6 +592,12 @@ function format_administrator_prereg_datetime($value): string
                   <?= htmlspecialchars((string) $adminStudentPreviewFlash['message']); ?>
                 </div>
               <?php endif; ?>
+              <?php if (is_array($adminPreregFlash) && !empty($adminPreregFlash['message'])): ?>
+                <?php $adminPreregAlertType = ((string) ($adminPreregFlash['type'] ?? '') === 'success') ? 'success' : 'danger'; ?>
+                <div class="alert alert-<?= htmlspecialchars($adminPreregAlertType); ?> py-2 mb-3">
+                  <?= htmlspecialchars((string) $adminPreregFlash['message']); ?>
+                </div>
+              <?php endif; ?>
 
               <div class="prg-toolbar">
                 <div class="prg-toolbar-actions">
@@ -553,6 +613,9 @@ function format_administrator_prereg_datetime($value): string
                   <button type="button" class="btn btn-outline-secondary prg-print-button" onclick="window.print();">
                     <i class="bx bx-printer me-1"></i>Print
                   </button>
+                </div>
+                <div class="alert alert-warning mb-0 py-2 px-3">
+                  Submitted pre-registrations can be forfeited individually when needed.
                 </div>
               </div>
 
@@ -718,20 +781,37 @@ function format_administrator_prereg_datetime($value): string
                                 <?php endif; ?>
                               </td>
                               <td class="text-center">
-                                <?php if ((int) ($row['credential_id'] ?? 0) > 0 && $credentialStatus === 'active'): ?>
-                                  <form method="post" action="impersonate_student.php" class="d-inline">
-                                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($adminStudentPreviewCsrf); ?>" />
-                                    <input type="hidden" name="credential_id" value="<?= (int) ($row['credential_id'] ?? 0); ?>" />
-                                    <input type="hidden" name="return_to" value="<?= htmlspecialchars($adminStudentPreviewReturnTo); ?>" />
-                                    <button type="submit" class="btn btn-sm btn-outline-warning">
+                                <div class="prg-action-stack">
+                                  <?php if ((int) ($row['credential_id'] ?? 0) > 0 && $credentialStatus === 'active'): ?>
+                                    <form method="post" action="impersonate_student.php" class="d-inline">
+                                      <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($adminStudentPreviewCsrf); ?>" />
+                                      <input type="hidden" name="credential_id" value="<?= (int) ($row['credential_id'] ?? 0); ?>" />
+                                      <input type="hidden" name="return_to" value="<?= htmlspecialchars($adminStudentPreviewReturnTo); ?>" />
+                                      <button type="submit" class="btn btn-sm btn-outline-warning">
+                                        View as Student
+                                      </button>
+                                    </form>
+                                  <?php else: ?>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary" disabled title="Active student credential required.">
                                       View as Student
                                     </button>
+                                  <?php endif; ?>
+
+                                  <form method="post" class="d-inline js-prg-forfeit-form">
+                                    <input type="hidden" name="action" value="forfeit_preregistration" />
+                                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($adminPreregCsrf); ?>" />
+                                    <input type="hidden" name="preregistration_id" value="<?= (int) ($row['preregistration_id'] ?? 0); ?>" />
+                                    <input type="hidden" name="search" value="<?= htmlspecialchars($search); ?>" />
+                                    <input type="hidden" name="preserve_program_filter" value="<?= (int) $programFilter; ?>" />
+                                    <button
+                                      type="submit"
+                                      class="btn btn-sm btn-outline-danger"
+                                      data-student-name="<?= htmlspecialchars((string) ($row['full_name'] ?? 'this student')); ?>"
+                                    >
+                                      Forfeit
+                                    </button>
                                   </form>
-                                <?php else: ?>
-                                  <button type="button" class="btn btn-sm btn-outline-secondary" disabled title="Active student credential required.">
-                                    View as Student
-                                  </button>
-                                <?php endif; ?>
+                                </div>
                               </td>
                             </tr>
                           <?php endforeach; ?>
@@ -1230,6 +1310,22 @@ function format_administrator_prereg_datetime($value): string
           });
         }
       });
+    </script>
+    <script>
+      (function () {
+        Array.from(document.querySelectorAll('.js-prg-forfeit-form')).forEach(function (formEl) {
+          formEl.addEventListener('submit', function (event) {
+            const submitButton = formEl.querySelector('button[type="submit"]');
+            const studentName = submitButton && submitButton.dataset
+              ? String(submitButton.dataset.studentName || 'this student')
+              : 'this student';
+
+            if (!window.confirm(`Forfeit pre-registration for ${studentName}? This will remove the submission from active pre-registration lists.`)) {
+              event.preventDefault();
+            }
+          });
+        });
+      })();
     </script>
   </body>
 </html>

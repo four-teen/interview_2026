@@ -18,10 +18,11 @@ header('Content-Type: application/json');
 $role = (string) ($_SESSION['role'] ?? '');
 $isProgchair = ($role === 'progchair');
 $isAdministrator = ($role === 'administrator');
+$isMonitoring = ($role === 'monitoring');
 
 if (
     !isset($_SESSION['logged_in']) ||
-    (!$isProgchair && !$isAdministrator) ||
+    (!$isProgchair && !$isAdministrator && !$isMonitoring) ||
     empty($_SESSION['accountid']) ||
     ($isProgchair && empty($_SESSION['campus_id']))
 ) {

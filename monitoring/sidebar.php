@@ -1,5 +1,30 @@
 <?php
 $sidebarCurrentPage = basename($_SERVER['PHP_SELF'] ?? '');
+$sidebarSection = basename(dirname($_SERVER['PHP_SELF'] ?? ''));
+$sidebarHrefPrefixOverride = isset($sidebarHrefPrefixOverride)
+    ? trim((string) $sidebarHrefPrefixOverride)
+    : '';
+$sidebarActiveKeyOverride = isset($sidebarActiveKeyOverride)
+    ? trim((string) $sidebarActiveKeyOverride)
+    : '';
+$sidebarHrefPrefix = $sidebarHrefPrefixOverride !== ''
+    ? $sidebarHrefPrefixOverride
+    : (($sidebarSection === 'monitoring') ? '' : '../');
+$sidebarActiveKey = $sidebarActiveKeyOverride !== '' ? $sidebarActiveKeyOverride : 'dashboard';
+
+if ($sidebarActiveKeyOverride === '') {
+    if ($sidebarCurrentPage === 'program_rankings.php') {
+        $sidebarActiveKey = 'program_rankings';
+    } elseif ($sidebarCurrentPage === 'students.php') {
+        $sidebarActiveKey = 'students';
+    } elseif ($sidebarCurrentPage === 'preregistrations.php') {
+        $sidebarActiveKey = 'preregistrations';
+    } elseif ($sidebarSection === 'programs') {
+        $sidebarActiveKey = 'programs';
+    } elseif ($sidebarCurrentPage === 'index.php') {
+        $sidebarActiveKey = 'dashboard';
+    }
+}
 ?>
 
 <aside id="layout-menu" class="layout-menu menu-vertical menu bg-menu-theme">
@@ -131,8 +156,8 @@ $sidebarCurrentPage = basename($_SERVER['PHP_SELF'] ?? '');
     </li>
     <li class="menu-item px-2">
       <a
-        href="index.php"
-        class="menu-link sidebar-action-card<?= $sidebarCurrentPage === 'index.php' ? ' active' : ''; ?>"
+        href="<?= htmlspecialchars($sidebarHrefPrefix); ?>index.php"
+        class="menu-link sidebar-action-card<?= $sidebarActiveKey === 'dashboard' ? ' active' : ''; ?>"
       >
         <span class="sidebar-action-icon bg-label-primary">
           <i class="bx bx-home-circle"></i>
@@ -145,8 +170,8 @@ $sidebarCurrentPage = basename($_SERVER['PHP_SELF'] ?? '');
     </li>
     <li class="menu-item px-2">
       <a
-        href="program_rankings.php"
-        class="menu-link sidebar-action-card<?= $sidebarCurrentPage === 'program_rankings.php' ? ' active' : ''; ?>"
+        href="<?= htmlspecialchars($sidebarHrefPrefix); ?>program_rankings.php"
+        class="menu-link sidebar-action-card<?= $sidebarActiveKey === 'program_rankings' ? ' active' : ''; ?>"
       >
         <span class="sidebar-action-icon bg-label-primary">
           <i class="bx bx-list-ol"></i>
@@ -159,8 +184,22 @@ $sidebarCurrentPage = basename($_SERVER['PHP_SELF'] ?? '');
     </li>
     <li class="menu-item px-2">
       <a
-        href="students.php"
-        class="menu-link sidebar-action-card<?= $sidebarCurrentPage === 'students.php' ? ' active' : ''; ?>"
+        href="<?= htmlspecialchars($sidebarHrefPrefix); ?>programs/index.php"
+        class="menu-link sidebar-action-card<?= $sidebarActiveKey === 'programs' ? ' active' : ''; ?>"
+      >
+        <span class="sidebar-action-icon bg-label-warning">
+          <i class="bx bx-slider-alt"></i>
+        </span>
+        <div class="sidebar-action-content">
+          <div class="sidebar-action-title">Programs</div>
+          <small class="sidebar-action-sub">Configure capacity, SCC, ETG, and regular slots</small>
+        </div>
+      </a>
+    </li>
+    <li class="menu-item px-2">
+      <a
+        href="<?= htmlspecialchars($sidebarHrefPrefix); ?>students.php"
+        class="menu-link sidebar-action-card<?= $sidebarActiveKey === 'students' ? ' active' : ''; ?>"
       >
         <span class="sidebar-action-icon bg-label-info">
           <i class="bx bx-group"></i>
@@ -173,8 +212,8 @@ $sidebarCurrentPage = basename($_SERVER['PHP_SELF'] ?? '');
     </li>
     <li class="menu-item px-2">
       <a
-        href="preregistrations.php"
-        class="menu-link sidebar-action-card<?= $sidebarCurrentPage === 'preregistrations.php' ? ' active' : ''; ?>"
+        href="<?= htmlspecialchars($sidebarHrefPrefix); ?>preregistrations.php"
+        class="menu-link sidebar-action-card<?= $sidebarActiveKey === 'preregistrations' ? ' active' : ''; ?>"
       >
         <span class="sidebar-action-icon bg-label-success">
           <i class="bx bx-clipboard"></i>

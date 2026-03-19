@@ -21,6 +21,50 @@ foreach ($programOptions as $programOption) {
 }
 $flashMessage = null;
 
+if (empty($_SESSION['monitoring_prereg_csrf'])) {
+    try {
+        $_SESSION['monitoring_prereg_csrf'] = bin2hex(random_bytes(32));
+    } catch (Throwable $e) {
+        $_SESSION['monitoring_prereg_csrf'] = sha1(uniqid('monitoring_prereg_', true));
+    }
+}
+$monitoringPreregCsrf = (string) $_SESSION['monitoring_prereg_csrf'];
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') === 'forfeit_preregistration') {
+    $postedCsrf = (string) ($_POST['csrf_token'] ?? '');
+    $preregistrationId = (int) ($_POST['preregistration_id'] ?? 0);
+    $preserveSearch = trim((string) ($_POST['search'] ?? ''));
+    $preserveProgramFilter = (int) ($_POST['preserve_program_filter'] ?? 0);
+
+    if ($postedCsrf === '' || !hash_equals($monitoringPreregCsrf, $postedCsrf)) {
+        $_SESSION['monitoring_prereg_flash'] = [
+            'type' => 'danger',
+            'message' => 'Invalid request token. Refresh the page and try again.',
+        ];
+    } else {
+        $forfeitResult = student_preregistration_forfeit(
+            $conn,
+            $preregistrationId,
+            (int) ($_SESSION['accountid'] ?? 0)
+        );
+        $_SESSION['monitoring_prereg_flash'] = [
+            'type' => ($forfeitResult['success'] ?? false) ? 'success' : 'danger',
+            'message' => (string) ($forfeitResult['message'] ?? 'Failed to forfeit pre-registration.'),
+        ];
+    }
+
+    $redirectParams = [];
+    if ($preserveProgramFilter > 0) {
+        $redirectParams['program_id'] = $preserveProgramFilter;
+    }
+    if ($preserveSearch !== '') {
+        $redirectParams['q'] = $preserveSearch;
+    }
+    $nextUrl = 'preregistrations.php' . (empty($redirectParams) ? '' : '?' . http_build_query($redirectParams));
+    header('Location: ' . $nextUrl);
+    exit;
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') === 'remove_by_programs') {
     $deleteSearch = trim((string) ($_POST['search'] ?? ''));
     $preserveProgramFilter = (int) ($_POST['preserve_program_filter'] ?? 0);
@@ -453,7 +497,7 @@ function format_monitoring_prereg_datetime($value): string
                   <i class="bx bx-printer me-1"></i>Print
                 </button>
                 <div class="alert alert-warning mb-0 py-2 px-3">
-                  Submitted pre-registrations are read-only. Removal is disabled in live operations.
+                  Submitted pre-registrations can now be forfeited individually when needed.
                 </div>
               </div>
 
@@ -546,12 +590,13 @@ function format_monitoring_prereg_datetime($value): string
                           <th class="text-center">Profile</th>
                           <th class="text-center">Agreement</th>
                           <th>Submitted</th>
+                          <th class="text-center">Action</th>
                         </tr>
                       </thead>
                       <tbody>
                         <?php if (empty($rows)): ?>
                           <tr>
-                            <td colspan="7" class="text-center text-muted py-4">
+                            <td colspan="8" class="text-center text-muted py-4">
                               No pre-registered students found for the selected filter.
                             </td>
                           </tr>
@@ -603,6 +648,21 @@ function format_monitoring_prereg_datetime($value): string
                               <td>
                                 <div><?= htmlspecialchars(format_monitoring_prereg_datetime((string) ($row['submitted_at'] ?? ''))); ?></div>
                                 <small class="mpr-subline">Updated: <?= htmlspecialchars(format_monitoring_prereg_datetime((string) ($row['updated_at'] ?? ''))); ?></small>
+                              </td>
+                              <td class="text-center">
+                                <form method="post" class="d-inline js-mpr-forfeit-form">
+                                  <input type="hidden" name="action" value="forfeit_preregistration" />
+                                  <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($monitoringPreregCsrf); ?>" />
+                                  <input type="hidden" name="preregistration_id" value="<?= (int) ($row['preregistration_id'] ?? 0); ?>" />
+                                  <input type="hidden" name="search" value="<?= htmlspecialchars($search); ?>" />
+                                  <input type="hidden" name="preserve_program_filter" value="<?= (int) $programFilter; ?>" />
+                                  <input
+                                    type="submit"
+                                    class="btn btn-sm btn-outline-danger"
+                                    value="Forfeit"
+                                    data-student-name="<?= htmlspecialchars((string) ($row['full_name'] ?? 'this student')); ?>"
+                                  />
+                                </form>
                               </td>
                             </tr>
                           <?php endforeach; ?>
@@ -801,6 +861,33 @@ function format_monitoring_prereg_datetime($value): string
             });
           });
         }
+
+        Array.from(document.querySelectorAll('.js-mpr-forfeit-form')).forEach(function (formEl) {
+          formEl.addEventListener('submit', function (event) {
+            event.preventDefault();
+
+            const submitButton = formEl.querySelector('input[type="submit"], button[type="submit"]');
+            const studentName = submitButton && submitButton.dataset
+              ? String(submitButton.dataset.studentName || 'this student')
+              : 'this student';
+
+            showSwalAlert({
+              icon: 'warning',
+              title: 'Forfeit pre-registration?',
+              text: `This will mark ${studentName} as forfeited and remove the submission from active pre-registration lists.`,
+              showCancelButton: true,
+              confirmButtonText: 'Forfeit',
+              cancelButtonText: 'Cancel',
+              confirmButtonColor: '#ff3e1d',
+              cancelButtonColor: '#6c757d',
+              reverseButtons: true
+            }).then((result) => {
+              if (result.isConfirmed) {
+                formEl.submit();
+              }
+            });
+          });
+        });
 
         if (hasFlashMessage && flashPayload) {
           if (!isSwalAvailable) {
