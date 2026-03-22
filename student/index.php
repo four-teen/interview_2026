@@ -971,6 +971,20 @@ if ($preRegistrationStmt = $conn->prepare($preRegistrationSql)) {
     }
 }
 
+$preRegistrationSubmitted = is_array($studentPreRegistration)
+    && !empty($studentPreRegistration['preregistration_id'])
+    && strtolower(trim((string) ($studentPreRegistration['status'] ?? 'submitted'))) === 'submitted';
+$studentLockContext = program_ranking_get_interview_lock_context($conn, (int) ($student['interview_id'] ?? 0));
+$studentRankLocked = program_ranking_can_lock_context_preregister($studentLockContext);
+$studentLockedRank = $studentRankLocked ? max(0, (int) ($studentLockContext['locked_rank'] ?? 0)) : 0;
+
+if (!$isAdminStudentPreview && !$studentRankLocked) {
+    session_unset();
+    session_destroy();
+    header('Location: ../index.php?status=student_portal_restricted');
+    exit;
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['profile_lookup'])) {
     $lookupType = strtolower(trim((string) ($_GET['profile_lookup'] ?? '')));
     $items = [];
@@ -1589,6 +1603,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') =
         $flashMessage = 'Program assignment is missing. Pre-registration is unavailable.';
     } elseif ($lockContext === null) {
         $flashMessage = 'Pre-registration opens only after your rank is locked.';
+    } elseif (!program_ranking_can_lock_context_preregister($lockContext)) {
+        $flashMessage = 'Your locked rank is outside the current capacity. Pre-registration is unavailable.';
     } elseif (!$profileIsComplete) {
         $flashMessage = 'Complete your profile to 100% before submitting pre-registration.';
     } elseif (
@@ -2317,10 +2333,6 @@ if ($hasScoredInterview && $firstChoiceRank !== null && $firstChoiceAbsorptiveCa
     $firstChoiceStatusText = 'Capacity not configured';
 }
 
-$studentLockContext = program_ranking_get_interview_lock_context($conn, (int) ($student['interview_id'] ?? 0));
-$studentRankLocked = ($studentLockContext !== null);
-$studentLockedRank = $studentRankLocked ? max(0, (int) ($studentLockContext['locked_rank'] ?? 0)) : 0;
-
 if ($firstChoiceId > 0 && $hasScoredInterview) {
     $sharedRankingPayload = program_ranking_fetch_payload($conn, $firstChoiceId, null);
     if (!empty($sharedRankingPayload['success']) && isset($sharedRankingPayload['rows']) && is_array($sharedRankingPayload['rows'])) {
@@ -2454,7 +2466,7 @@ if ($firstChoiceId > 0 && $hasScoredInterview) {
                 }
             }
 
-            if (!empty($matchingRankingRow['is_locked'])) {
+            if (!empty($matchingRankingRow['is_locked']) && empty($matchingRankingRow['is_outside_capacity'])) {
                 $studentRankLocked = true;
                 if ($studentLockedRank <= 0) {
                     $studentLockedRank = max(0, (int) ($matchingRankingRow['locked_rank'] ?? $firstChoiceRank));
@@ -2951,9 +2963,6 @@ $profileParentGuardianCitymunCode = (int) ($studentProfile['parent_guardian_city
 $profileParentGuardianBarangayCode = (int) ($studentProfile['parent_guardian_barangay_code'] ?? 0);
 $profileCompletionBadge = number_format((float) $studentProfileCompletionPercent, 0) . '% Complete';
 $isProfileComplete = ((float) $studentProfileCompletionPercent >= 100.0);
-$preRegistrationSubmitted = is_array($studentPreRegistration)
-    && !empty($studentPreRegistration['preregistration_id'])
-    && strtolower(trim((string) ($studentPreRegistration['status'] ?? 'submitted'))) === 'submitted';
 $preRegistrationSubmittedAtDisplay = '';
 if ($preRegistrationSubmitted) {
     $submittedAt = (string) ($studentPreRegistration['submitted_at'] ?? '');

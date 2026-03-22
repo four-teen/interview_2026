@@ -534,7 +534,7 @@ $preregistrationPendingFromLocked = max(
 );
 $priorityLockedCount = max(0, $priorityLockTargetTotal - $remainingToLockTotal);
 $etgCapacity = max(0, (int) ($sectionStats['etg']['configured_slots'] ?? 0));
-$preRegisteredCardValue = number_format((int) ($preregistrationSummary['prereg_count'] ?? 0)) . ' / ' . number_format($lockedTotalCount);
+$preRegisteredCardValue = number_format((int) ($preregistrationSummary['prereg_count'] ?? 0)) . ' / ' . number_format($lockedInsideCount);
 $lockedCardValue = number_format($priorityLockedCount) . ' / ' . number_format($priorityLockTargetTotal);
 $sccCardValue = number_format($sccStudentCount) . ' / ' . number_format($endorsementCapacity);
 $etgCardValue = number_format($etgStudentCount) . ' / ' . number_format($etgCapacity);
@@ -1060,7 +1060,7 @@ $activeListRows = $studentListRows[$selectedView] ?? [];
                             </span>
                           </div>
                           <div class="pss-summary-note">
-                            Submitted pre-registration / locked students
+                            Submitted pre-registration / inside-capacity locked students
                           </div>
                         </div>
                       </div>

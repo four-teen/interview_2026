@@ -29,7 +29,8 @@ if ($googleLoginNonce === '' || $googleLoginCsrf === '' || $studentLoginCsrf ===
 }
 $nonAdminLoginLocked = is_non_admin_login_locked($conn);
 $studentLoginLocked = is_student_login_locked($conn);
-$studentPortalLocked = $nonAdminLoginLocked || $studentLoginLocked;
+$lockedStudentLoginEnabled = is_locked_student_login_enabled($conn);
+$studentPortalLocked = $nonAdminLoginLocked || $studentLoginLocked || !$lockedStudentLoginEnabled;
 $globalSatCutoffState = get_global_sat_cutoff_state($conn);
 $globalSatCutoffActive = (bool) ($globalSatCutoffState['active'] ?? false);
 $globalSatCutoffRangeText = trim((string) ($globalSatCutoffState['range_text'] ?? ''));
@@ -301,6 +302,8 @@ if ($globalSatCutoffRangeText !== '') {
 
       if (isset($_GET['status']) && $_GET['status'] === 'pending_validation') {
           $statusMsg = 'Your email is verified, but your account is pending validation by the system administrator.';
+      } elseif (isset($_GET['status']) && $_GET['status'] === 'student_portal_restricted') {
+          $statusMsg = 'Student portal access is limited to qualified students with an inside-capacity locked rank for pre-registration.';
       }
     ?>
 
@@ -354,6 +357,10 @@ if ($globalSatCutoffRangeText !== '') {
 <?php elseif ($studentLoginLocked): ?>
   <div class="alert alert-warning small login-alert" role="alert">
     Student login is temporarily locked by the administrator.
+  </div>
+<?php elseif (!$lockedStudentLoginEnabled): ?>
+  <div class="alert alert-warning small login-alert" role="alert">
+    Locked-student login is temporarily disabled by the administrator.
   </div>
 <?php endif; ?>
 <?php if ($globalSatCutoffActive): ?>
@@ -436,6 +443,9 @@ if ($globalSatCutoffRangeText !== '') {
                   </button>
                   <div id="studentLoginMsg" class="small text-center mt-2 text-muted"></div>
                 </form>
+                <p class="small text-muted text-center mt-2 mb-0">
+                  Student login is available only for students whose inside-capacity rank is already locked, including those already pre-registered.
+                </p>
               </div>
 
               <p class="text-center small mb-0 login-footnote">

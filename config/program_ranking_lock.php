@@ -756,6 +756,20 @@ if (!function_exists('program_ranking_is_interview_locked')) {
     }
 }
 
+if (!function_exists('program_ranking_is_lock_context_outside_capacity')) {
+    function program_ranking_is_lock_context_outside_capacity(?array $lockContext): bool
+    {
+        return is_array($lockContext) && !empty($lockContext['is_outside_capacity']);
+    }
+}
+
+if (!function_exists('program_ranking_can_lock_context_preregister')) {
+    function program_ranking_can_lock_context_preregister(?array $lockContext): bool
+    {
+        return is_array($lockContext) && !program_ranking_is_lock_context_outside_capacity($lockContext);
+    }
+}
+
 if (!function_exists('program_ranking_get_interview_lock_context')) {
     function program_ranking_get_interview_lock_context(mysqli $conn, int $interviewId): ?array
     {
@@ -769,6 +783,7 @@ if (!function_exists('program_ranking_get_interview_lock_context')) {
                 l.program_id,
                 l.locked_rank,
                 l.locked_at,
+                l.snapshot_outside_capacity,
                 p.program_name,
                 p.major
             FROM tbl_program_ranking_locks l
@@ -797,7 +812,8 @@ if (!function_exists('program_ranking_get_interview_lock_context')) {
             'program_name' => (string) ($row['program_name'] ?? ''),
             'major' => (string) ($row['major'] ?? ''),
             'locked_rank' => (int) ($row['locked_rank'] ?? 0),
-            'locked_at' => (string) ($row['locked_at'] ?? '')
+            'locked_at' => (string) ($row['locked_at'] ?? ''),
+            'is_outside_capacity' => ((int) ($row['snapshot_outside_capacity'] ?? 0) === 1),
         ];
     }
 }

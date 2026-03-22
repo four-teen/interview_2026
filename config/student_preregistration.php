@@ -164,6 +164,82 @@ if (!function_exists('student_preregistration_has_submitted_interview')) {
     }
 }
 
+if (!function_exists('student_preregistration_fetch_submitted_record_by_credential')) {
+    function student_preregistration_fetch_submitted_record_by_credential(mysqli $conn, int $credentialId): ?array
+    {
+        $credentialId = max(0, $credentialId);
+        if ($credentialId <= 0 || !ensure_student_preregistration_storage($conn)) {
+            return null;
+        }
+
+        $sql = "
+            SELECT
+                preregistration_id,
+                credential_id,
+                interview_id,
+                program_id,
+                locked_rank,
+                status,
+                submitted_at
+            FROM tbl_student_preregistration
+            WHERE credential_id = ?
+              AND status = 'submitted'
+            LIMIT 1
+        ";
+
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            return null;
+        }
+
+        $stmt->bind_param('i', $credentialId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return $row ?: null;
+    }
+}
+
+if (!function_exists('student_preregistration_get_student_portal_access_context')) {
+    function student_preregistration_get_student_portal_access_context(
+        mysqli $conn,
+        int $credentialId,
+        int $interviewId
+    ): array {
+        $submittedRecord = student_preregistration_fetch_submitted_record_by_credential($conn, $credentialId);
+        $lockContext = function_exists('program_ranking_get_interview_lock_context') && $interviewId > 0
+            ? program_ranking_get_interview_lock_context($conn, $interviewId)
+            : null;
+        $hasSubmittedPreregistration = is_array($submittedRecord) && !empty($submittedRecord['preregistration_id']);
+        $lockOutsideCapacity = function_exists('program_ranking_is_lock_context_outside_capacity')
+            ? program_ranking_is_lock_context_outside_capacity($lockContext)
+            : false;
+        $canPreregister = function_exists('program_ranking_can_lock_context_preregister')
+            ? program_ranking_can_lock_context_preregister($lockContext)
+            : ($lockContext !== null);
+
+        $reason = 'lock_required';
+        if ($canPreregister) {
+            $reason = 'allowed';
+        } elseif ($lockOutsideCapacity) {
+            $reason = 'locked_outside_capacity';
+        } elseif ($lockContext !== null) {
+            $reason = 'locked_but_ineligible';
+        }
+
+        return [
+            'allowed' => $canPreregister,
+            'has_submitted_preregistration' => $hasSubmittedPreregistration,
+            'submitted_record' => $submittedRecord,
+            'lock_context' => $lockContext,
+            'lock_outside_capacity' => $lockOutsideCapacity,
+            'can_preregister' => $canPreregister,
+            'reason' => $reason,
+        ];
+    }
+}
+
 if (!function_exists('student_preregistration_fetch_program_options')) {
     function student_preregistration_fetch_program_options(mysqli $conn): array
     {
@@ -421,6 +497,30 @@ if (!function_exists('student_preregistration_fetch_program_progress_rows')) {
             $row['prereg_count'] = max(0, (int) ($row['prereg_count'] ?? 0));
             $row['scored_count'] = max(0, (int) ($row['scored_count'] ?? 0));
             $row['locked_count'] = max(0, (int) ($row['locked_count'] ?? 0));
+
+            if (function_exists('program_ranking_fetch_payload')) {
+                $rankingPayload = program_ranking_fetch_payload($conn, (int) ($row['program_id'] ?? 0), null);
+                if (!empty($rankingPayload['success']) && isset($rankingPayload['rows']) && is_array($rankingPayload['rows'])) {
+                    $qualifiedCount = 0;
+                    $lockedQualifiedCount = 0;
+
+                    foreach ($rankingPayload['rows'] as $rankingRow) {
+                        if (!empty($rankingRow['is_outside_capacity'])) {
+                            continue;
+                        }
+
+                        $qualifiedCount++;
+                        if (!empty($rankingRow['is_locked'])) {
+                            $lockedQualifiedCount++;
+                        }
+                    }
+
+                    // Pre-registration capacity should track only the inside-capacity ranked pool.
+                    $row['scored_count'] = $qualifiedCount;
+                    $row['locked_count'] = $lockedQualifiedCount;
+                }
+            }
+
             $row['remaining_count'] = max(0, $row['scored_count'] - $row['locked_count']);
 
             if (

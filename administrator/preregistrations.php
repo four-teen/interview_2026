@@ -195,7 +195,7 @@ if ($storageReady) {
     }
 }
 $programProgressHasData = !empty($programProgressRows);
-$programProgressDescription = 'Remaining means scored students who are not yet locked.';
+$programProgressDescription = 'Remaining means inside-capacity students who are not yet locked.';
 if ($search !== '') {
     $programProgressDescription .= ' Search text does not change this graph.';
 }
@@ -865,23 +865,23 @@ function format_administrator_prereg_datetime($value): string
                         <div class="row g-3 mb-3">
                           <div class="col-md-4">
                             <div class="prg-chart-summary-card">
-                              <div class="prg-chart-summary-label">Scored</div>
+                              <div class="prg-chart-summary-label">Qualified</div>
                               <div class="prg-chart-summary-value" id="prgProgramProgressScoredTotal">0</div>
-                              <div class="prg-chart-summary-help">Active interview records with final scores.</div>
+                              <div class="prg-chart-summary-help">Inside-capacity ranked students currently eligible for pre-registration.</div>
                             </div>
                           </div>
                           <div class="col-md-4">
                             <div class="prg-chart-summary-card">
                               <div class="prg-chart-summary-label">Locked</div>
                               <div class="prg-chart-summary-value" id="prgProgramProgressLockedTotal">0</div>
-                              <div class="prg-chart-summary-help">Students already locked in the ranking list.</div>
+                              <div class="prg-chart-summary-help">Qualified students already locked in the ranking list.</div>
                             </div>
                           </div>
                           <div class="col-md-4">
                             <div class="prg-chart-summary-card">
                               <div class="prg-chart-summary-label">Remaining</div>
                               <div class="prg-chart-summary-value" id="prgProgramProgressRemainingTotal">0</div>
-                              <div class="prg-chart-summary-help">Scored students still not locked.</div>
+                              <div class="prg-chart-summary-help">Qualified inside-capacity students still not locked.</div>
                             </div>
                           </div>
                         </div>
@@ -1078,7 +1078,7 @@ function format_administrator_prereg_datetime($value): string
         function buildSeries(rows) {
           return [
             {
-              name: 'Scored',
+              name: 'Qualified',
               data: rows.map(function (row) { return Math.max(0, Number(row && row.scored_count || 0)); })
             },
             {

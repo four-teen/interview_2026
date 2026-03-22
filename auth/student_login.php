@@ -2,6 +2,8 @@
 require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../config/student_credentials.php';
 require_once __DIR__ . '/../config/system_controls.php';
+require_once __DIR__ . '/../config/program_ranking_lock.php';
+require_once __DIR__ . '/../config/student_preregistration.php';
 require_once __DIR__ . '/../config/session_security.php';
 
 secure_session_start();
@@ -203,6 +205,16 @@ function dummy_password_hash()
     return $hash;
 }
 
+function student_login_access_denied_message(array $accessContext): string
+{
+    $reason = (string) ($accessContext['reason'] ?? '');
+    if ($reason === 'locked_outside_capacity') {
+        return 'Your locked rank is outside the current capacity. Student portal login is not available for pre-registration.';
+    }
+
+    return 'Student portal login is available only for students whose inside-capacity rank is already locked.';
+}
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     student_json_response(405, [
         'success' => false,
@@ -219,10 +231,24 @@ if ($postedCsrf === '' || $sessionCsrf === '' || !hash_equals($sessionCsrf, $pos
     ]);
 }
 
+if (is_non_admin_login_locked($conn)) {
+    student_json_response(423, [
+        'success' => false,
+        'message' => 'Student and Program Chair login is temporarily locked by the administrator.'
+    ]);
+}
+
 if (is_student_login_locked($conn)) {
     student_json_response(423, [
         'success' => false,
         'message' => 'Student login is temporarily locked by the administrator.'
+    ]);
+}
+
+if (!is_locked_student_login_enabled($conn)) {
+    student_json_response(423, [
+        'success' => false,
+        'message' => 'Locked-student login is temporarily disabled by the administrator.'
     ]);
 }
 
@@ -263,6 +289,7 @@ $sql = "
         sc.password_hash,
         sc.must_change_password,
         sc.status,
+        sc.interview_id,
         sc.placement_result_id,
         pr.full_name
     FROM tbl_student_credentials sc
@@ -323,12 +350,25 @@ if (!$student || !$studentIsActive || !$passwordValid) {
 
 clear_student_login_attempts($conn, $examineeNumber, $clientIp);
 
+$accessContext = student_preregistration_get_student_portal_access_context(
+    $conn,
+    (int) ($student['credential_id'] ?? 0),
+    (int) ($student['interview_id'] ?? 0)
+);
+if (empty($accessContext['allowed'])) {
+    student_json_response(403, [
+        'success' => false,
+        'message' => student_login_access_denied_message($accessContext),
+    ]);
+}
+
 session_regenerate_id(true);
 unset($_SESSION['student_login_csrf']);
 $_SESSION['logged_in'] = true;
 $_SESSION['role'] = 'student';
 $_SESSION['student_credential_id'] = (int) ($student['credential_id'] ?? 0);
 $_SESSION['student_examinee_number'] = (string) ($student['examinee_number'] ?? $examineeNumber);
+$_SESSION['student_interview_id'] = (int) ($student['interview_id'] ?? 0);
 $_SESSION['student_placement_result_id'] = (int) ($student['placement_result_id'] ?? 0);
 $_SESSION['fullname'] = (string) ($student['full_name'] ?? $examineeNumber);
 $_SESSION['student_must_change_password'] = ((int) ($student['must_change_password'] ?? 1) === 1);

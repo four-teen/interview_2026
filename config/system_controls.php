@@ -115,6 +115,33 @@ if (!function_exists('set_student_login_lock')) {
     }
 }
 
+if (!function_exists('locked_student_login_control_key')) {
+    function locked_student_login_control_key(): string
+    {
+        return 'locked_student_login_enabled';
+    }
+}
+
+if (!function_exists('is_locked_student_login_enabled')) {
+    function is_locked_student_login_enabled(mysqli $conn): bool
+    {
+        $value = get_system_control_value($conn, locked_student_login_control_key(), '1');
+        return $value !== '0';
+    }
+}
+
+if (!function_exists('set_locked_student_login_enabled')) {
+    function set_locked_student_login_enabled(mysqli $conn, bool $enabled, ?int $updatedBy = null): bool
+    {
+        return set_system_control_value(
+            $conn,
+            locked_student_login_control_key(),
+            $enabled ? '1' : '0',
+            $updatedBy
+        );
+    }
+}
+
 if (!function_exists('program_login_control_key')) {
     function program_login_control_key(int $programId): string
     {

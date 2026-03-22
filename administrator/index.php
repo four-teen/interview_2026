@@ -30,6 +30,17 @@ if (empty($_SESSION['admin_student_login_lock_csrf'])) {
 $adminStudentLoginLockCsrf = (string) $_SESSION['admin_student_login_lock_csrf'];
 $studentLoginLocked = is_student_login_locked($conn);
 
+if (empty($_SESSION['admin_locked_student_login_csrf'])) {
+    try {
+        $_SESSION['admin_locked_student_login_csrf'] = bin2hex(random_bytes(32));
+    } catch (Throwable $e) {
+        $_SESSION['admin_locked_student_login_csrf'] = sha1(uniqid('admin_locked_student_login_csrf_', true));
+    }
+}
+
+$adminLockedStudentLoginCsrf = (string) $_SESSION['admin_locked_student_login_csrf'];
+$lockedStudentLoginEnabled = is_locked_student_login_enabled($conn);
+
 if (empty($_SESSION['admin_global_cutoff_csrf'])) {
     try {
         $_SESSION['admin_global_cutoff_csrf'] = bin2hex(random_bytes(32));
@@ -72,6 +83,12 @@ $studentLoginLockFlash = null;
 if (isset($_SESSION['admin_student_login_lock_flash']) && is_array($_SESSION['admin_student_login_lock_flash'])) {
     $studentLoginLockFlash = $_SESSION['admin_student_login_lock_flash'];
     unset($_SESSION['admin_student_login_lock_flash']);
+}
+
+$lockedStudentLoginFlash = null;
+if (isset($_SESSION['admin_locked_student_login_flash']) && is_array($_SESSION['admin_locked_student_login_flash'])) {
+    $lockedStudentLoginFlash = $_SESSION['admin_locked_student_login_flash'];
+    unset($_SESSION['admin_locked_student_login_flash']);
 }
 
 $globalCutoffFlash = null;
@@ -920,6 +937,11 @@ $expectedCampusMonitoringLabel = trim($expectedCampusRangeLabel . ' Expected dem
       <?= htmlspecialchars((string) ($studentLoginLockFlash['message'] ?? '')); ?>
     </div>
   <?php endif; ?>
+  <?php if ($lockedStudentLoginFlash): ?>
+    <div class="alert alert-<?= htmlspecialchars((string) ($lockedStudentLoginFlash['type'] ?? 'info')); ?> mb-3" role="alert">
+      <?= htmlspecialchars((string) ($lockedStudentLoginFlash['message'] ?? '')); ?>
+    </div>
+  <?php endif; ?>
   <?php if ($globalCutoffFlash): ?>
     <div class="alert alert-<?= htmlspecialchars((string) ($globalCutoffFlash['type'] ?? 'info')); ?> mb-3" role="alert">
       <?= htmlspecialchars((string) ($globalCutoffFlash['message'] ?? '')); ?>
@@ -993,6 +1015,23 @@ $expectedCampusMonitoringLabel = trim($expectedCampusRangeLabel . ' Expected dem
                     <input type="hidden" name="action" value="<?= $studentLoginLocked ? 'unlock' : 'lock'; ?>" />
                     <button type="submit" class="btn btn-sm <?= $studentLoginLocked ? 'btn-success' : 'btn-danger'; ?>">
                       <?= $studentLoginLocked ? 'Unlock Student Login' : 'Lock Student Login'; ?>
+                    </button>
+                  </form>
+                </div>
+                <div class="admin-login-control">
+                  <span class="admin-login-chip <?= $lockedStudentLoginEnabled ? 'unlocked' : 'locked'; ?>">
+                    Locked Students: <?= $lockedStudentLoginEnabled ? 'Login Enabled' : 'Login Disabled'; ?>
+                  </span>
+                  <form
+                    method="POST"
+                    action="toggle_locked_student_login.php"
+                    class="m-0"
+                    onsubmit="return confirm('Are you sure you want to <?= $lockedStudentLoginEnabled ? 'disable' : 'enable'; ?> login for inside-capacity locked students?');"
+                  >
+                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($adminLockedStudentLoginCsrf); ?>" />
+                    <input type="hidden" name="action" value="<?= $lockedStudentLoginEnabled ? 'disable' : 'enable'; ?>" />
+                    <button type="submit" class="btn btn-sm <?= $lockedStudentLoginEnabled ? 'btn-danger' : 'btn-success'; ?>">
+                      <?= $lockedStudentLoginEnabled ? 'Disable Locked Student Login' : 'Enable Locked Student Login'; ?>
                     </button>
                   </form>
                 </div>
