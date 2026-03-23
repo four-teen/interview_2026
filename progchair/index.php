@@ -1379,13 +1379,66 @@ document.addEventListener("DOMContentLoaded", function () {
     ? urlParams.get('open_action')
     : '';
   const statusMsg = String(urlParams.get('msg') || '').toLowerCase();
-
-  if (statusMsg === 'rank_locked') {
-    Swal.fire('Rank Locked', 'Selected interview is locked in ranking and cannot be modified.', 'warning');
-  }
-
-  if (statusMsg === 'prereg_locked') {
-    Swal.fire('Pre-Registration Submitted', 'Selected interview already has submitted pre-registration and cannot be modified.', 'warning');
+  const statusMessageMap = {
+    rank_locked: {
+      title: 'Rank Locked',
+      text: 'Selected interview is locked in ranking and cannot be modified.',
+      icon: 'warning'
+    },
+    prereg_locked: {
+      title: 'Pre-Registration Submitted',
+      text: 'Selected interview already has submitted pre-registration and cannot be modified.',
+      icon: 'warning'
+    },
+    transfer_logged: {
+      title: 'Transfer Logged',
+      text: 'Transfer request submitted successfully.',
+      icon: 'success'
+    },
+    below_cutoff: {
+      title: 'Below Cutoff',
+      text: 'This student does not meet the destination program cutoff.',
+      icon: 'warning'
+    },
+    outside_qualified_pool: {
+      title: 'Outside Qualified Pool',
+      text: 'This student is outside the qualified pool for the destination program.',
+      icon: 'warning'
+    },
+    no_slots_available: {
+      title: 'No Slots Available',
+      text: 'The destination program currently has no available slots for this transfer.',
+      icon: 'warning'
+    },
+    final_score_required: {
+      title: 'Final Score Required',
+      text: 'A final interview score is required before transfer can be processed.',
+      icon: 'warning'
+    },
+    cutoff_not_configured: {
+      title: 'Cutoff Not Configured',
+      text: 'The destination program cutoff is not configured.',
+      icon: 'warning'
+    },
+    capacity_not_configured: {
+      title: 'Capacity Not Configured',
+      text: 'The destination program capacity is not configured.',
+      icon: 'warning'
+    },
+    campus_not_configured: {
+      title: 'Campus Not Configured',
+      text: 'The destination program campus is not configured.',
+      icon: 'warning'
+    },
+    validation_unavailable: {
+      title: 'Validation Unavailable',
+      text: 'Transfer validation is temporarily unavailable. Please try again.',
+      icon: 'error'
+    }
+  };
+  const statusConfig = statusMessageMap[statusMsg];
+  if (statusConfig) {
+    Swal.fire(statusConfig.title, statusConfig.text, statusConfig.icon);
   }
 
   if (navbarSearchInput) {

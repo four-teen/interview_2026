@@ -10,6 +10,7 @@ require_once '../config/db.php';
 require_once '../config/system_controls.php';
 require_once '../config/program_ranking_lock.php';
 require_once '../config/student_preregistration.php';
+require_once '../config/transfer_eligibility.php';
 session_start();
 
 /* ======================================================
@@ -116,54 +117,23 @@ if ($pendingExists) {
 }
 
 /* ======================================================
-   VALIDATE SAT ELIGIBILITY AGAINST EFFECTIVE CUTOFF
+   VALIDATE TRANSFER ELIGIBILITY AGAINST CURRENT CUTOFF + RANKING RULES
 ====================================================== */
-$eligibilitySql = "
-SELECT
-    pr.sat_score,
-    pc.cutoff_score
-FROM tbl_student_interview si
-INNER JOIN tbl_placement_results pr
-    ON pr.id = si.placement_result_id
-LEFT JOIN tbl_program_cutoff pc
-    ON pc.program_id = ?
-WHERE si.interview_id = ?
-LIMIT 1
-";
-
-$stmtEligibility = $conn->prepare($eligibilitySql);
-if (!$stmtEligibility) {
-    error_log("SQL Error (eligibilitySql): " . $conn->error);
-    header('Location: index.php?msg=server_error');
+$eligibility = transfer_eligibility_evaluate($conn, $interviewId, $toProgramId);
+if (!($eligibility['success'] ?? false)) {
+    error_log('Transfer eligibility validation failed in progchair/process_transfer.php');
+    header('Location: index.php?msg=validation_unavailable');
     exit;
 }
 
-$stmtEligibility->bind_param("ii", $toProgramId, $interviewId);
-$stmtEligibility->execute();
-$eligibilityRow = $stmtEligibility->get_result()->fetch_assoc();
-$stmtEligibility->close();
-
-if (!$eligibilityRow) {
-    header('Location: index.php?msg=invalid_request');
+if (!($eligibility['eligible'] ?? false)) {
+    $reasonCode = trim((string) ($eligibility['reason_code'] ?? ''));
+    if ($reasonCode === '') {
+        $reasonCode = 'validation_unavailable';
+    }
+    header('Location: index.php?msg=' . rawurlencode($reasonCode));
     exit;
 }
-
-$satScore = (int) ($eligibilityRow['sat_score'] ?? 0);
-$programCutoff = $eligibilityRow['cutoff_score'] !== null ? (int) $eligibilityRow['cutoff_score'] : null;
-if ($programCutoff === null) {
-    header('Location: index.php?msg=invalid_request');
-    exit;
-}
-$globalSatCutoffState = get_global_sat_cutoff_state($conn);
-$globalSatCutoffEnabled = (bool) ($globalSatCutoffState['enabled'] ?? false);
-$globalSatCutoffValue = isset($globalSatCutoffState['value']) ? (int) $globalSatCutoffState['value'] : null;
-$effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalSatCutoffEnabled, $globalSatCutoffValue);
-
-if ($effectiveCutoff !== null && $satScore < $effectiveCutoff) {
-    header('Location: index.php?msg=below_cutoff');
-    exit;
-}
-
 
 
 /* ======================================================

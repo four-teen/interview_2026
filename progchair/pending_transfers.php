@@ -65,6 +65,59 @@ $stmt = $conn->prepare($sql);
 $stmt->bind_param("i", $programId);
 $stmt->execute();
 $result = $stmt->get_result();
+
+$statusMessage = strtolower(trim((string) ($_GET['msg'] ?? '')));
+$statusAlerts = [
+    'rank_locked' => [
+        'class' => 'warning',
+        'message' => 'This transfer cannot be processed because the student rank is locked.',
+    ],
+    'prereg_locked' => [
+        'class' => 'warning',
+        'message' => 'This transfer cannot be processed because the student already submitted pre-registration.',
+    ],
+    'approved' => [
+        'class' => 'success',
+        'message' => 'Transfer approved successfully.',
+    ],
+    'rejected' => [
+        'class' => 'success',
+        'message' => 'Transfer rejected successfully.',
+    ],
+    'below_cutoff' => [
+        'class' => 'warning',
+        'message' => 'This transfer cannot be approved because the student is below the destination cutoff.',
+    ],
+    'outside_qualified_pool' => [
+        'class' => 'warning',
+        'message' => 'This transfer cannot be approved because the student is outside the destination qualified pool.',
+    ],
+    'no_slots_available' => [
+        'class' => 'warning',
+        'message' => 'This transfer cannot be approved because the destination program has no available slots.',
+    ],
+    'final_score_required' => [
+        'class' => 'warning',
+        'message' => 'This transfer cannot be approved until the student has a final interview score.',
+    ],
+    'cutoff_not_configured' => [
+        'class' => 'warning',
+        'message' => 'This transfer cannot be approved because the destination cutoff is not configured.',
+    ],
+    'capacity_not_configured' => [
+        'class' => 'warning',
+        'message' => 'This transfer cannot be approved because the destination capacity is not configured.',
+    ],
+    'campus_not_configured' => [
+        'class' => 'warning',
+        'message' => 'This transfer cannot be approved because the destination campus is not configured.',
+    ],
+    'validation_unavailable' => [
+        'class' => 'danger',
+        'message' => 'Transfer validation is temporarily unavailable. Please try again.',
+    ],
+];
+$activeStatusAlert = $statusAlerts[$statusMessage] ?? null;
 ?>
 <!DOCTYPE html>
 <html lang="en"
@@ -108,15 +161,9 @@ $result = $stmt->get_result();
     </a>
 </div>
 
-<?php if (isset($_GET['msg']) && $_GET['msg'] === 'rank_locked'): ?>
-    <div class="alert alert-warning">
-        This transfer cannot be processed because the student rank is locked.
-    </div>
-<?php endif; ?>
-
-<?php if (isset($_GET['msg']) && $_GET['msg'] === 'prereg_locked'): ?>
-    <div class="alert alert-warning">
-        This transfer cannot be processed because the student already submitted pre-registration.
+<?php if (is_array($activeStatusAlert)): ?>
+    <div class="alert alert-<?= htmlspecialchars((string) ($activeStatusAlert['class'] ?? 'warning')); ?>">
+        <?= htmlspecialchars((string) ($activeStatusAlert['message'] ?? 'Transfer status updated.')); ?>
     </div>
 <?php endif; ?>
 

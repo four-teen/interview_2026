@@ -315,8 +315,8 @@ $programs = $stmtProg->get_result();
 
 <?php if ($globalSatCutoffActive): ?>
 <div class="alert alert-info mb-4">
-    Global SAT cutoff override is active: only students with SAT
-    <strong><?= (int) $globalSatCutoffValue; ?></strong> and above can be transferred.
+    Global cutoff override is active. Transfer requests are validated on submit using the effective cutoff
+    <strong><?= (int) $globalSatCutoffValue; ?></strong> together with the destination program's current qualified-pool rules.
 </div>
 <?php endif; ?>
 
@@ -351,19 +351,13 @@ $programs = $stmtProg->get_result();
 
 <div class="row">
 
-<?php while ($row = $programs->fetch_assoc()): 
-
-    $sat = (int)$student['sat_score'];
+<?php while ($row = $programs->fetch_assoc()):
     $programCutoff = isset($row['cutoff_score']) ? (int) $row['cutoff_score'] : null;
     $effectiveCutoff = get_effective_sat_cutoff($programCutoff, $globalSatCutoffEnabled, $globalSatCutoffValue);
-    $qualified = ($effectiveCutoff === null) ? true : ($sat >= $effectiveCutoff);
-
 ?>
 
 <div class="col-md-4 mb-3">
-  <div class="card program-card p-3 <?= !$qualified ? 'border border-danger opacity-50' : ''; ?>"
-       data-qualified="<?= $qualified ? '1' : '0'; ?>"
-       data-cutoff="<?= (int) ($effectiveCutoff ?? 0); ?>"
+  <div class="card program-card p-3"
        onclick="selectProgram(<?= $row['program_id']; ?>, this)">
 
         <small class="text-muted">
@@ -382,19 +376,13 @@ $programs = $stmtProg->get_result();
 
         <div class="mt-2">
 
-            <span class="badge <?= $qualified ? 'bg-label-success' : 'bg-label-danger'; ?>">
-                CUT-OFF: <?= (int) ($effectiveCutoff ?? 0); ?>
+            <span class="badge <?= $effectiveCutoff !== null ? 'bg-label-success' : 'bg-label-secondary'; ?>">
+                EFFECTIVE CUT-OFF: <?= $effectiveCutoff !== null ? (int) $effectiveCutoff : 'N/A'; ?>
             </span>
 
             <span class="badge bg-label-primary ms-2">
                 STUDENTS: <?= $row['total_students']; ?>
             </span>
-
-            <?php if (!$qualified): ?>
-                <div class="text-danger small mt-1">
-                    SAT BELOW CUT-OFF
-                </div>
-            <?php endif; ?>
 
             <?php if ($globalSatCutoffActive): ?>
                 <div class="text-muted small mt-1">
@@ -446,20 +434,6 @@ $programs = $stmtProg->get_result();
 
 <script>
 function selectProgram(programId, element) {
-
-  const qualified = element.getAttribute('data-qualified');
-
-  if (qualified !== "1") {
-
-    Swal.fire({
-      icon: 'warning',
-      title: 'Not Qualified',
-      text: 'Student SAT score is below the required cut-off.',
-    });
-
-    return;
-  }
-
   document.getElementById('to_program_id').value = programId;
 
   document.querySelectorAll('.program-card')

@@ -4,6 +4,7 @@ require_once __DIR__ . '/program_assignments.php';
 require_once __DIR__ . '/program_ranking_lock.php';
 require_once __DIR__ . '/student_preregistration.php';
 require_once __DIR__ . '/student_credentials.php';
+require_once __DIR__ . '/transfer_eligibility.php';
 
 if (!defined('BASE_URL')) {
     define('BASE_URL', getenv('BASE_URL') ?: '/interview');
@@ -850,6 +851,21 @@ if (!function_exists('admin_student_management_execute_direct_transfer')) {
             return [
                 'success' => false,
                 'message' => 'Target program is the same as the current program.',
+            ];
+        }
+
+        $eligibility = transfer_eligibility_evaluate($conn, $interviewId, $targetProgramId);
+        if (!($eligibility['success'] ?? false)) {
+            return [
+                'success' => false,
+                'message' => transfer_eligibility_reason_to_message('validation_unavailable'),
+            ];
+        }
+
+        if (!($eligibility['eligible'] ?? false)) {
+            return [
+                'success' => false,
+                'message' => (string) ($eligibility['message'] ?? transfer_eligibility_reason_to_message('validation_unavailable')),
             ];
         }
 

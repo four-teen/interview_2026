@@ -9,6 +9,7 @@
 require_once '../config/db.php';
 require_once '../config/program_ranking_lock.php';
 require_once '../config/student_preregistration.php';
+require_once '../config/transfer_eligibility.php';
 session_start();
 
 header('Content-Type: application/json');
@@ -119,6 +120,25 @@ if (student_preregistration_has_submitted_interview($conn, $interviewId) === tru
         'message' => 'This student already submitted pre-registration and transfer processing is not allowed.'
     ]);
     exit;
+}
+
+if ($action === 'accept') {
+    $eligibility = transfer_eligibility_evaluate($conn, $interviewId, $toProgramId);
+    if (!($eligibility['success'] ?? false)) {
+        echo json_encode([
+            'success' => false,
+            'message' => transfer_eligibility_reason_to_message('validation_unavailable')
+        ]);
+        exit;
+    }
+
+    if (!($eligibility['eligible'] ?? false)) {
+        echo json_encode([
+            'success' => false,
+            'message' => (string) ($eligibility['message'] ?? transfer_eligibility_reason_to_message('validation_unavailable'))
+        ]);
+        exit;
+    }
 }
 
 

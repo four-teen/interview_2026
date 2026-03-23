@@ -2,6 +2,7 @@
 require_once '../config/db.php';
 require_once '../config/student_credentials.php';
 require_once '../config/program_ranking_lock.php';
+require_once '../config/transfer_eligibility.php';
 require_once '../config/session_security.php';
 require_once '../config/admin_student_impersonation.php';
 secure_session_start();
@@ -1709,150 +1710,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') =
     } elseif (!ensure_student_transfer_history_table($conn)) {
         $flashMessage = 'Transfer history table initialization failed.';
     } else {
-        $targetProgramSql = "
-            SELECT
-                p.program_id,
-                col.campus_id,
-                cam.campus_name,
-                pc.cutoff_score,
-                pc.absorptive_capacity,
-                pc.regular_percentage,
-                pc.etg_percentage,
-                COALESCE(pc.endorsement_capacity, 0) AS endorsement_capacity,
-                COALESCE(scored.scored_students, 0) AS scored_students
-            FROM tbl_program p
-            LEFT JOIN tbl_college col
-                ON col.college_id = p.college_id
-            LEFT JOIN tbl_campus cam
-                ON cam.campus_id = col.campus_id
-            LEFT JOIN (
-                SELECT
-                    pcx.program_id,
-                    pcx.cutoff_score,
-                    pcx.absorptive_capacity,
-                    pcx.regular_percentage,
-                    pcx.etg_percentage,
-                    COALESCE(pcx.endorsement_capacity, 0) AS endorsement_capacity
-                FROM tbl_program_cutoff pcx
-                INNER JOIN (
-                    SELECT program_id, MAX(cutoff_id) AS max_cutoff_id
-                    FROM tbl_program_cutoff
-                    GROUP BY program_id
-                ) latest_cutoff
-                    ON latest_cutoff.max_cutoff_id = pcx.cutoff_id
-            ) pc
-                ON pc.program_id = p.program_id
-            LEFT JOIN (
-                SELECT
-                    first_choice AS program_id,
-                    COUNT(*) AS scored_students
-                FROM tbl_student_interview
-                WHERE status = 'active'
-                  AND final_score IS NOT NULL
-                GROUP BY first_choice
-            ) scored
-                ON scored.program_id = p.program_id
-            WHERE p.program_id = ?
-              AND p.status = 'active'
-            LIMIT 1
-        ";
-
-        $targetStmt = $conn->prepare($targetProgramSql);
-        $targetProgram = null;
-        if ($targetStmt) {
-            $targetStmt->bind_param('i', $targetProgramId);
-            $targetStmt->execute();
-            $targetProgram = $targetStmt->get_result()->fetch_assoc();
-            $targetStmt->close();
-        }
-
-        if (!$targetProgram) {
-            $flashMessage = 'Selected transfer program is not available.';
+        $eligibility = transfer_eligibility_evaluate($conn, $interviewId, $targetProgramId);
+        if (!($eligibility['success'] ?? false)) {
+            error_log('Student transfer eligibility validation failed.');
+            $flashMessage = transfer_eligibility_reason_to_message('validation_unavailable');
+        } elseif (!($eligibility['eligible'] ?? false)) {
+            $flashMessage = (string) ($eligibility['message'] ?? transfer_eligibility_reason_to_message('validation_unavailable'));
         } else {
+            $targetProgram = (array) ($eligibility['target_program'] ?? []);
             $targetCampusId = (int) ($targetProgram['campus_id'] ?? 0);
-            $targetCapacity = ($targetProgram['absorptive_capacity'] !== null && $targetProgram['absorptive_capacity'] !== '')
-                ? max(0, (int) $targetProgram['absorptive_capacity'])
-                : null;
-            $targetRawCutoff = ($targetProgram['cutoff_score'] !== null && $targetProgram['cutoff_score'] !== '')
-                ? (int) $targetProgram['cutoff_score']
-                : null;
-            $targetEffectiveCutoff = get_effective_sat_cutoff($targetRawCutoff, $globalSatCutoffEnabled, $globalSatCutoffValue);
-            $targetPoolState = student_program_ranking_get_pool_state($studentRankingContext, $targetProgramId, $targetEffectiveCutoff);
-            $targetScored = max(0, (int) ($targetPoolState['scored_total'] ?? 0));
-            $targetRegularPercentage = ($targetProgram['regular_percentage'] !== null && $targetProgram['regular_percentage'] !== '')
-                ? round((float) $targetProgram['regular_percentage'], 2)
-                : null;
-            $targetEtgPercentage = ($targetProgram['etg_percentage'] !== null && $targetProgram['etg_percentage'] !== '')
-                ? round((float) $targetProgram['etg_percentage'], 2)
-                : null;
-            $targetEndorsementCapacity = max(0, (int) ($targetProgram['endorsement_capacity'] ?? 0));
 
-            $targetQuotaConfigured = false;
-            $targetRegularSlots = null;
-            $targetEtgSlots = null;
-            $targetSlotLimit = null;
-            if (
-                $targetCapacity !== null &&
-                $targetRegularPercentage !== null &&
-                $targetEtgPercentage !== null &&
-                $targetRegularPercentage >= 0 &&
-                $targetRegularPercentage <= 100 &&
-                $targetEtgPercentage >= 0 &&
-                $targetEtgPercentage <= 100 &&
-                abs(($targetRegularPercentage + $targetEtgPercentage) - 100) <= 0.01
-            ) {
-                $targetBaseCapacity = max(0, $targetCapacity - $targetEndorsementCapacity);
-                $targetRegularSlots = (int) round($targetBaseCapacity * ($targetRegularPercentage / 100));
-                $targetEtgSlots = max(0, $targetBaseCapacity - $targetRegularSlots);
-                $targetSlotLimit = ($studentClassGroupForTransfer === 'ETG') ? $targetEtgSlots : $targetRegularSlots;
-                $targetQuotaConfigured = true;
-            }
+            $conn->begin_transaction();
 
-            $targetClassRows = ($studentClassGroupForTransfer === 'ETG')
-                ? (array) ($targetPoolState['etg_rows'] ?? [])
-                : (array) ($targetPoolState['regular_rows'] ?? []);
-            $targetClassScored = count($targetClassRows);
-
-            if ($targetCapacity !== null) {
-                if ($targetQuotaConfigured && $targetSlotLimit !== null) {
-                    $targetAvailable = max(0, (int) $targetSlotLimit - $targetClassScored);
-                } else {
-                    $targetAvailable = max(0, $targetCapacity - $targetScored);
-                }
-            } else {
-                $targetAvailable = 0;
-            }
-            $targetProjectedRank = ($studentTransferCandidateRow !== null)
-                ? student_program_ranking_get_projected_rank($targetClassRows, $studentTransferCandidateRow)
-                : null;
-            $targetSatQualified = ($targetEffectiveCutoff !== null && $studentTransferCandidateRow !== null)
-                ? ((float) ($studentTransferCandidateRow['cutoff_basis_score'] ?? 0) >= $targetEffectiveCutoff)
-                : false;
-            $targetRankQualified = false;
-            if ($targetQuotaConfigured && $targetSlotLimit !== null) {
-                $targetRankQualified = ($targetProjectedRank !== null && $targetProjectedRank <= $targetSlotLimit);
-            } elseif ($targetCapacity !== null) {
-                $targetRankQualified = ($targetAvailable > 0);
-            }
-
-            if ($studentTransferCandidateRow === null) {
-                $flashMessage = 'Final interview score is required before requesting a transfer.';
-            } elseif ($targetCampusId <= 0) {
-                $flashMessage = 'Selected program campus is not configured.';
-            } elseif ($targetCapacity === null) {
-                $flashMessage = 'Selected program capacity is not configured.';
-            } elseif ($targetEffectiveCutoff === null) {
-                $flashMessage = 'Selected program cutoff is not configured.';
-            } elseif (!$targetSatQualified) {
-                $flashMessage = 'Your score does not meet the selected program cutoff.';
-            } elseif (!$targetRankQualified) {
-                $flashMessage = $targetQuotaConfigured
-                    ? 'Your projected rank is outside the qualified pool for the selected program.'
-                    : 'Selected program has no available slots.';
-            } else {
-                $conn->begin_transaction();
-
-                try {
+            try {
                     $reloadSql = "
                         SELECT interview_id, first_choice, second_choice, third_choice, program_chair_id
                         FROM tbl_student_interview
@@ -1987,14 +1857,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['action'] ?? '') =
                     }
                     $insertHistoryStmt->close();
 
-                    $conn->commit();
-                    $flashType = 'success';
-                    $flashMessage = 'Transfer completed. Your pinned choices were updated.';
-                } catch (Exception $e) {
-                    $conn->rollback();
-                    error_log('Student transfer failed: ' . $e->getMessage());
-                    $flashMessage = 'Transfer could not be completed. Please try again.';
-                }
+                $conn->commit();
+                $flashType = 'success';
+                $flashMessage = 'Transfer completed. Your pinned choices were updated.';
+            } catch (Exception $e) {
+                $conn->rollback();
+                error_log('Student transfer failed: ' . $e->getMessage());
+                $flashMessage = 'Transfer could not be completed. Please try again.';
             }
         }
     }

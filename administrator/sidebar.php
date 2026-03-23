@@ -29,6 +29,8 @@
                       $sidebarActiveKey = 'preregistrations';
                   } elseif ($sidebarCurrentPage === 'progchair_monitoring.php') {
                       $sidebarActiveKey = 'progchair_monitoring';
+                  } elseif ($sidebarCurrentPage === 'user_transactions.php') {
+                      $sidebarActiveKey = 'user_transactions';
                   } elseif ($sidebarSection === 'campuses') {
                       $sidebarActiveKey = 'campuses';
                   } elseif ($sidebarSection === 'colleges') {
@@ -288,6 +290,21 @@
                 <div class="sidebar-action-content">
                   <div class="sidebar-action-title">Program Chair Monitoring</div>
                   <small class="sidebar-action-sub">View chair workload and activity</small>
+                </div>
+              </a>
+            </li>
+
+            <li class="menu-item px-2">
+              <a
+                href="<?= $sidebarHrefPrefix; ?>user_transactions.php"
+                class="menu-link sidebar-action-card<?= $sidebarActiveKey === 'user_transactions' ? ' active' : ''; ?>"
+              >
+                <span class="sidebar-action-icon bg-label-primary">
+                  <i class="bx bx-transfer-alt"></i>
+                </span>
+                <div class="sidebar-action-content">
+                  <div class="sidebar-action-title">User Transactions</div>
+                  <small class="sidebar-action-sub">Track staff-side student activity by user</small>
                 </div>
               </a>
             </li>

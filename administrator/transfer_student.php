@@ -129,7 +129,7 @@ $flashMessage = is_array($flash) ? trim((string) ($flash['message'] ?? '')) : ''
                     <span class="text-muted fw-light">Administrator /</span> Transfer Student
                   </h4>
                   <p class="text-muted mb-0">
-                    Direct administrator transfer is applied immediately. Existing pending requests are bypassed, and cutoff rules are ignored in this administrator-only transaction.
+                    Direct administrator transfer is applied immediately after validation. Existing pending requests are still bypassed, but destination cutoff and ranking rules are enforced before the move is completed.
                   </p>
                 </div>
                 <a href="<?= htmlspecialchars($returnTo); ?>" class="btn btn-outline-secondary btn-sm">
@@ -180,7 +180,7 @@ $flashMessage = is_array($flash) ? trim((string) ($flash['message'] ?? '')) : ''
                 </div>
 
                 <div class="alert alert-info py-2 mb-3">
-                  Administrator transfer allows all cutoff values. Program and global SAT cutoffs are not enforced on this page.
+                  Administrator transfer now follows the same destination cutoff, capacity, and qualified-pool checks used by the transfer workflow.
                 </div>
 
                 <?php if (!$canTransfer): ?>
@@ -213,7 +213,7 @@ $flashMessage = is_array($flash) ? trim((string) ($flash['message'] ?? '')) : ''
                         </div>
                         <div class="col-lg-4">
                           <div class="small text-muted">
-                            All active programs can be selected for direct transfer, even if no program chair is assigned yet or the student is below the usual cutoff.
+                            All active programs are listed here, but the transfer only completes if the student currently qualifies for the selected destination.
                           </div>
                         </div>
                       </div>
