@@ -1,6 +1,10 @@
 <?php
 /**
  * Toggle Program Endorsement (EC) for ranked students.
+ *
+ * Administrator may add a below-cutoff Regular student to SCC by writing an
+ * override_cutoff flag. Program Chair and Monitoring remain limited to the
+ * existing qualified-pool rules.
  */
 
 require_once '../config/db.php';
@@ -236,6 +240,15 @@ if ($action === 'ADD') {
         exit;
     }
 
+    $requiresCutoffOverride = ($matchingRankingRow === null);
+    if ($requiresCutoffOverride && !$isAdministrator) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'Only administrators can bypass the cutoff and add this student to SCC.'
+        ]);
+        exit;
+    }
+
     if ($currentEndorsed >= $endorsementCapacity) {
         echo json_encode([
             'success' => false,
@@ -248,9 +261,10 @@ if ($action === 'ADD') {
         INSERT INTO tbl_program_endorsements (
             program_id,
             interview_id,
-            endorsed_by
+            endorsed_by,
+            override_cutoff
         )
-        VALUES (?, ?, ?)
+        VALUES (?, ?, ?, ?)
     ";
     $stmtInsert = $conn->prepare($insertSql);
     if (!$stmtInsert) {
@@ -262,7 +276,8 @@ if ($action === 'ADD') {
         exit;
     }
 
-    $stmtInsert->bind_param("iii", $programId, $interviewId, $accountId);
+    $overrideCutoffValue = ($isAdministrator && $requiresCutoffOverride) ? 1 : 0;
+    $stmtInsert->bind_param("iiii", $programId, $interviewId, $accountId, $overrideCutoffValue);
     $ok = $stmtInsert->execute();
     $stmtInsert->close();
 
@@ -290,7 +305,9 @@ if ($action === 'ADD') {
 
     echo json_encode([
         'success' => true,
-        'message' => 'Student added to SCC list and set as first choice.'
+        'message' => $overrideCutoffValue === 1
+            ? 'Student added to SCC list by administrator cutoff override and set as first choice.'
+            : 'Student added to SCC list and set as first choice.'
     ]);
     exit;
 }

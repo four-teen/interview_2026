@@ -845,7 +845,7 @@ $totalCampuses = count($programOptionsByCampus);
                 <label for="sccRegularPicker" class="scc-picker-label">Select student</label>
                 <select id="sccRegularPicker"></select>
                 <div class="scc-picker-help">
-                  All individuals selected under SCC are required to participate in the program interview.
+                  Outside-ranked Regular students are listed here. Entries marked <strong>Admin Cutoff Override</strong> are below cutoff and can only be added by administrator override, but they will still appear in the shared SCC list.
                 </div>
               </div>
             `,
@@ -886,7 +886,7 @@ $totalCampuses = count($programOptionsByCampus);
                   }
                 },
                 language: {
-                  noResults: () => 'No outside-ranked regular candidate found.',
+                  noResults: () => 'No outside-ranked or admin-override Regular candidate found.',
                   searching: () => 'Searching...'
                 }
               });

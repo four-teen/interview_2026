@@ -1,10 +1,13 @@
 <?php
 /**
  * Fetch SCC (Regular) candidates for Select2 picker.
- * Candidates are taken from tbl_student_interview and exclude only students
- * that are already tagged as SCC for the selected program.
- * Rule: SCC tagging is only for students not covered by the current regular
- * ranking list.
+ *
+ * Program Chair and Monitoring can only see Regular students that are already
+ * in the shared ranking payload but currently outside the qualified pool.
+ *
+ * Administrator can also see below-cutoff Regular students. Those entries are
+ * marked as requiring an admin-only cutoff override so they can be injected
+ * into the shared SCC list.
  */
 
 require_once '../config/db.php';
@@ -115,17 +118,35 @@ if (!($rankingPayload['success'] ?? false)) {
     exit;
 }
 
-$excludeInterviewIds = [];
+$regularPayloadInterviewIds = [];
+$regularInsideInterviewIds = [];
+$regularOutsideInterviewIds = [];
 foreach ((array) ($rankingPayload['rows'] ?? []) as $rankingRow) {
     $section = program_ranking_normalize_section((string) ($rankingRow['row_section'] ?? 'regular'));
-    if ($section !== 'regular' || !empty($rankingRow['is_outside_capacity'])) {
+    if ($section !== 'regular') {
         continue;
     }
 
     $rankedInterviewId = (int) ($rankingRow['interview_id'] ?? 0);
     if ($rankedInterviewId > 0) {
-        $excludeInterviewIds[] = $rankedInterviewId;
+        $regularPayloadInterviewIds[$rankedInterviewId] = true;
+        if (!empty($rankingRow['is_outside_capacity'])) {
+            $regularOutsideInterviewIds[$rankedInterviewId] = true;
+        } else {
+            $regularInsideInterviewIds[$rankedInterviewId] = true;
+        }
     }
+}
+
+if (!$isAdministrator && empty($regularOutsideInterviewIds)) {
+    echo json_encode([
+        'success' => true,
+        'results' => [],
+        'pagination' => [
+            'more' => false
+        ]
+    ]);
+    exit;
 }
 
 $sql = "
@@ -153,12 +174,23 @@ $sql = "
 $types = 'ii';
 $params = [$programId, $programId];
 
-if (!empty($excludeInterviewIds)) {
-    $placeholders = implode(',', array_fill(0, count($excludeInterviewIds), '?'));
-    $sql .= " AND si.interview_id NOT IN ({$placeholders}) ";
-    $types .= str_repeat('i', count($excludeInterviewIds));
-    foreach ($excludeInterviewIds as $excludeId) {
-        $params[] = (int) $excludeId;
+if ($isAdministrator) {
+    if (!empty($regularInsideInterviewIds)) {
+        $excludeInterviewIds = array_keys($regularInsideInterviewIds);
+        $placeholders = implode(',', array_fill(0, count($excludeInterviewIds), '?'));
+        $sql .= " AND si.interview_id NOT IN ({$placeholders}) ";
+        $types .= str_repeat('i', count($excludeInterviewIds));
+        foreach ($excludeInterviewIds as $excludeId) {
+            $params[] = (int) $excludeId;
+        }
+    }
+} else {
+    $candidateInterviewIds = array_keys($regularOutsideInterviewIds);
+    $placeholders = implode(',', array_fill(0, count($candidateInterviewIds), '?'));
+    $sql .= " AND si.interview_id IN ({$placeholders}) ";
+    $types .= str_repeat('i', count($candidateInterviewIds));
+    foreach ($candidateInterviewIds as $candidateInterviewId) {
+        $params[] = (int) $candidateInterviewId;
     }
 }
 
@@ -231,17 +263,30 @@ foreach ($rows as $row) {
     $fullName = strtoupper(trim((string) ($row['full_name'] ?? '')));
     $satScore = (int) ($row['sat_score'] ?? 0);
     $finalScore = number_format((float) ($row['final_score'] ?? 0), 2);
+    $requiresCutoffOverride = !isset($regularPayloadInterviewIds[$interviewId]);
+    $isOutsideQualifiedPool = isset($regularOutsideInterviewIds[$interviewId]);
 
     $labelParts = [];
     $labelParts[] = ($examineeNumber !== '' ? $examineeNumber : 'NO EXAMINEE #');
     $labelParts[] = ($fullName !== '' ? $fullName : 'NO NAME');
+    $statusLabel = '';
+    if ($requiresCutoffOverride) {
+        $statusLabel = 'ADMIN CUTOFF OVERRIDE';
+    } elseif ($isOutsideQualifiedPool) {
+        $statusLabel = 'OUTSIDE QUALIFIED POOL';
+    }
+
+    $text = implode(' - ', [
+        $labelParts[0],
+        $labelParts[1] . ' | SAT: ' . $satScore . ' | SCORE: ' . $finalScore
+    ]);
+    if ($statusLabel !== '') {
+        $text .= ' | ' . $statusLabel;
+    }
 
     $results[] = [
         'id' => $interviewId,
-        'text' => implode(' - ', [
-            $labelParts[0],
-            $labelParts[1] . ' | SAT: ' . $satScore . ' | SCORE: ' . $finalScore
-        ])
+        'text' => $text
     ];
 }
 
