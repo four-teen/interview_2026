@@ -193,11 +193,11 @@ $totalCampuses = count($programOptionsByCampus);
       .ranking-list-header,
       .ranking-list-row {
         display: grid;
-        grid-template-columns: 58px 70px 110px minmax(260px, 1fr) 80px 80px 100px;
+        grid-template-columns: 58px 70px 110px minmax(220px, 1fr) 80px 80px 100px 116px;
         gap: 0.65rem;
         align-items: center;
         padding: 0.18rem 0;
-        min-width: 760px;
+        min-width: 900px;
       }
 
       .ranking-list-header {
@@ -228,6 +228,15 @@ $totalCampuses = count($programOptionsByCampus);
       .ranking-list-row .ranking-col-score {
         font-weight: 500;
         color: #111827;
+      }
+
+      .ranking-col-actions {
+        display: flex;
+        justify-content: flex-end;
+      }
+
+      .ranking-col-actions .btn {
+        white-space: nowrap;
       }
 
       .ranking-list-empty {
@@ -322,11 +331,11 @@ $totalCampuses = count($programOptionsByCampus);
       @media (max-width: 991.98px) {
         .ranking-list-header,
         .ranking-list-row {
-          grid-template-columns: 52px 64px 92px minmax(160px, 1.4fr) 72px 60px 72px;
+          grid-template-columns: 52px 64px 92px minmax(160px, 1.4fr) 72px 60px 72px 108px;
           gap: 0.45rem;
           padding: 0.14rem 0;
           font-size: 0.8rem;
-          min-width: 720px;
+          min-width: 860px;
         }
       }
     </style>
@@ -682,6 +691,7 @@ $totalCampuses = count($programOptionsByCampus);
           const showLockPill = options.showLockPill !== false;
           const section = getRowSection(row);
           const isOutsideCapacity = Boolean(row?.is_outside_capacity);
+          const interviewId = Number(row?.interview_id ?? 0);
           const sectionClass = section === 'scc'
             ? 'ranking-scc-row'
             : (section === 'etg' ? 'ranking-etg-row' : '');
@@ -695,6 +705,25 @@ $totalCampuses = count($programOptionsByCampus);
           const classificationText = section === 'scc'
             ? 'SCC'
             : (section === 'etg' ? 'ETG' : 'R');
+          const canRemoveScc = section === 'scc' && interviewId > 0;
+          const removeSccTitle = Boolean(row?.is_locked)
+            ? 'This interview rank is locked and SCC cannot be changed.'
+            : 'Remove this student from the SCC list.';
+          const actionHtml = canRemoveScc
+            ? `
+                <div class="ranking-col-actions">
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-outline-success admin-remove-scc-btn"
+                    data-interview-id="${interviewId}"
+                    title="${escapeHtml(removeSccTitle)}"
+                    ${Boolean(row?.is_locked) ? 'disabled' : ''}
+                  >
+                    <i class="bx bx-minus-circle me-1"></i>Remove SCC
+                  </button>
+                </div>
+              `
+            : '<div class="ranking-col-actions"></div>';
           const lockPill = showLockPill && Boolean(row?.is_locked)
             ? `
                 <span class="ranking-lock-pill" title="Locked" aria-label="Locked">
@@ -714,6 +743,7 @@ $totalCampuses = count($programOptionsByCampus);
               <div class="ranking-col-class">${escapeHtml(classificationText)}</div>
               <div class="ranking-col-sat">${escapeHtml(row.sat_score ?? '')}</div>
               <div class="ranking-col-score">${escapeHtml(row.final_score ?? '')}</div>
+              ${actionHtml}
             </div>
           `;
         }
@@ -728,6 +758,7 @@ $totalCampuses = count($programOptionsByCampus);
               <div>Class</div>
               <div>SAT</div>
               <div>Score</div>
+              <div class="ranking-col-actions">Action</div>
             </div>
           `;
         }
@@ -926,6 +957,54 @@ $totalCampuses = count($programOptionsByCampus);
               })
               .catch((err) => {
                 fireAdminRankingSwal('Error', err.message || 'Failed to add SCC.', 'error');
+              });
+          });
+        }
+
+        function promptRemoveScc(interviewId) {
+          const normalizedInterviewId = Number(interviewId || 0);
+          if (normalizedInterviewId <= 0) {
+            fireAdminRankingSwal('Unavailable', 'Invalid SCC record selected.', 'error');
+            return;
+          }
+
+          const matchingRow = Array.isArray(currentRows)
+            ? currentRows.find((row) => Number(row?.interview_id ?? 0) === normalizedInterviewId)
+            : null;
+
+          if (!matchingRow) {
+            fireAdminRankingSwal('Unavailable', 'Student record could not be found in the current ranking list.', 'error');
+            return;
+          }
+
+          const studentLabel = String(
+            matchingRow?.full_name ||
+            matchingRow?.examinee_number ||
+            'this student'
+          ).trim() || 'this student';
+
+          Swal.fire(getAdminRankingSwalOptions({
+            title: 'Remove SCC?',
+            html: `
+              <div class="text-start">
+                Remove <strong>${escapeHtml(studentLabel)}</strong> from the SCC list?
+              </div>
+            `,
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonText: 'Remove SCC',
+            cancelButtonText: 'Cancel',
+            focusCancel: true
+          })).then((result) => {
+            if (!result.isConfirmed) return;
+
+            toggleEndorsement(normalizedInterviewId, 'REMOVE')
+              .then((data) => {
+                fireAdminRankingSwal('Removed', data.message || 'Student removed from SCC list.', 'success');
+                loadProgramRanking(currentProgramId);
+              })
+              .catch((err) => {
+                fireAdminRankingSwal('Error', err.message || 'Failed to remove SCC.', 'error');
               });
           });
         }
@@ -1138,6 +1217,22 @@ $totalCampuses = count($programOptionsByCampus);
 
         if (addSccRegularBtn) {
           addSccRegularBtn.addEventListener('click', () => openAddEcPicker('REGULAR'));
+        }
+
+        if (listEl) {
+          listEl.addEventListener('click', (event) => {
+            const trigger = event.target instanceof Element
+              ? event.target.closest('.admin-remove-scc-btn')
+              : null;
+            if (!trigger) {
+              return;
+            }
+
+            const interviewId = Number(trigger.getAttribute('data-interview-id') || 0);
+            if (interviewId > 0) {
+              promptRemoveScc(interviewId);
+            }
+          });
         }
 
         const initialProgramId = Number(programSelectEl?.value || 0);
