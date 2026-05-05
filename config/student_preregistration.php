@@ -292,7 +292,7 @@ if (!function_exists('student_preregistration_fetch_report')) {
                 OR COALESCE(pr.full_name, \'\') LIKE ?
                 OR COALESCE(p.program_code, \'\') LIKE ?
                 OR COALESCE(p.program_name, \'\') LIKE ?
-                OR COALESCE(c.campus_name, \'\') LIKE ?
+                OR COALESCE(program_campus.campus_name, c.campus_name, \'\') LIKE ?
             )';
             $types .= 'sssss';
             array_push($params, $like, $like, $like, $like, $like);
@@ -322,7 +322,7 @@ if (!function_exists('student_preregistration_fetch_report')) {
                 spr.updated_at,
                 COALESCE(sp.profile_completion_percent, spr.profile_completion_percent) AS current_profile_completion_percent,
                 pr.full_name,
-                c.campus_name,
+                COALESCE(program_campus.campus_name, c.campus_name) AS campus_name,
                 si.classification,
                 si.final_score,
                 si.interview_datetime,
@@ -338,6 +338,10 @@ if (!function_exists('student_preregistration_fetch_report')) {
                 ON pr.id = si.placement_result_id
             LEFT JOIN tbl_program p
                 ON p.program_id = spr.program_id
+            LEFT JOIN tbl_college program_college
+                ON program_college.college_id = p.college_id
+            LEFT JOIN tbl_campus program_campus
+                ON program_campus.campus_id = program_college.campus_id
             LEFT JOIN tbl_campus c
                 ON c.campus_id = si.campus_id
             LEFT JOIN tbl_student_profile sp
@@ -828,5 +832,52 @@ if (!function_exists('student_preregistration_build_print_sections')) {
         unset($section);
 
         return array_values($sections);
+    }
+}
+
+if (!function_exists('student_preregistration_build_print_campus_sections')) {
+    function student_preregistration_build_print_campus_sections(array $rows): array
+    {
+        $campusSections = [];
+
+        foreach ($rows as $row) {
+            $campusLabel = trim((string) ($row['campus_name'] ?? 'No Campus'));
+            if ($campusLabel === '') {
+                $campusLabel = 'No Campus';
+            }
+
+            $programLabel = trim((string) ($row['program_label'] ?? 'No Program'));
+            if ($programLabel === '') {
+                $programLabel = 'No Program';
+            }
+
+            if (!isset($campusSections[$campusLabel])) {
+                $campusSections[$campusLabel] = [
+                    'campus_name' => $campusLabel,
+                    'programs' => [],
+                    'total' => 0,
+                ];
+            }
+
+            if (!isset($campusSections[$campusLabel]['programs'][$programLabel])) {
+                $campusSections[$campusLabel]['programs'][$programLabel] = [
+                    'program_label' => $programLabel,
+                    'rows' => [],
+                ];
+            }
+
+            $campusSections[$campusLabel]['programs'][$programLabel]['rows'][] = $row;
+            $campusSections[$campusLabel]['total']++;
+        }
+
+        ksort($campusSections, SORT_NATURAL | SORT_FLAG_CASE);
+
+        foreach ($campusSections as &$campusSection) {
+            ksort($campusSection['programs'], SORT_NATURAL | SORT_FLAG_CASE);
+            $campusSection['programs'] = array_values($campusSection['programs']);
+        }
+        unset($campusSection);
+
+        return array_values($campusSections);
     }
 }

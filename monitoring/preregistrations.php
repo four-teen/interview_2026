@@ -96,59 +96,16 @@ $report = $storageReady
 $rows = $report['rows'];
 $summary = $report['summary'];
 $printHeader = student_preregistration_get_print_header();
-$printSections = student_preregistration_build_print_sections($rows);
-foreach ($printSections as &$printSection) {
-    $sectionRows = is_array($printSection['rows'] ?? null) ? $printSection['rows'] : [];
-    usort($sectionRows, static function (array $left, array $right): int {
-        $leftName = trim((string) ($left['full_name'] ?? ''));
-        $rightName = trim((string) ($right['full_name'] ?? ''));
-        $leftLastName = $leftName;
-        $rightLastName = $rightName;
-
-        if (strpos($leftName, ',') !== false) {
-            $leftLastName = trim((string) strstr($leftName, ',', true));
-        } elseif ($leftName !== '') {
-            $leftParts = preg_split('/\s+/', $leftName);
-            $leftLastName = trim((string) end($leftParts));
-        }
-
-        if (strpos($rightName, ',') !== false) {
-            $rightLastName = trim((string) strstr($rightName, ',', true));
-        } elseif ($rightName !== '') {
-            $rightParts = preg_split('/\s+/', $rightName);
-            $rightLastName = trim((string) end($rightParts));
-        }
-
-        if (function_exists('mb_strtoupper')) {
-            $leftLastName = mb_strtoupper($leftLastName, 'UTF-8');
-            $rightLastName = mb_strtoupper($rightLastName, 'UTF-8');
-            $leftName = mb_strtoupper($leftName, 'UTF-8');
-            $rightName = mb_strtoupper($rightName, 'UTF-8');
-        } else {
-            $leftLastName = strtoupper($leftLastName);
-            $rightLastName = strtoupper($rightLastName);
-            $leftName = strtoupper($leftName);
-            $rightName = strtoupper($rightName);
-        }
-
-        $lastNameCompare = strcmp($leftLastName, $rightLastName);
-        if ($lastNameCompare !== 0) {
-            return $lastNameCompare;
-        }
-
-        $nameCompare = strcmp($leftName, $rightName);
-        if ($nameCompare !== 0) {
-            return $nameCompare;
-        }
-
-        return strcmp(
-            trim((string) ($left['examinee_number'] ?? '')),
-            trim((string) ($right['examinee_number'] ?? ''))
-        );
-    });
-    $printSection['rows'] = $sectionRows;
+$printSections = student_preregistration_build_print_campus_sections($rows);
+foreach ($printSections as &$printCampusSection) {
+    foreach ($printCampusSection['programs'] as &$printProgramSection) {
+        $sectionRows = is_array($printProgramSection['rows'] ?? null) ? $printProgramSection['rows'] : [];
+        usort($sectionRows, 'monitoring_prereg_compare_students_by_last_name');
+        $printProgramSection['rows'] = $sectionRows;
+    }
+    unset($printProgramSection);
 }
-unset($printSection);
+unset($printCampusSection);
 $monitoringPreregFlash = $_SESSION['monitoring_prereg_flash'] ?? null;
 if (is_array($monitoringPreregFlash) && isset($monitoringPreregFlash['message'])) {
     $flashMessage = [
@@ -168,6 +125,56 @@ function format_monitoring_prereg_datetime($value): string
 
     $timestamp = strtotime($raw);
     return ($timestamp !== false) ? date('M j, Y g:i A', $timestamp) : $raw;
+}
+
+function monitoring_prereg_compare_students_by_last_name(array $left, array $right): int
+{
+    $leftName = trim((string) ($left['full_name'] ?? ''));
+    $rightName = trim((string) ($right['full_name'] ?? ''));
+    $leftLastName = monitoring_prereg_extract_last_name($leftName);
+    $rightLastName = monitoring_prereg_extract_last_name($rightName);
+
+    if (function_exists('mb_strtoupper')) {
+        $leftLastName = mb_strtoupper($leftLastName, 'UTF-8');
+        $rightLastName = mb_strtoupper($rightLastName, 'UTF-8');
+        $leftName = mb_strtoupper($leftName, 'UTF-8');
+        $rightName = mb_strtoupper($rightName, 'UTF-8');
+    } else {
+        $leftLastName = strtoupper($leftLastName);
+        $rightLastName = strtoupper($rightLastName);
+        $leftName = strtoupper($leftName);
+        $rightName = strtoupper($rightName);
+    }
+
+    $lastNameCompare = strcmp($leftLastName, $rightLastName);
+    if ($lastNameCompare !== 0) {
+        return $lastNameCompare;
+    }
+
+    $nameCompare = strcmp($leftName, $rightName);
+    if ($nameCompare !== 0) {
+        return $nameCompare;
+    }
+
+    return strcmp(
+        trim((string) ($left['examinee_number'] ?? '')),
+        trim((string) ($right['examinee_number'] ?? ''))
+    );
+}
+
+function monitoring_prereg_extract_last_name(string $name): string
+{
+    $name = trim($name);
+    if ($name === '') {
+        return '';
+    }
+
+    if (strpos($name, ',') !== false) {
+        return trim((string) strstr($name, ',', true));
+    }
+
+    $parts = preg_split('/\s+/', $name);
+    return trim((string) end($parts));
 }
 ?>
 <!DOCTYPE html>
@@ -283,6 +290,12 @@ function format_monitoring_prereg_datetime($value): string
       }
 
       .mpr-print-program-block + .mpr-print-program-block {
+        margin-top: 7mm;
+        break-before: auto;
+        page-break-before: auto;
+      }
+
+      .mpr-print-campus-block + .mpr-print-campus-block {
         break-before: page;
         page-break-before: always;
       }
@@ -290,9 +303,11 @@ function format_monitoring_prereg_datetime($value): string
       .mpr-print-cover {
         display: block;
         text-align: center;
-        padding: 10mm 10mm 0;
-        break-after: page;
-        page-break-after: always;
+        padding: 0 0 5mm;
+        margin-bottom: 5mm;
+        border-bottom: 1px solid #d1d5db;
+        break-after: avoid;
+        page-break-after: avoid;
       }
 
       .mpr-print-school {
@@ -310,8 +325,17 @@ function format_monitoring_prereg_datetime($value): string
       }
 
       .mpr-print-program {
+        margin-top: 0.55rem;
+        font-size: 1.28rem;
+        font-weight: 700;
+        line-height: 1.2;
+        text-transform: uppercase;
+        color: #111827;
+      }
+
+      .mpr-print-campus {
         margin-top: 0.9rem;
-        font-size: 1.5rem;
+        font-size: 1.55rem;
         font-weight: 700;
         line-height: 1.2;
         text-transform: uppercase;
@@ -339,6 +363,8 @@ function format_monitoring_prereg_datetime($value): string
 
       .mpr-print-list-head {
         margin-bottom: 0.7rem;
+        break-after: avoid;
+        page-break-after: avoid;
       }
 
       .mpr-print-list-title {
@@ -677,47 +703,55 @@ function format_monitoring_prereg_datetime($value): string
                 <?php if (empty($printSections)): ?>
                   <div class="mpr-print-empty">No pre-registered students found for the selected filter.</div>
                 <?php else: ?>
-                  <?php foreach ($printSections as $section): ?>
-                    <?php $sectionRows = (array) ($section['rows'] ?? []); ?>
-                    <section class="mpr-print-program-block">
+                  <?php foreach ($printSections as $campusSection): ?>
+                    <?php
+                      $campusPrograms = (array) ($campusSection['programs'] ?? []);
+                      $campusTotal = (int) ($campusSection['total'] ?? 0);
+                    ?>
+                    <section class="mpr-print-campus-block">
                       <div class="mpr-print-cover">
                         <div class="mpr-print-school"><?= htmlspecialchars((string) ($printHeader['institution'] ?? 'Sultan Kudarat State University')); ?></div>
                         <div class="mpr-print-address"><?= htmlspecialchars((string) ($printHeader['address'] ?? '')); ?></div>
-                        <div class="mpr-print-program"><?= htmlspecialchars((string) ($section['program_label'] ?? 'No Program')); ?></div>
-                        <div class="mpr-print-count">Total Pre-Registered: <?= number_format(count($sectionRows)); ?></div>
+                        <div class="mpr-print-campus"><?= htmlspecialchars((string) ($campusSection['campus_name'] ?? 'No Campus')); ?></div>
+                        <div class="mpr-print-count">Total Pre-Registered: <?= number_format($campusTotal); ?></div>
                         <div class="mpr-print-generated">Generated on <?= htmlspecialchars($printGeneratedAt); ?></div>
                       </div>
 
-                      <div class="mpr-print-list-page">
-                        <div class="mpr-print-list-head">
-                          <div class="mpr-print-list-title"><?= htmlspecialchars((string) ($section['program_label'] ?? 'No Program')); ?></div>
-                          <div class="mpr-print-list-subtitle">Alphabetical pre-registration list | <?= number_format(count($sectionRows)); ?> student<?= count($sectionRows) === 1 ? '' : 's'; ?></div>
-                        </div>
+                      <?php foreach ($campusPrograms as $programSection): ?>
+                        <?php $sectionRows = (array) ($programSection['rows'] ?? []); ?>
+                        <section class="mpr-print-program-block">
+                          <div class="mpr-print-list-page">
+                            <div class="mpr-print-list-head">
+                              <div class="mpr-print-list-title"><?= htmlspecialchars((string) ($programSection['program_label'] ?? 'No Program')); ?></div>
+                              <div class="mpr-print-list-subtitle">Alphabetical pre-registration list | <?= number_format(count($sectionRows)); ?> student<?= count($sectionRows) === 1 ? '' : 's'; ?></div>
+                            </div>
 
-                        <table class="mpr-print-table">
-                          <colgroup>
-                            <col class="mpr-print-col-no" />
-                            <col class="mpr-print-col-examinee" />
-                            <col />
-                          </colgroup>
-                          <thead>
-                            <tr>
-                              <th>No.</th>
-                              <th>Examinee Number</th>
-                              <th>Full Name</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            <?php foreach ($sectionRows as $index => $printRow): ?>
+                            <table class="mpr-print-table">
+                              <colgroup>
+                                <col class="mpr-print-col-no" />
+                                <col class="mpr-print-col-examinee" />
+                                <col />
+                              </colgroup>
+                              <thead>
                               <tr>
-                                <td class="mpr-print-no"><?= number_format($index + 1); ?></td>
-                                <td class="mpr-print-examinee"><?= htmlspecialchars((string) ($printRow['examinee_number'] ?? '')); ?></td>
-                                <td class="mpr-print-fullname"><?= htmlspecialchars((string) ($printRow['full_name'] ?? 'Unknown Student')); ?></td>
+                                <th>No.</th>
+                                <th>Examinee Number</th>
+                                <th>Full Name</th>
                               </tr>
-                            <?php endforeach; ?>
-                          </tbody>
-                        </table>
-                      </div>
+                              </thead>
+                              <tbody>
+                                <?php foreach ($sectionRows as $index => $printRow): ?>
+                                  <tr>
+                                    <td class="mpr-print-no"><?= number_format($index + 1); ?></td>
+                                    <td class="mpr-print-examinee"><?= htmlspecialchars((string) ($printRow['examinee_number'] ?? '')); ?></td>
+                                    <td class="mpr-print-fullname"><?= htmlspecialchars((string) ($printRow['full_name'] ?? 'Unknown Student')); ?></td>
+                                  </tr>
+                                <?php endforeach; ?>
+                              </tbody>
+                            </table>
+                          </div>
+                        </section>
+                      <?php endforeach; ?>
                     </section>
                   <?php endforeach; ?>
                 <?php endif; ?>
