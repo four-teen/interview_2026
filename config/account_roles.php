@@ -11,7 +11,8 @@ if (!function_exists('interview_account_role_options')) {
             'president' => 'President',
             'progchair' => 'Program Chair',
             'monitoring' => 'Monitoring',
-            'guidance' => 'Guidance'
+            'guidance' => 'Guidance',
+            'registrar' => 'Registrar'
         ];
     }
 }
@@ -33,7 +34,8 @@ if (!function_exists('interview_account_role_badge_class')) {
             'president' => 'secondary',
             'progchair' => 'info',
             'monitoring' => 'warning',
-            'guidance' => 'success'
+            'guidance' => 'success',
+            'registrar' => 'dark'
         ];
 
         return $badgeClasses[$normalizedRole] ?? 'secondary';
@@ -56,7 +58,15 @@ if (!function_exists('ensure_tblaccount_role_enum')) {
         }
 
         $existingType = strtolower((string) ($column['Type'] ?? ''));
-        if (strpos($existingType, "'president'") !== false) {
+        $missingRole = false;
+        foreach (array_keys(interview_account_role_options()) as $roleValue) {
+            if (strpos($existingType, "'" . strtolower($roleValue) . "'") === false) {
+                $missingRole = true;
+                break;
+            }
+        }
+
+        if (!$missingRole) {
             return true;
         }
 

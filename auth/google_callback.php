@@ -370,6 +370,10 @@ switch ($account['role']) {
         $redirect = BASE_URL . '/guidance/index.php';
         break;
 
+    case 'registrar':
+        $redirect = BASE_URL . '/registrar/index.php';
+        break;
+
     default:
         log_auth('Invalid role', ['role' => $account['role']]);
         json_response(403, [

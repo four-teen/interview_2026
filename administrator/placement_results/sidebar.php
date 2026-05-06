@@ -180,7 +180,7 @@
                 </span>
                 <div class="sidebar-action-content">
                   <div class="sidebar-action-title">User Accounts</div>
-                  <small class="sidebar-action-sub">Manage administrators and chairs</small>
+                  <small class="sidebar-action-sub">Manage staff accounts and roles</small>
                 </div>
               </a>
             </li>
