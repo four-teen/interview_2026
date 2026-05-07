@@ -2,6 +2,7 @@
 require_once '../config/db.php';
 require_once '../config/system_controls.php';
 require_once '../config/program_ranking_lock.php';
+require_once '../config/student_preregistration.php';
 session_start();
 
 if (!isset($_SESSION['logged_in']) || (($_SESSION['role'] ?? '') !== 'monitoring')) {
@@ -14,6 +15,7 @@ $search = trim((string) ($_GET['q'] ?? ''));
 $campusFilter = (int) ($_GET['campus_id'] ?? 0);
 $isProgramCardsRequest = strtolower(trim((string) ($_GET['fetch'] ?? ''))) === 'program_cards';
 $isProgramLocksPrintRequest = strtolower(trim((string) ($_GET['print'] ?? ''))) === 'program_locks';
+$isQualifiedStudentsPrintRequest = strtolower(trim((string) ($_GET['print'] ?? ''))) === 'qualified_students';
 $page = max(1, (int) ($_GET['page'] ?? 1));
 $perPage = 12;
 
@@ -32,6 +34,7 @@ if ($globalSatCutoffActive && $globalSatCutoffRangeText === '') {
 }
 
 ensure_program_ranking_locks_table($conn);
+ensure_student_preregistration_storage($conn);
 
 $campusOptions = [];
 $campusOptionSql = "
@@ -62,6 +65,11 @@ if ($campusFilter > 0) {
 
 $programLockPrintUrl = 'program_rankings.php?' . http_build_query([
     'print' => 'program_locks',
+    'q' => $search,
+    'campus_id' => $campusFilter
+]);
+$qualifiedStudentsPrintUrl = 'program_rankings.php?' . http_build_query([
+    'print' => 'qualified_students',
     'q' => $search,
     'campus_id' => $campusFilter
 ]);
@@ -112,6 +120,314 @@ $programFromSql = "
         ON lockstat.program_id = p.program_id
 ";
 $whereSql = implode(' AND ', $where);
+
+function monitoring_qualified_program_label(array $row): string
+{
+    $code = trim((string) ($row['program_code'] ?? ''));
+    $name = trim((string) ($row['program_name'] ?? ''));
+    $major = trim((string) ($row['major'] ?? ''));
+
+    $label = $name;
+    if ($major !== '') {
+        $label .= ' - ' . $major;
+    }
+    if ($code !== '') {
+        $label = $code . ' - ' . $label;
+    }
+
+    return trim($label) !== '' ? $label : ('Program #' . max(0, (int) ($row['program_id'] ?? 0)));
+}
+
+function monitoring_fetch_qualified_student_rows(mysqli $conn, int $campusFilter, string $search): array
+{
+    $where = [
+        "c.status = 'active'",
+        "col.status = 'active'",
+        "p.status = 'active'",
+    ];
+    $types = '';
+    $params = [];
+
+    if ($campusFilter > 0) {
+        $where[] = 'c.campus_id = ?';
+        $types .= 'i';
+        $params[] = $campusFilter;
+    }
+
+    if ($search !== '') {
+        $where[] = "(
+            l.snapshot_full_name LIKE ?
+            OR l.snapshot_examinee_number LIKE ?
+            OR p.program_code LIKE ?
+            OR p.program_name LIKE ?
+            OR p.major LIKE ?
+            OR col.college_name LIKE ?
+            OR c.campus_name LIKE ?
+        )";
+        $like = '%' . $search . '%';
+        $types .= 'sssssss';
+        array_push($params, $like, $like, $like, $like, $like, $like, $like);
+    }
+
+    $whereSql = implode(' AND ', $where);
+    $sql = "
+        SELECT
+            l.lock_id,
+            l.interview_id,
+            l.snapshot_examinee_number,
+            l.snapshot_full_name,
+            p.program_id,
+            p.program_code,
+            p.program_name,
+            p.major,
+            col.college_name,
+            c.campus_id,
+            c.campus_code,
+            c.campus_name
+        FROM tbl_program_ranking_locks l
+        INNER JOIN tbl_program p
+            ON p.program_id = l.program_id
+        INNER JOIN tbl_college col
+            ON col.college_id = p.college_id
+        INNER JOIN tbl_campus c
+            ON c.campus_id = col.campus_id
+        LEFT JOIN tbl_student_preregistration spr
+            ON spr.interview_id = l.interview_id
+           AND spr.status = 'submitted'
+        WHERE {$whereSql}
+        ORDER BY
+            c.campus_name ASC,
+            p.program_name ASC,
+            p.major ASC,
+            p.program_code ASC,
+            l.snapshot_full_name ASC,
+            l.snapshot_examinee_number ASC
+    ";
+
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return [];
+    }
+
+    if ($types !== '') {
+        $stmt->bind_param($types, ...$params);
+    }
+    $stmt->execute();
+
+    $rows = [];
+    $result = $stmt->get_result();
+    while ($row = $result->fetch_assoc()) {
+        $row['program_label'] = monitoring_qualified_program_label($row);
+        $rows[] = $row;
+    }
+    $stmt->close();
+
+    return $rows;
+}
+
+if ($isQualifiedStudentsPrintRequest) {
+    $printRows = monitoring_fetch_qualified_student_rows($conn, $campusFilter, $search);
+    $campusGroups = [];
+    foreach ($printRows as $row) {
+        $campusId = (int) ($row['campus_id'] ?? 0);
+        $programId = (int) ($row['program_id'] ?? 0);
+
+        if (!isset($campusGroups[$campusId])) {
+            $campusGroups[$campusId] = [
+                'campus_name' => (string) ($row['campus_name'] ?? 'Campus'),
+                'campus_code' => (string) ($row['campus_code'] ?? ''),
+                'programs' => [],
+                'count' => 0,
+            ];
+        }
+
+        if (!isset($campusGroups[$campusId]['programs'][$programId])) {
+            $campusGroups[$campusId]['programs'][$programId] = [
+                'program_label' => (string) ($row['program_label'] ?? 'Program'),
+                'college_name' => (string) ($row['college_name'] ?? ''),
+                'rows' => [],
+            ];
+        }
+
+        $campusGroups[$campusId]['programs'][$programId]['rows'][] = $row;
+        $campusGroups[$campusId]['count']++;
+    }
+
+    header('Content-Type: text/html; charset=utf-8');
+    ?>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Qualified Students Print List</title>
+  <style>
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: Arial, sans-serif;
+      color: #111827;
+      background: #ffffff;
+    }
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.2;
+    }
+    .meta {
+      margin-top: 8px;
+      color: #475569;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .summary {
+      margin-top: 14px;
+      padding: 10px 12px;
+      border: 1px solid #dbe2eb;
+      border-radius: 8px;
+      background: #f8fafc;
+      font-size: 13px;
+    }
+    .campus {
+      margin-top: 18px;
+      page-break-inside: avoid;
+    }
+    .campus-title {
+      padding: 10px 12px;
+      border: 1px solid #dbe2eb;
+      background: #eff6ff;
+      font-size: 16px;
+      font-weight: 700;
+      color: #1e3a5f;
+    }
+    .program {
+      margin-top: 10px;
+      page-break-inside: avoid;
+    }
+    .program-title {
+      padding: 8px 10px;
+      border: 1px solid #dbe2eb;
+      border-bottom: 0;
+      background: #f8fafc;
+      font-size: 13px;
+      font-weight: 700;
+      color: #334155;
+    }
+    .program-title small {
+      display: block;
+      margin-top: 2px;
+      font-size: 11px;
+      color: #64748b;
+      font-weight: 400;
+      text-transform: uppercase;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12.5px;
+    }
+    th, td {
+      border: 1px solid #dbe2eb;
+      padding: 7px 9px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #ffffff;
+      color: #334155;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .num {
+      width: 46px;
+      text-align: right;
+      white-space: nowrap;
+    }
+    .name {
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .empty {
+      margin-top: 16px;
+      border: 1px dashed #cbd5e1;
+      border-radius: 8px;
+      padding: 16px;
+      color: #64748b;
+      background: #f8fafc;
+    }
+    @media print {
+      @page { size: portrait; margin: 10mm; }
+      body { padding: 0; }
+    }
+  </style>
+</head>
+<body>
+  <h1>Qualified Students for Document Submission</h1>
+  <div class="meta">
+    Campus: <?= htmlspecialchars($campusFilterLabel); ?><br>
+    Search: <?= htmlspecialchars($search !== '' ? $search : 'None'); ?>
+  </div>
+  <div class="summary">
+    <strong><?= number_format(count($printRows)); ?></strong> published names
+  </div>
+
+  <?php if (!empty($campusGroups)): ?>
+    <?php foreach ($campusGroups as $campusGroup): ?>
+      <section class="campus">
+        <div class="campus-title">
+          <?= htmlspecialchars($campusGroup['campus_name']); ?>
+          <?php if (trim((string) ($campusGroup['campus_code'] ?? '')) !== ''): ?>
+            (<?= htmlspecialchars((string) $campusGroup['campus_code']); ?>)
+          <?php endif; ?>
+          - <?= number_format((int) ($campusGroup['count'] ?? 0)); ?> names
+        </div>
+        <?php foreach ($campusGroup['programs'] as $programGroup): ?>
+          <div class="program">
+            <div class="program-title">
+              <?= htmlspecialchars((string) ($programGroup['program_label'] ?? 'Program')); ?>
+              <?php if (trim((string) ($programGroup['college_name'] ?? '')) !== ''): ?>
+                <small><?= htmlspecialchars((string) $programGroup['college_name']); ?></small>
+              <?php endif; ?>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th class="num">#</th>
+                  <th>Student Name</th>
+                  <th style="width: 180px;">Examinee Number</th>
+                </tr>
+              </thead>
+              <tbody>
+                <?php foreach ((array) ($programGroup['rows'] ?? []) as $index => $row): ?>
+                  <tr>
+                    <td class="num"><?= number_format($index + 1); ?></td>
+                    <td class="name"><?= htmlspecialchars((string) ($row['snapshot_full_name'] ?? 'Unnamed Student')); ?></td>
+                    <td><?= htmlspecialchars((string) ($row['snapshot_examinee_number'] ?? 'N/A')); ?></td>
+                  </tr>
+                <?php endforeach; ?>
+              </tbody>
+            </table>
+          </div>
+        <?php endforeach; ?>
+      </section>
+    <?php endforeach; ?>
+  <?php else: ?>
+    <div class="empty">No locked students found for the selected filters.</div>
+  <?php endif; ?>
+
+  <script>
+    window.addEventListener('load', function () {
+      window.print();
+    });
+  </script>
+</body>
+</html>
+    <?php
+    exit;
+}
 
 if ($isProgramLocksPrintRequest) {
     $printRows = [];
@@ -1069,7 +1385,10 @@ if ($isProgramCardsRequest) {
                 </div>
 
                 <div class="card-body">
-                  <div class="d-flex justify-content-end mb-3">
+                  <div class="d-flex flex-wrap justify-content-end gap-2 mb-3">
+                    <a href="<?= htmlspecialchars($qualifiedStudentsPrintUrl); ?>" target="_blank" rel="noopener" class="btn btn-outline-primary btn-sm">
+                      <i class="bx bx-printer me-1"></i> Print Qualified Students
+                    </a>
                     <a href="<?= htmlspecialchars($programLockPrintUrl); ?>" target="_blank" rel="noopener" class="btn btn-outline-secondary btn-sm">
                       <i class="bx bx-printer me-1"></i> Print Program Lock Summary
                     </a>
